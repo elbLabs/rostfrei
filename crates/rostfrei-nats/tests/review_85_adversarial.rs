@@ -2,7 +2,7 @@
 #![allow(clippy::panic_in_result_fn, clippy::unwrap_used)]
 mod release_contract_support;
 use release_contract_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     EncodedCommand, command_response_message_id, command_technical_response_message_id,
 };
 
@@ -261,7 +261,7 @@ async fn competing_accept_reject_and_diagnostic_writers_preserve_one_terminal_wi
     let (_, command) = command(&f)?;
     let a = accepted(&command)?;
     let rejection = CommandResponse::rejected(
-        rostfrei::command_response_message_id(command.message_id())?,
+        rostfrei_runtime::command_response_message_id(command.message_id())?,
         command.message_id().clone(),
         command.address().clone(),
         command.operation_id().clone(),
@@ -553,7 +553,7 @@ async fn redrive_validates_all_canonical_dimensions_before_lookup_or_deletion() 
         CommandAddress::new("different-application", original.address().context(), "act")?,
         CommandAddress::new_in_scope(
             original.address().application(),
-            rostfrei::TrafficScope::Test,
+            rostfrei_runtime::TrafficScope::Test,
             original.address().context(),
             "act",
         )?,
@@ -901,4 +901,4 @@ async fn technical_reader_refuses_forged_generation_scope_version_and_payload_bi
     Ok(())
 }
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

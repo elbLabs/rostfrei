@@ -1,8 +1,8 @@
-use rostfrei::{EventStore, StreamId};
-use rostfrei_fixtures::{
+use rostfrei::fixtures::{
     Fixture, FixtureApplyError, FixtureApplyReport, FixtureCodecRegistrationError,
     MessageSeriesEngine,
 };
+use rostfrei::{EventStore, StreamId};
 use thiserror::Error;
 
 use crate::rental_fleet::RentalFleetAggregate;

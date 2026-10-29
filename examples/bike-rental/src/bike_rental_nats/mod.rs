@@ -2,23 +2,23 @@ use crate::rental_fleet::{
     AddBicycle, BicycleId, BicycleRented, FleetId, RentBicycle, ReturnBicycle, TransferBicycle,
 };
 use async_trait::async_trait;
-use rostfrei::{
-    Command, CommittedDomainEvent, EncodedIntegrationMessage, IntegrationEvent,
-    IntegrationEventMapper,
-};
-use rostfrei_fixtures::{Fixture, FixtureApplyReport};
-use rostfrei_messaging_core::{
+use rostfrei::fixtures::{Fixture, FixtureApplyReport};
+use rostfrei::messaging::{
     ApplicationName, BoundedContext, CommandAddress, ConsumerConfig, ContractError,
     DeliveryDisposition, IntegrationEventAddress, MessageDelivery, MessageHandler,
     QuarantineReason, RetryDelay, TrafficScope,
 };
-use rostfrei_nats::{
+use rostfrei::nats::{
     ApplicationMessagingConfig, NatsConnection, NatsDomainEventConsumerConfig, NatsEventStore,
     NatsEventStoreConfig,
 };
-use rostfrei_tracer::{
+use rostfrei::tracer::{
     CommandTransport, CorrelationObserver, NatsRuntime, NatsRuntimeConfig, TestScenarioReset,
     TestScenarioResetError,
+};
+use rostfrei::{
+    Command, CommittedDomainEvent, EncodedIntegrationMessage, IntegrationEvent,
+    IntegrationEventMapper,
 };
 use serde::{Deserialize, Serialize};
 use std::{env, sync::Arc, time::Duration};
@@ -30,7 +30,7 @@ pub const BOUNDED_CONTEXT_NAME: &str = "bike-rental";
 pub const APPLICATION_NAME: &str = "bike-rental";
 pub const BICYCLE_RENTAL_STARTED_EVENT_NAME: &str = "bicycle-rental-started";
 const COMMAND_SUBSCRIPTION_GENERATION: u32 = 2;
-pub type BikeRentalNatsError = rostfrei_tracer::NatsHostError;
+pub type BikeRentalNatsError = rostfrei::tracer::NatsHostError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BikeRentalNatsResourceLimits {
@@ -81,8 +81,8 @@ impl Default for BikeRentalNatsResourceLimits {
     fn default() -> Self {
         Self::new(
             64 * 1024 * 1024,
-            rostfrei_nats::DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
-            rostfrei_nats::DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
+            rostfrei::nats::DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
+            rostfrei::nats::DEFAULT_EVENT_STORE_MAX_EVENT_BYTES,
         )
     }
 }
@@ -216,7 +216,7 @@ impl BikeRentalNatsConfig {
         application: &str,
         scope: TrafficScope,
         limits: BikeRentalNatsResourceLimits,
-        bindings: &rostfrei_tracer::ApplicationBindings,
+        bindings: &rostfrei::tracer::ApplicationBindings,
     ) -> Result<Self, BikeRentalNatsError> {
         let context = ApplicationName::new(application)?
             .bounded_context_in_scope(scope, BOUNDED_CONTEXT_NAME)?;
@@ -460,7 +460,7 @@ impl BikeRentalNatsRuntime {
     pub fn transport(&self) -> Arc<dyn CommandTransport> {
         self.inner.transport()
     }
-    pub fn quarantine_reader(&self) -> Arc<dyn rostfrei_messaging_core::QuarantineReader> {
+    pub fn quarantine_reader(&self) -> Arc<dyn rostfrei::messaging::QuarantineReader> {
         self.inner.quarantine_reader()
     }
     pub async fn apply_fixture(
@@ -498,7 +498,7 @@ fn integration_event_observation(
     message_id: Option<&rostfrei::MessageId>,
     correlation_id: &rostfrei::CorrelationId,
     payload: &[u8],
-) -> Result<rostfrei_tracer::IntegrationEventObservation, String> {
+) -> Result<rostfrei::tracer::IntegrationEventObservation, String> {
     let address = subject
         .parse::<IntegrationEventAddress>()
         .map_err(|e| e.to_string())?;
@@ -513,7 +513,7 @@ fn integration_event_observation(
     let envelope = message
         .decode::<BicycleRentalStarted>()
         .map_err(|e| e.to_string())?;
-    Ok(rostfrei_tracer::IntegrationEventObservation::new(
+    Ok(rostfrei::tracer::IntegrationEventObservation::new(
         envelope.message_id().as_str(),
         BicycleRentalStarted::EVENT_NAME,
         envelope.schema_version().get(),

@@ -15,11 +15,11 @@ mod modular_state_fault_support;
 mod release_contract_support;
 use async_trait::async_trait;
 use release_contract_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     AuthorizationError, CommandAccess, CommandAuthorizer, CommandProcessingService, PrincipalId,
     SecurityScope, TrustedCommandContext, ValidatedCommand,
 };
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 async fn split_store(fixture: &Fixture) -> TestResult<Arc<NatsEventStore>> {
     let config = NatsEventStoreConfig::for_bounded_context(&fixture.context)?
@@ -273,7 +273,7 @@ async fn native_expiry_replaces_active_preserves_integrity_and_blocks_cached_bus
         let error = bus.dispatch_encoded(command.clone()).await.unwrap_err();
         assert_eq!(
             error.kind(),
-            rostfrei::CommandBusErrorKind::CompletedDetailsExpired
+            rostfrei_runtime::CommandBusErrorKind::CompletedDetailsExpired
         );
         // Raw transport projection remains intact: the admission gate, not accidental cache
         // eviction or worker-side reconciliation, is what prevented disclosure.

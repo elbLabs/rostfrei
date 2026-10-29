@@ -13,10 +13,6 @@ use std::{
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use rostfrei::{
-    Command, CommandBus, CommandProcessor, CommandRequest, InMemoryMessagingAdapter,
-    InfallibleCommandRejectionMapper,
-};
 use rostfrei_core::{
     Aggregate, AggregateId, AggregateType, CommandDecision, CommandExecution, CommandExecutor,
     CommandHandler, CommandHandlingResult, CommandOutcome, CommandReceipt, ContentFingerprint,
@@ -32,6 +28,10 @@ use rostfrei_nats::{
     ApplicationMessagingConfig, NatsCommandResponseReader, NatsEventStore, NatsEventStoreConfig,
     NatsMessagingAdapter, NatsPublisher, provision_application_messaging, provision_event_store,
 };
+use rostfrei_runtime::{
+    Command, CommandBus, CommandProcessor, CommandRequest, InMemoryMessagingAdapter,
+    InfallibleCommandRejectionMapper,
+};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 const WAIT: Duration = Duration::from_secs(15);
@@ -45,7 +45,7 @@ fn check(condition: bool, message: &'static str) -> TestResult {
     }
 }
 
-#[derive(rostfrei::BoundedContext)]
+#[derive(rostfrei_runtime::BoundedContext)]
 #[domain(id = "acceptance", label = "Acceptance")]
 struct Acceptance;
 
@@ -507,4 +507,4 @@ async fn capacity_with_failed_diagnostic_publication_retries_without_response(
     Ok(())
 }
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

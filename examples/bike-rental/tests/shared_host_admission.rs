@@ -10,13 +10,13 @@ use bike_rental::{
     demo::demo_fixture,
     rental_fleet::{RentBicycle, RentBicycleHandler, RentalFleetAggregate},
 };
-use rostfrei::{ApplicationName, Command, CommandHandler, OperationId};
-use rostfrei_nats::{NatsConnection, NatsConnectionConfig, connect};
-use rostfrei_tracer::{
+use rostfrei::nats::{NatsConnection, NatsConnectionConfig, connect};
+use rostfrei::tracer::{
     ApplicationBindings, CommandInvocation, CommandOutcome, CommandPublication, CommandTransport,
     CommandTransportErrorKind, CommandTransportObserver, NatsApplication, NatsRuntime,
     NatsRuntimeConfig, TracerConfig, command_execution_fingerprint, http::HttpConfig,
 };
+use rostfrei::{ApplicationName, Command, CommandHandler, OperationId};
 use serde_json::json;
 use tokio::sync::Notify;
 
@@ -70,7 +70,7 @@ async fn setup() -> TestResult<(
 )> {
     let connection = connect(&NatsConnectionConfig::new(
         "host-admission",
-        rostfrei_testing::integration::nats_url()?,
+        rostfrei::testing::integration::nats_url()?,
     ))
     .await?;
     let suffix = std::time::SystemTime::now()

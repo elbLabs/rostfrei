@@ -1,8 +1,8 @@
 //! #85: standard HTTP router over a real private loopback socket, using a local bus.
 #![allow(clippy::panic_in_result_fn, clippy::unwrap_used)]
 use async_trait::async_trait;
-use rostfrei::*;
 use rostfrei_core::{Event, JsonEventCodec};
+use rostfrei_runtime::*;
 use std::{
     io::{Read, Write},
     net::TcpStream,
@@ -14,10 +14,10 @@ use std::{
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
-#[derive(rostfrei::BoundedContext)]
+#[derive(rostfrei_runtime::BoundedContext)]
 #[domain(id = "failure-contract", label = "Failure contract")]
 struct FailureContract;
-#[derive(rostfrei::Command)]
+#[derive(rostfrei_runtime::Command)]
 #[domain(context = FailureContract, id = "act", label = "Act")]
 struct Act {
     target: String,
@@ -349,4 +349,4 @@ async fn unavailable_http_command_remains_retryable_and_same_operation_recovers(
     );
     Ok(())
 }
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

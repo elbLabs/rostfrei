@@ -11,12 +11,12 @@ use bike_rental::{
     rental_fleet::RentBicycle,
     tracer,
 };
-use rostfrei::{ApplicationName, Command, OperationId};
-use rostfrei_nats::{NatsConnectionConfig, connect};
-use rostfrei_tracer::{
+use rostfrei::nats::{NatsConnectionConfig, connect};
+use rostfrei::tracer::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandTransportObserver,
     NatsApplication, NatsRuntimeConfig, command_execution_fingerprint,
 };
+use rostfrei::{ApplicationName, Command, OperationId};
 use serde_json::json;
 
 struct Observer;
@@ -30,7 +30,7 @@ async fn independent_provisioning_prepares_the_complete_mapping_pipeline()
 -> Result<(), Box<dyn Error + Send + Sync>> {
     let connection = connect(&NatsConnectionConfig::new(
         "split-provisioning",
-        rostfrei_testing::integration::nats_url()?,
+        rostfrei::testing::integration::nats_url()?,
     ))
     .await?;
     let suffix = std::time::SystemTime::now()

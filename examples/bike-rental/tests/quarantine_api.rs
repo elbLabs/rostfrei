@@ -8,8 +8,8 @@ use bike_rental::{
 };
 use http_body_util::BodyExt as _;
 use rostfrei::DomainRegistry;
-use rostfrei_nats::{NatsConnectionConfig, connect};
-use rostfrei_tracer::{
+use rostfrei::nats::{NatsConnectionConfig, connect};
+use rostfrei::tracer::{
     TestScenarioReset, TracerBuilder,
     http::{HttpConfig, router},
 };
@@ -180,7 +180,7 @@ async fn production_evidence_is_inspectable_after_workers_stop_and_survives_test
         loop {
             let page = production
                 .quarantine_reader()
-                .list(rostfrei_messaging_core::QuarantineQuery::default())
+                .list(rostfrei::messaging::QuarantineQuery::default())
                 .await
                 .unwrap();
             if !page.items.is_empty() {

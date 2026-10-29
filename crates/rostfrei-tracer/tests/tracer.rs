@@ -243,8 +243,8 @@ async fn simulate_handler_returns_uncommitted_decisions_without_operations_or_re
     bindings
         .register_command::<TestCommand, _>(
             handler,
-            rostfrei::JsonDomainRejectionMapper::new(
-                rostfrei::CommandRejectionClassification::Conflict,
+            rostfrei_runtime::JsonDomainRejectionMapper::new(
+                rostfrei_runtime::CommandRejectionClassification::Conflict,
             ),
         )
         .unwrap();
@@ -531,7 +531,7 @@ enum TestEvents {
     TestEvent(TestEvent),
 }
 
-impl rostfrei::Initialize<TestAggregate> for TestRoot {
+impl rostfrei_runtime::Initialize<TestAggregate> for TestRoot {
     fn initialize(stream_id: &StreamId) -> Self {
         Self {
             id: TestRootId(stream_id.aggregate_id().as_str().to_owned()),
@@ -539,7 +539,7 @@ impl rostfrei::Initialize<TestAggregate> for TestRoot {
     }
 }
 
-impl rostfrei::Apply<TestEvent> for TestRoot {
+impl rostfrei_runtime::Apply<TestEvent> for TestRoot {
     fn apply(&mut self, _event: &TestEvent) {}
 }
 
@@ -644,7 +644,7 @@ impl domain::AggregateDefinition for OtherTestAggregate {
     type Event = TestEvents;
 }
 
-impl rostfrei::Initialize<OtherTestAggregate> for OtherTestRoot {
+impl rostfrei_runtime::Initialize<OtherTestAggregate> for OtherTestRoot {
     fn initialize(stream_id: &StreamId) -> Self {
         Self {
             id: OtherTestRootId(stream_id.aggregate_id().as_str().to_owned()),
@@ -652,7 +652,7 @@ impl rostfrei::Initialize<OtherTestAggregate> for OtherTestRoot {
     }
 }
 
-impl rostfrei::Apply<TestEvent> for OtherTestRoot {
+impl rostfrei_runtime::Apply<TestEvent> for OtherTestRoot {
     fn apply(&mut self, _event: &TestEvent) {}
 }
 
@@ -4155,4 +4155,4 @@ async fn inline_and_persisted_behavioral_runs_share_the_report_contract() {
         assert!(persisted.get(field).is_some(), "missing {field}");
     }
 }
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

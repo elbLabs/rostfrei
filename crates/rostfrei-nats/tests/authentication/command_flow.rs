@@ -14,11 +14,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use rostfrei::{
-    AllowAllCommands, CommandBus, CommandExecutor, CommandProcessingService, CommandProcessor,
-    CommandRequest, InfallibleCommandRejectionMapper, PrincipalId, SecurityScope,
-    TrustedCommandContext,
-};
 use rostfrei_core::{
     Aggregate, AggregateId, AggregateType, CommandDecision, CommandExecution, CommandHandler,
     CommandHandlingResult, CommittedDomainEvent, DomainEventDispatcher, DomainEventHandler,
@@ -35,6 +30,11 @@ use rostfrei_nats::{
     connect, provision_application_messaging, provision_domain_event_consumer,
     provision_durable_consumer, provision_event_store,
 };
+use rostfrei_runtime::{
+    AllowAllCommands, CommandBus, CommandExecutor, CommandProcessingService, CommandProcessor,
+    CommandRequest, InfallibleCommandRejectionMapper, PrincipalId, SecurityScope,
+    TrustedCommandContext,
+};
 use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{mpsc, watch},
@@ -44,24 +44,24 @@ use tokio::{
 
 use super::{Server, TestResult, WAIT, unique_name};
 
-#[derive(rostfrei::BoundedContext)]
+#[derive(rostfrei_runtime::BoundedContext)]
 #[domain(id = "authenticated-counter", label = "Authenticated counter")]
 struct CounterContext;
 
-#[derive(Clone, Debug, Eq, PartialEq, rostfrei::Command)]
+#[derive(Clone, Debug, Eq, PartialEq, rostfrei_runtime::Command)]
 #[domain(context = CounterContext, id = "increment", label = "Increment")]
 struct Increment {
     counter_id: String,
     amount: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, rostfrei::DomainEvent)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, rostfrei_runtime::DomainEvent)]
 #[domain(id = "incremented", label = "Incremented")]
 struct Incremented {
     amount: u64,
 }
 
-#[derive(rostfrei::AggregateEvents)]
+#[derive(rostfrei_runtime::AggregateEvents)]
 enum CounterEvents {
     Incremented(Incremented),
 }

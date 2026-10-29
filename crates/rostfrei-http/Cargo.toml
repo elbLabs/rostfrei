@@ -12,7 +12,7 @@ readme.workspace = true
 
 [dependencies]
 axum.workspace = true
-rostfrei.workspace = true
+rostfrei-runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

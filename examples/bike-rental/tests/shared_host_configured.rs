@@ -5,17 +5,17 @@ use bike_rental::{
     demo::{demo_fixture, demo_stream},
     rental_fleet::{RentBicycle, RentBicycleHandler, RentalFleetAggregate},
 };
+use rostfrei::core::JsonEventCodec;
+use rostfrei::nats::{NatsConnectionConfig, ServicePrincipalContext, connect};
+use rostfrei::tracer::{
+    ApplicationBindings, CommandRequest, ExposeTracePayloadsForLocalDevelopment,
+    NatsExecutionProfile, NatsRuntime, NatsRuntimeConfig, TestScenarioReset,
+};
 use rostfrei::{
     Aggregate, AuditError, AuthorizationError, CommandAccess, CommandAuditRecord, CommandAuditSink,
     CommandAuthorizer, CommandDecision, CommandHandler, EventCodec, EventCodecError, EventId,
     NewEvent, OutcomeLifecycle, OutcomeReader, RecordedEvent, TrustedCommandContext,
     ValidatedCommand,
-};
-use rostfrei_core::JsonEventCodec;
-use rostfrei_nats::{NatsConnectionConfig, ServicePrincipalContext, connect};
-use rostfrei_tracer::{
-    ApplicationBindings, CommandRequest, ExposeTracePayloadsForLocalDevelopment,
-    NatsExecutionProfile, NatsRuntime, NatsRuntimeConfig, TestScenarioReset,
 };
 use serde_json::{Value, json};
 use std::{
@@ -135,7 +135,7 @@ async fn configured_service_rebuilds_and_recreated_tracer_replays_truthfully_the
 -> TestResult {
     let connection = connect(&NatsConnectionConfig::new(
         "configured-host",
-        rostfrei_testing::integration::nats_url()?,
+        rostfrei::testing::integration::nats_url()?,
     ))
     .await?;
     let context = rostfrei::ApplicationName::new(format!(
@@ -181,11 +181,11 @@ async fn configured_service_rebuilds_and_recreated_tracer_replays_truthfully_the
                 builder
                     .authorizer(policy.clone())
                     .audit_sink(Arc::new(Audit(audits.clone())))
-                    .rejection_codec(Arc::new(rostfrei_core::JsonRejectionCodec::new(
+                    .rejection_codec(Arc::new(rostfrei::core::JsonRejectionCodec::new(
                         "host.rejection",
                         17,
                     )))
-                    .conflict_retry_policy(Arc::new(rostfrei_core::BoundedConflictRetries::new(0)))
+                    .conflict_retry_policy(Arc::new(rostfrei::core::BoundedConflictRetries::new(0)))
             }
         },
         Arc::new(ServicePrincipalContext(caller.clone())),

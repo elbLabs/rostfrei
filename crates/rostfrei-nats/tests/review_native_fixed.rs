@@ -10,8 +10,10 @@ mod release_contract_support;
 use async_trait::async_trait;
 use modular_state_fault_support::StateProxy;
 use release_contract_support::*;
-use rostfrei::{CommandAccess, CommandProcessingService, PrincipalId, TrustedCommandContext};
-rostfrei::install_macro_support!();
+use rostfrei_runtime::{
+    CommandAccess, CommandProcessingService, PrincipalId, TrustedCommandContext,
+};
+rostfrei_runtime::install_macro_support!();
 
 fn caller() -> TestResult<TrustedCommandContext> {
     Ok(TrustedCommandContext::new(
@@ -90,13 +92,13 @@ fn configuration<T>(result: Result<T, EventStoreError>) {
 #[derive(Default)]
 struct AccessLog(std::sync::Mutex<Vec<CommandAccess>>);
 #[async_trait]
-impl rostfrei::CommandAuthorizer for AccessLog {
+impl rostfrei_runtime::CommandAuthorizer for AccessLog {
     async fn authorize(
         &self,
         _: &TrustedCommandContext,
-        _: &rostfrei::ValidatedCommand,
+        _: &rostfrei_runtime::ValidatedCommand,
         phase: CommandAccess,
-    ) -> Result<(), rostfrei::AuthorizationError> {
+    ) -> Result<(), rostfrei_runtime::AuthorizationError> {
         self.0.lock().unwrap().push(phase);
         Ok(())
     }
@@ -429,8 +431,8 @@ async fn transient_state_info_outage_preserves_missing_vs_known_recovery_and_rec
         let diagnostic = failed.technical_response(&command)?.unwrap();
         assert_eq!(
             diagnostic.outcome(),
-            &CommandResponseOutcome::ExecutionFailed(rostfrei::ExecutionFailure::Store(
-                rostfrei::StoreFailureKind::Unavailable
+            &CommandResponseOutcome::ExecutionFailed(rostfrei_runtime::ExecutionFailure::Store(
+                rostfrei_runtime::StoreFailureKind::Unavailable
             ))
         );
         command.validate_response(&diagnostic)?;
@@ -482,7 +484,10 @@ async fn transient_state_info_outage_preserves_missing_vs_known_recovery_and_rec
             .await
             .into_result()?;
         assert_eq!(replay.outcome(), winner.outcome());
-        assert_eq!(replay.origin(), rostfrei::CompletionOrigin::Replayed);
+        assert_eq!(
+            replay.origin(),
+            rostfrei_runtime::CompletionOrigin::Replayed
+        );
         assert_eq!(
             worker.handle(command_delivery(&command)?).await,
             DeliveryDisposition::Acknowledge
@@ -501,7 +506,7 @@ async fn transient_state_info_outage_preserves_missing_vs_known_recovery_and_rec
     }
     assert_eq!(
         service_kinds,
-        vec![rostfrei::CommandProcessorErrorKind::Unavailable; 2]
+        vec![rostfrei_runtime::CommandProcessorErrorKind::Unavailable; 2]
     );
     Ok(())
 }
@@ -542,11 +547,14 @@ async fn readonly_expired_winner_keeps_integrity_reads_and_cannot_mutate_or_admi
     let replay = CommandProcessingService::process(&p, &caller()?, &command)
         .await
         .into_result()?;
-    assert_eq!(replay.origin(), rostfrei::CompletionOrigin::Replayed);
+    assert_eq!(
+        replay.origin(),
+        rostfrei_runtime::CompletionOrigin::Replayed
+    );
     let error = replay.admit(&caller()?, &command).unwrap_err();
     assert_eq!(
         error.kind(),
-        rostfrei::CommandProcessorErrorKind::CompletedDetailsExpired
+        rostfrei_runtime::CommandProcessorErrorKind::CompletedDetailsExpired
     );
     assert!(error.technical_response(&command)?.is_none());
     assert_eq!(*log.0.lock().unwrap(), vec![CommandAccess::ReadOutcome]);

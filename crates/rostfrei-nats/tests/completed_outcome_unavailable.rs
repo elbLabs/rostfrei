@@ -2,7 +2,7 @@
 mod release_contract_support;
 use async_trait::async_trait;
 use release_contract_support::*;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 struct RefuseDecision {
     store: Arc<NatsEventStore>,

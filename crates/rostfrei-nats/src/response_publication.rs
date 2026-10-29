@@ -156,7 +156,7 @@ pub fn validate_stored_publication(
 pub fn validate_technical_logical_identity(response: &CommandResponse) -> Result<(), NatsError> {
     if let CommandResponseOutcome::ExecutionFailed(failure) = response.outcome()
         && response.message_id()
-            != &rostfrei::command_technical_response_message_id(
+            != &rostfrei_runtime::command_technical_response_message_id(
                 response.command_message_id(),
                 *failure,
             )

@@ -4,7 +4,7 @@ mod release_contract_support;
 
 use async_trait::async_trait;
 use release_contract_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     AllowAllCommands, AuthorizationError, CommandBusErrorKind, CommandProcessingService,
     PrincipalId, TrustedCommandContext,
 };
@@ -12,7 +12,7 @@ use tokio::{
     sync::Notify,
     time::{Instant, sleep, timeout},
 };
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 fn adapter(f: &Fixture) -> NatsMessagingAdapter {
     NatsMessagingAdapter::new(

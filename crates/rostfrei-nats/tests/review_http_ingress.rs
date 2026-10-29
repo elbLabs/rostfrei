@@ -3,7 +3,7 @@
 mod release_contract_support;
 use async_trait::async_trait;
 use release_contract_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     CommandBusError, CommandBusErrorKind, CommandBusObserver, CommandBusReceipt,
     CommandMessageAdapter, EncodedCommand,
 };
@@ -22,13 +22,13 @@ impl CommandMessageAdapter for Capture {
         self.calls.fetch_add(1, Ordering::SeqCst);
         *self.captured.lock().await = Some(command.clone());
         observer
-            .published(rostfrei::CommandPublication::new(
+            .published(rostfrei_runtime::CommandPublication::new(
                 command.message_id().clone(),
                 false,
             ))
             .await;
         let response = CommandResponse::accepted(
-            rostfrei::command_response_message_id(command.message_id()).unwrap(),
+            rostfrei_runtime::command_response_message_id(command.message_id()).unwrap(),
             command.message_id().clone(),
             command.address().clone(),
             command.operation_id().clone(),
@@ -82,16 +82,17 @@ async fn actual_envelope_route_limits_headers_scope_and_preserves_exact_bytes() 
         }),
     );
     let original = bus.encode(request("operation", "target", "noop")?)?;
-    let mut registry = rostfrei::DomainRegistry::new();
+    let mut registry = rostfrei_runtime::DomainRegistry::new();
     registry.register_command::<Act, Handler>()?;
-    let query = rostfrei::QueryBus::new(
+    let query = rostfrei_runtime::QueryBus::new(
         context.clone(),
-        Arc::new(rostfrei::InMemoryQueryAdapter::new(Arc::new(
-            rostfrei::QueryProcessor::new(),
+        Arc::new(rostfrei_runtime::InMemoryQueryAdapter::new(Arc::new(
+            rostfrei_runtime::QueryProcessor::new(),
         ))),
     );
-    let config = rostfrei_http::HttpApiConfig::new(rostfrei::QueryOptions::default(), 1024)?
-        .with_trusted_command_envelope_ingress();
+    let config =
+        rostfrei_http::HttpApiConfig::new(rostfrei_runtime::QueryOptions::default(), 1024)?
+            .with_trusted_command_envelope_ingress();
     let router = rostfrei_http::router(Arc::new(registry), bus.clone(), query, config);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
@@ -217,7 +218,7 @@ async fn actual_envelope_route_limits_headers_scope_and_preserves_exact_bytes() 
 struct Observer(Arc<AtomicUsize>);
 #[async_trait]
 impl CommandBusObserver for Observer {
-    async fn published(&self, _: rostfrei::CommandPublication) {
+    async fn published(&self, _: rostfrei_runtime::CommandPublication) {
         self.0.fetch_add(1, Ordering::SeqCst);
     }
 }
@@ -257,4 +258,4 @@ async fn encoded_dispatch_refuses_invalid_evidence_before_adapter_or_publication
     assert_eq!(observed.load(Ordering::SeqCst), 1);
     Ok(())
 }
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

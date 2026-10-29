@@ -13,10 +13,6 @@ use application::{
     BillingChanged, DemoChanged, Entitlement, EntitlementLookup, Entitlements, ExampleResult,
     GetEntitlement, MemberJoined, OrganizationEvent, rebuild,
 };
-use rostfrei::{
-    ApplicationName, DomainEventHandlerErrorKind, JsonReadModelCodec, QueryHandler,
-    QueryHandlerRequest, ReadModelKey, ReadModelStore,
-};
 use rostfrei_core::{
     AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventStore, ExpectedVersion,
     NewEvent, OperationId, StreamId, derive_commit_id, derive_event_id,
@@ -30,6 +26,10 @@ use rostfrei_nats::{
     NatsEventStore, NatsEventStoreConfig, NatsReadModelConfig, NatsReadModelStore,
     provision_event_store, provision_read_model,
 };
+use rostfrei_runtime::{
+    ApplicationName, DomainEventHandlerErrorKind, JsonReadModelCodec, QueryHandler,
+    QueryHandlerRequest, ReadModelKey, ReadModelStore,
+};
 
 fn envelope_context() -> ExampleResult<EnvelopeContext> {
     Ok(EnvelopeContext::new(
@@ -41,7 +41,7 @@ fn envelope_context() -> ExampleResult<EnvelopeContext> {
 }
 
 fn billing_delivery(
-    context: &rostfrei::BoundedContext,
+    context: &rostfrei_runtime::BoundedContext,
 ) -> ExampleResult<MessageDelivery<IntegrationEventAddress>> {
     let envelope = IntegrationEventEnvelope::new(
         envelope_context()?,

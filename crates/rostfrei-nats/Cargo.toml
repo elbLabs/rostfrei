@@ -23,7 +23,7 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-rostfrei.workspace = true
+rostfrei-runtime.workspace = true
 rostfrei-core.workspace = true
 rostfrei-fixtures.workspace = true
 rostfrei-messaging-core.workspace = true
@@ -33,7 +33,6 @@ axum.workspace = true
 rostfrei-http.workspace = true
 nkeys.workspace = true
 tempfile.workspace = true
-rostfrei.workspace = true
 rostfrei-testing.workspace = true
 
 [lints]

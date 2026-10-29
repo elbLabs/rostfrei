@@ -2,7 +2,7 @@
 #![allow(clippy::panic_in_result_fn, clippy::unwrap_used)]
 mod release_contract_support;
 use release_contract_support::*;
-use rostfrei::EncodedCommand;
+use rostfrei_runtime::EncodedCommand;
 
 const PREFIX: &str = r#""message_id":"response","command_message_id":"command","command_address":"acme.command.orders.place-order","operation_id":"operation","correlation_id":"correlation""#;
 
@@ -130,7 +130,7 @@ fn encoded(f: &Fixture, operation: &str, target: &str) -> TestResult<EncodedComm
 fn diagnostic(c: &EncodedCommand) -> TestResult<OutboundMessage<CommandResponseAddress>> {
     let failure = ExecutionFailure::Store(StoreFailureKind::Unavailable);
     let response = CommandResponse::execution_failed(
-        rostfrei::command_technical_response_message_id(c.message_id(), failure)?,
+        rostfrei_runtime::command_technical_response_message_id(c.message_id(), failure)?,
         c.message_id().clone(),
         c.address().clone(),
         c.operation_id().clone(),
@@ -255,7 +255,7 @@ async fn legacy_business_reader_still_allows_absent_outer_correlation() -> TestR
             "target",
         )?;
         let response = CommandResponse::accepted(
-            rostfrei::command_response_message_id(c.message_id())?,
+            rostfrei_runtime::command_response_message_id(c.message_id())?,
             c.message_id().clone(),
             c.address().clone(),
             c.operation_id().clone(),
@@ -295,7 +295,7 @@ async fn invalid_technical_correlation_is_refused_by_reads_redrive_and_publicati
         let c = encoded(&f, mode, "target")?;
         let failure = ExecutionFailure::Store(StoreFailureKind::CorruptHistory);
         let response = CommandResponse::execution_failed(
-            rostfrei::command_technical_response_message_id(c.message_id(), failure)?,
+            rostfrei_runtime::command_technical_response_message_id(c.message_id(), failure)?,
             c.message_id().clone(),
             c.address().clone(),
             c.operation_id().clone(),
@@ -391,4 +391,4 @@ async fn invalid_technical_correlation_is_refused_by_reads_redrive_and_publicati
     Ok(())
 }
 
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();

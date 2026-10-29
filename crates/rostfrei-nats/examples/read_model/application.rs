@@ -1,7 +1,7 @@
 //! Business data and event transformations. Persistence and checkpoints are automatic.
 
 use async_trait::async_trait;
-use rostfrei::{
+use rostfrei_runtime::{
     QueryErrorPayload, QueryHandler, QueryHandlerRequest, ReadModelBackend, ReadModelKey,
     ReadModelProcessingError, ReadModelReader, ReadModelRuntime, ReadModels,
 };
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::source::{BillingChanged, DemoChanged, MemberJoined, Organization};
 
-#[derive(Debug, Default, Deserialize, Eq, PartialEq, Serialize, rostfrei::ReadModel)]
+#[derive(Debug, Default, Deserialize, Eq, PartialEq, Serialize, rostfrei_runtime::ReadModel)]
 #[read_model(id = "organization-access", version = 1)]
 pub struct OrganizationAccess {
     pub members: u64,

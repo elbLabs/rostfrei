@@ -4,12 +4,12 @@
 
 use std::{net::TcpListener, num::NonZeroU32, process::Command, time::Duration};
 
-use rostfrei::{
-    ApplicationName, JsonReadModelCodec, ReadModelErrorKind, ReadModelKey, ReadModelStore,
-};
 use rostfrei_nats::{
     ConnectionHealth, NatsConnectionConfig, NatsReadModelConfig, NatsReadModelStore, connect,
     provision_read_model,
+};
+use rostfrei_runtime::{
+    ApplicationName, JsonReadModelCodec, ReadModelErrorKind, ReadModelKey, ReadModelStore,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;

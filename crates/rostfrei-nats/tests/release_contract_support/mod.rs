@@ -2,11 +2,13 @@
 #![allow(dead_code)]
 
 use async_trait::async_trait;
-pub use rostfrei::{CommandBus, CommandProcessor, CommandRequest, InMemoryMessagingAdapter};
 pub use rostfrei_core::OperationId;
 pub use rostfrei_core::*;
 pub use rostfrei_messaging_core::*;
 pub use rostfrei_nats::*;
+pub use rostfrei_runtime::{
+    CommandBus, CommandProcessor, CommandRequest, InMemoryMessagingAdapter,
+};
 use serde::{Deserialize, Serialize};
 pub use std::sync::{
     Arc,
@@ -18,11 +20,11 @@ pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>
 pub const WAIT: Duration = Duration::from_secs(8);
 static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(rostfrei::BoundedContext)]
+#[derive(rostfrei_runtime::BoundedContext)]
 #[domain(id = "release-contract", label = "Release contract")]
 pub struct ReleaseContract;
 
-#[derive(Clone, Debug, rostfrei::Command)]
+#[derive(Clone, Debug, rostfrei_runtime::Command)]
 #[domain(context = ReleaseContract, id = "act", label = "Act")]
 pub struct Act {
     pub target: String,
@@ -281,12 +283,12 @@ impl EventCodec<Target> for BadCodec {
 pub struct Trigger {
     pub target: String,
 }
-impl rostfrei::IntegrationEvent for Trigger {
+impl rostfrei_runtime::IntegrationEvent for Trigger {
     const EVENT_NAME: &'static str = "trigger";
     const SCHEMA_VERSION: u32 = 1;
 }
 pub struct Mapper;
-impl rostfrei::IntegrationCommandMapper<Trigger> for Mapper {
+impl rostfrei_runtime::IntegrationCommandMapper<Trigger> for Mapper {
     type Command = Act;
     type Error = &'static str;
     fn map(&self, event: &Trigger) -> Result<Act, Self::Error> {
@@ -304,7 +306,7 @@ pub fn trigger(
     let address = context.integration_event_address("trigger")?;
     let source = EventId::new(format!("source-{target}"))?;
     let version = SchemaVersion::new(1)?;
-    let id = rostfrei::integration_message_id(&address, version, &source)?;
+    let id = rostfrei_runtime::integration_message_id(&address, version, &source)?;
     let correlation = CorrelationId::new("trigger-correlation")?;
     let envelope = IntegrationEventEnvelope::new(
         EnvelopeContext::new(
@@ -321,7 +323,7 @@ pub fn trigger(
     Ok(OutboundMessage::json(address, id, &envelope)?.with_correlation_id(correlation))
 }
 pub fn command_delivery(
-    encoded: &rostfrei::EncodedCommand,
+    encoded: &rostfrei_runtime::EncodedCommand,
 ) -> TestResult<MessageDelivery<CommandAddress>> {
     Ok(MessageDelivery::new_with_transport_context(
         encoded.address().clone(),

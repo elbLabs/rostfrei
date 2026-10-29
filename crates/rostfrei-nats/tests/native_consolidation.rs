@@ -14,12 +14,12 @@ mod release_contract_support;
 use async_trait::async_trait;
 use modular_state_fault_support::StateProxy;
 use release_contract_support::*;
-use rostfrei::{
+use rostfrei_runtime::{
     CommandAccess, CommandProcessingService, CommandProcessorErrorKind, CompletionOrigin,
     PrincipalId, TrustedCommandContext,
 };
 use std::collections::BTreeMap;
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 
 static FIXTURE_ID: AtomicUsize = AtomicUsize::new(0);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -88,13 +88,13 @@ struct AccessCounts {
     execute: AtomicUsize,
 }
 #[async_trait]
-impl rostfrei::CommandAuthorizer for AccessCounts {
+impl rostfrei_runtime::CommandAuthorizer for AccessCounts {
     async fn authorize(
         &self,
         _: &TrustedCommandContext,
-        _: &rostfrei::ValidatedCommand,
+        _: &rostfrei_runtime::ValidatedCommand,
         access: CommandAccess,
-    ) -> Result<(), rostfrei::AuthorizationError> {
+    ) -> Result<(), rostfrei_runtime::AuthorizationError> {
         match access {
             CommandAccess::ReadOutcome => self.read.fetch_add(1, Ordering::SeqCst),
             CommandAccess::Execute => self.execute.fetch_add(1, Ordering::SeqCst),

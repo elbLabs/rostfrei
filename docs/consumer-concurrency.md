@@ -9,7 +9,7 @@ for **all workers sharing that durable consumer**. For example:
 
 ```rust
 use std::time::Duration;
-use rostfrei_messaging_core::{ApplicationName, ConsumerConfig};
+use rostfrei::messaging::{ApplicationName, ConsumerConfig};
 
 let context = ApplicationName::new("shop")?.bounded_context("orders")?;
 let config = ConsumerConfig::new(

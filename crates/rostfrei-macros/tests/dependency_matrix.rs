@@ -41,3 +41,44 @@ fn facade_bridge_is_stable_across_dependency_layouts() {
         );
     }
 }
+
+#[test]
+fn facade_features_work_without_workspace_unification() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let target = manifest_dir.join("../../target/macro-dependency-matrix");
+    for features in [
+        "",
+        "nats",
+        "http",
+        "tracer",
+        "fixtures",
+        "testing",
+        "nats,tracer",
+        "nats,http,tracer,fixtures,testing",
+    ] {
+        let output = Command::new(env!("CARGO"))
+            .args([
+                "check",
+                "--quiet",
+                "--locked",
+                "--offline",
+                "--manifest-path",
+            ])
+            .arg(manifest_dir.join("tests/dependency-matrix/Cargo.toml"))
+            .args([
+                "--package",
+                "macro-path-renamed-facade",
+                "--no-default-features",
+                "--features",
+                features,
+            ])
+            .env("CARGO_TARGET_DIR", &target)
+            .output()
+            .expect("run Cargo for facade feature fixture");
+        assert!(
+            output.status.success(),
+            "facade features `{features}` failed:\n{}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+}

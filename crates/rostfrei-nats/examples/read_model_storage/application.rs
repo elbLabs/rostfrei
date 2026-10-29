@@ -3,17 +3,17 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use rostfrei::{
-    CommittedDomainEvent, DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
-    DomainEventHandlerErrorKind, EventHistory, QueryErrorPayload, QueryHandler,
-    QueryHandlerRequest, ReadModelError, ReadModelErrorKind, ReadModelKey, ReadModelStore,
-};
 use rostfrei_core::{
     Aggregate, Event, EventCodecError, EventCodecErrorKind, EventVariant, RecordedEvent, StreamId,
 };
 use rostfrei_messaging_core::{
     DeliveryDisposition, IntegrationEventAddress, IntegrationEventEnvelope, MessageDelivery,
     MessageHandler, QuarantineReason, RetryDelay,
+};
+use rostfrei_runtime::{
+    CommittedDomainEvent, DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
+    DomainEventHandlerErrorKind, EventHistory, QueryErrorPayload, QueryHandler,
+    QueryHandlerRequest, ReadModelError, ReadModelErrorKind, ReadModelKey, ReadModelStore,
 };
 use serde::{Deserialize, Serialize};
 
