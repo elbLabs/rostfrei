@@ -23,8 +23,6 @@ import {
 
 const INSPECTION = "Bearer correlation-inspection"
 
-// A local HTTP fixture exercises bearer separation, encoded anchor paths and
-// Tracer's error bodies through the real browser network stack.
 function correlationBackend() {
   const requests = []
   let snapshot = correlationSnapshot()
@@ -452,8 +450,6 @@ async function checkSourceCutoffs(page, backend) {
     4
   )
 
-  // Exercise the public response parser through a real browser GET, including
-  // an omitted integration context and a source with sequence zero.
   const parsed = await page.evaluate(async (href) => {
     const { getAnchorCorrelations } =
       await import("/src/lib/correlation-api.ts")
@@ -544,8 +540,7 @@ async function checkRetentionEvidence(page) {
 }
 
 async function checkReadFailures(page, backend, testedStatus) {
-  // Starting from a successful graph verifies failure cannot masquerade as an
-  // empty success or leave a previous chain presented as the failed result.
+  // Seed a successful graph to detect stale evidence after a failed request.
   for (const [status, body, title] of [
     [501, correlationErrors.unavailable, /Correlation history unavailable/],
     [503, correlationErrors.readFailed, /Correlation read failed/],
@@ -701,8 +696,7 @@ async function checkFilteredSelection(page, backend) {
   await page.waitForSelector(
     '[data-graph-node][data-node-id="event:bicycle-rented"]'
   )
-  // The next read has a redacting domain payload policy: the same match no
-  // longer returns this chain. A stale graph would expose the previous payload.
+  // A later redacted response must clear previously exposed payloads.
   const filtered = anchorResponse(
     "match=bike-rental/bicycle-rented.bicycle_id=bike-42"
   )

@@ -66,7 +66,6 @@ async fn get(app: &axum::Router, path: &str, token: &str) -> TestResult<(u16, Va
     Ok((status, serde_json::from_slice(&body).unwrap_or(Value::Null)))
 }
 
-/// Integration publication is asynchronous; there is no index to catch up.
 async fn published_chain(app: &axum::Router, id: &str, count: usize) -> TestResult<Value> {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {

@@ -18,13 +18,11 @@ use crate::TracePayloadPolicy;
 /// Correlations returned for one anchor; the most recently started are kept.
 pub const MAX_ANCHOR_CORRELATIONS: usize = 256;
 pub const MAX_INCLUDED_CONTEXTS: usize = 16;
-/// Foreign streams loaded for `include`; each load replays a whole stream.
+/// Each included stream requires a full replay.
 pub const MAX_INCLUDED_STREAMS: usize = 64;
-/// `match` filters accepted by one anchored view; all of them must hold.
 pub const MAX_PAYLOAD_MATCHES: usize = 8;
-/// Longest `match` value, in bytes after URL decoding.
+/// Measured after URL decoding.
 pub const MAX_PAYLOAD_MATCH_VALUE_BYTES: usize = 256;
-/// Deepest `match` field path, in dot-separated segments.
 pub const MAX_PAYLOAD_MATCH_FIELD_SEGMENTS: usize = 8;
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -115,10 +113,8 @@ pub struct DomainRefView {
     pub payload: Option<Value>,
 }
 
-/// Keeps a correlation when a domain reference of `context` and `event_type`
-/// has a loaded, policy-filtered payload with the requested value at `field`.
-///
-/// Nulls, objects, arrays, missing fields and integration references never match.
+/// Matches only loaded, policy-filtered domain payloads. Nulls, objects, arrays,
+/// missing fields and integration references never match.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PayloadMatch {
     pub context: String,

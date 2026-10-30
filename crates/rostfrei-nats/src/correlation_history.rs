@@ -1,5 +1,3 @@
-//! On-demand evidence from native filtered, ephemeral `JetStream` consumers.
-
 use crate::{
     CORRELATION_ID_HEADER, MessagingTopology, NatsEventStoreConfig,
     event_store::decode_consumed_event, integration_subject,
@@ -38,7 +36,7 @@ const API_TIMEOUT: Duration = Duration::from_secs(5);
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 
-/// A read-only handle. Connecting verifies sources and starts no consumers or tasks.
+/// Connecting verifies sources without starting consumers or tasks.
 #[derive(Clone)]
 pub struct NatsCorrelationHistory {
     context: jetstream::Context,
@@ -141,8 +139,7 @@ impl NatsCorrelationHistory {
         ids: BTreeSet<String>,
         permit: Arc<OwnedSemaphorePermit>,
     ) -> Result<CorrelationRead, EventStoreError> {
-        // Capture ALL source cutoffs before opening any replay. Empty-ID requests
-        // still verify coverage and return the same source snapshot contract.
+        // Empty selections must still verify every source and capture its cutoff.
         let sources = self.capture().await?;
         let state = Mutex::new(ReadState::new(&ids, self.limits));
         if !ids.is_empty() {
@@ -222,8 +219,6 @@ impl NatsCorrelationHistory {
             let Some(message) = replay.next().await? else {
                 break;
             };
-            // Account encoded envelopes before decoding. Payloads are temporary
-            // and never enter the returned references or the reader handle.
             let bytes = message
                 .length
                 .checked_add(512)

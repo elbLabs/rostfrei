@@ -7,8 +7,6 @@ use rostfrei_nats::{
 
 use super::{NatsHostError, NatsRuntime, NatsRuntimeConfig, TracerConfig};
 
-/// Validate before starting workers. A context identifies exactly one retained
-/// domain source; silently replacing a conflicting source would hide evidence.
 pub(super) fn sources(
     tracer: &TracerConfig,
     test: &NatsRuntimeConfig,

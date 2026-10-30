@@ -1,8 +1,3 @@
-//! Read-only correlation evidence from retained event sources.
-//!
-//! Correlation groups messages; only explicit causation identifies a direct
-//! cause. A read neither proves flow completion nor recovers expired messages.
-
 use async_trait::async_trait;
 use rostfrei_messaging_core::{CorrelationId, MessageTimestamp};
 use serde::{Deserialize, Serialize};

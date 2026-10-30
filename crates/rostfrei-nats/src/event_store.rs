@@ -4297,8 +4297,6 @@ fn reject_opaque_subject_layout(expected: &Config, actual: &Config) -> Result<()
     Ok(())
 }
 
-// Broker filters select history; this only validates the returned address before
-// decoding its exact concrete subject and aggregate identity.
 fn matches_history_subject(subject: &str, filter: &str) -> bool {
     let mut tokens = subject.split('.');
     filter.split('.').all(|expected| {

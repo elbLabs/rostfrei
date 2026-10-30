@@ -470,8 +470,7 @@ async fn attaching_observation_preserves_an_in_flight_integration_handler()
         .tracer_builder()
         .with_continuous_observation(feed.clone())
         .build()?;
-    // Both first attachment and replacement of the same named source must leave
-    // the application handler alive, while waiting for the old source to release.
+    // The second attachment replaces the same named source.
     for _ in 0..2 {
         host.runtime()
             .attach_observer(tracer.correlation_observer(OperationMode::Test))
@@ -479,8 +478,6 @@ async fn attaching_observation_preserves_an_in_flight_integration_handler()
         assert!(host.runtime().has_correlation_observer().await);
         assert_eq!(feed.snapshot().status, ObservationStatus::Live);
     }
-    // A source-registration failure exercises attachment rollback without
-    // interrupting the broker resources needed by the paused application handler.
     let unavailable_feed = ObservationFeed::new(application, ObservationScope::Test);
     let occupied = unavailable_feed.source("bike-rental")?;
     let invalid_tracer = host

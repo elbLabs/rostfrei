@@ -23,8 +23,6 @@ fn correlated_batch(
     Ok(events)
 }
 
-// The broker applies next_by_subj. No envelope scanning or client-side matching
-// can make these assertions pass when the subject lacks either identity.
 async fn broker_subjects(
     context: &async_nats::jetstream::Context,
     store: &NatsEventStore,
@@ -50,8 +48,6 @@ async fn broker_subjects(
 #[tokio::test]
 async fn ordinary_appends_store_readable_identity_and_escaped_metadata_tokens() -> TestResult<()> {
     let (context, store) = directory_fixture("subject-tokens").await?;
-    // Expected encodings are literal contract examples, independent of the
-    // production token helper. An actual '~' must differ from an absent ID.
     let examples = [
         (
             "RentalFleet",
@@ -591,8 +587,6 @@ async fn atomic_multi_aggregate_writes_and_read_guards_cover_all_metadata_subjec
     let mut expected_expectations = vec![Some(format!(
         "{prefix}.aggregate.IntegrationAggregate.guard.*.*"
     ))];
-    // Inspect the first event of each writing participant by envelope identity;
-    // this assertion also runs against the baseline's opaque stored subjects.
     for aggregate in [&writer, &secondary] {
         let expected_event = accepted
             .receipt()

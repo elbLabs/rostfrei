@@ -121,8 +121,6 @@ impl EventHistory for CountingHistory {
     }
 }
 
-// The fake supplies already-retained evidence and a captured source snapshot.
-// Broker filtering, cutoff capture, and expiry are exercised by the native reader tests.
 #[derive(Default)]
 struct FakeHistory {
     state: Mutex<FakeReadState>,
@@ -698,7 +696,6 @@ async fn service_facades_use_one_batched_retained_read_per_query() {
 #[tokio::test]
 async fn expired_integration_nodes_are_absent_and_dangling_causation_is_preserved() {
     let scenario = scenario().await;
-    // Represent a subsequent retained read after the source has expired this message.
     scenario
         .history
         .state
@@ -841,7 +838,6 @@ async fn match_keeps_correlations_whose_loaded_payloads_carry_the_value() {
             "include=context:billing&match=billing/changed.amount=12&match=ordering/changed.placed=true",
             vec![],
         ),
-        // Other streams in the anchor context still require an explicit include.
         ("match=ordering/changed.vip=true", vec![]),
         (
             "include=context:ordering&match=ordering/changed.vip=true",

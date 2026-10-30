@@ -643,8 +643,6 @@ impl NatsRuntime {
                 "a worker has exited; stop the runtime before restarting".into(),
             ));
         }
-        // An observer owns no application deliveries. Replacing it must not
-        // abort command, integration or domain work and strand its pending ACKs.
         // Release the old source guard before registering the same source again.
         let mut configured = self.observer.lock().await;
         *configured = None;
@@ -652,8 +650,6 @@ impl NatsRuntime {
             worker.abort();
             let _ = worker.await;
         }
-        // Failure leaves observation unattached and application workers running.
-        // The caller receives the error and can explicitly retry attachment.
         let worker = self.start_correlation_observer(observer.clone()).await?;
         *configured = Some(observer);
         drop(configured);
@@ -816,9 +812,8 @@ impl TracerConfig {
         self
     }
 
-    /// Registers an existing Normal domain store for read-only correlation
-    /// inspection. This does not provision resources or start application workers.
-    /// The attached dispatch runtime's store is included automatically.
+    /// Adds an existing Normal store for inspection without provisioning or starting workers.
+    /// The dispatch runtime's store is registered automatically.
     #[must_use]
     pub fn with_production_event_store(mut self, config: NatsEventStoreConfig) -> Self {
         self.production_event_stores.push(config);

@@ -24,8 +24,6 @@ use correlation_history_support::{
     stream_names, wait_for_consumer_count,
 };
 
-// Exercise the public adapter against retained events on a real broker.
-
 #[tokio::test]
 async fn native_union_accepts_the_full_256_correlation_anchor_window() -> TestResult {
     let fixture = Fixture::new().await?;
@@ -69,8 +67,6 @@ async fn native_union_reads_two_contexts_and_one_shared_integration_snapshot() -
         .await?;
     let expected_snapshot = fixture.snapshot().await?;
 
-    // Observe the actual native consumer requests: one union per source, not a
-    // full-source scan or an independent replay for every requested correlation.
     let mut creates = fixture
         .connection
         .client()
@@ -219,7 +215,6 @@ async fn repeated_subjects_cross_native_batches_and_sparse_or_empty_matches_term
     let absent = chain(&read, "absent")?;
     assert!(absent.refs.is_empty());
     assert!(!absent.truncated);
-    // An entirely empty selection must also finish without a replay heartbeat.
     let empty = tokio::time::timeout(
         Duration::from_secs(3),
         reader.load_correlations(&[CorrelationId::new("never-stored")?]),

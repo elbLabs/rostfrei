@@ -205,7 +205,7 @@ export function correlationFailure(error: unknown): CorrelationFailure {
   return error.status === 404 ? "not-found" : "request-failed"
 }
 
-// Source cutoffs are independent and stay decimal strings throughout the UI.
+// Decimal strings preserve sequence values beyond JavaScript's safe integer range.
 function parseSnapshot(body: Record<string, unknown>): CorrelationSnapshot {
   const snapshot = record(body.snapshot)
   if (!Array.isArray(snapshot?.sources))
