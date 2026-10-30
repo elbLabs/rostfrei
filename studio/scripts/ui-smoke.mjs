@@ -19,6 +19,7 @@ import {
   SAMPLE_FIXTURES,
 } from "./fixtures.mjs"
 import { checkContinuousObservation } from "./observation-smoke.mjs"
+import { checkCorrelations } from "./correlation-smoke.mjs"
 
 const { server, url } = await startStudioServer({
   define: { "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api") },
@@ -757,6 +758,7 @@ try {
   await checkApiTimeouts(browser, url)
   console.log("Verified API request deadlines and partial capture evidence")
   await checkContinuousObservation()
+  await checkCorrelations()
   console.log(
     `PASS: explicit connection failures and read-only retry; no demo fallback; canonical bicycle-added fixtures; behavioral runs and offline history; layouts and hotkeys; inspector and causal edges; 6 responsive widths; Test-default command forms, explicit uncommitted handler diagnostics without graph/capture, retired Preview absence, exact numeric payloads, idempotency, input refresh and operation identities; failed expectations, ambiguous responses and storage failure. All API responses were mocked. Screenshots: ${path.join(tmpdir(), "rostfrei-studio-*.png")}`
   )

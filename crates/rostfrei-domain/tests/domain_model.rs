@@ -44,6 +44,35 @@ pub enum MailboxEvents {
     Event0(MailboxOpened),
 }
 
+#[derive(DomainIdentity)]
+pub struct ThreadId(u64);
+
+#[derive(Entity)]
+#[domain(id = "thread-root", label = "Thread")]
+pub struct ThreadRoot {
+    id: ThreadId,
+}
+
+impl domain::EntityDefinition for ThreadRoot {
+    type Owner = Thread;
+    type Identity = ThreadId;
+
+    fn identity(&self) -> &Self::Identity {
+        &self.id
+    }
+}
+
+#[derive(Aggregate)]
+#[domain(id = "thread", label = "Thread")]
+pub struct Thread;
+
+impl domain::AggregateDefinition for Thread {
+    type Context = Inbox;
+    type Root = ThreadRoot;
+    type Event = domain::NoDomainEvents;
+    const ANCHOR: bool = true;
+}
+
 #[derive(ValueObject)]
 #[domain(id = "email-address", label = "Email address")]
 struct EmailAddress(String);
@@ -188,6 +217,25 @@ fn compiles_explicit_domain_model_to_json() {
     let address = EmailAddress("team@example.com".to_owned());
     assert_eq!(root.id.0, 1);
     assert_eq!(address.0, "team@example.com");
+}
+
+#[test]
+fn projects_the_anchor_role_only_for_declared_anchors() {
+    let model = domain_model! {
+        contexts: [Inbox],
+        aggregates: [Mailbox, Thread],
+        entities: [MailboxRoot, ThreadRoot],
+        value_objects: [EmailAddress],
+        services: [],
+        errors: [],
+    }
+    .expect("domain model should be valid");
+
+    let aggregates = model["aggregates"].as_array().unwrap();
+    assert_eq!(aggregates[0]["id"]["local"], "mailbox");
+    assert!(aggregates[0].get("anchor").is_none());
+    assert_eq!(aggregates[1]["id"]["local"], "thread");
+    assert_eq!(aggregates[1]["anchor"], true);
 }
 
 #[test]

@@ -464,12 +464,14 @@ function indeterminateSubmissionError(): CommandSubmissionIndeterminateError {
   )
 }
 
-class TracerResponseError extends Error {
+export class TracerResponseError extends Error {
   readonly status: number
+  readonly code?: string
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message)
     this.status = status
+    this.code = code
   }
 
   override name = "TracerResponseError"
@@ -498,7 +500,8 @@ async function responseError(response: Response): Promise<TracerResponseError> {
       body.message || body.code
         ? `${fallback}: ${body.message ?? body.code}`
         : fallback,
-      response.status
+      response.status,
+      typeof body.code === "string" ? body.code : undefined
     )
   } catch {
     return new TracerResponseError(fallback, response.status)

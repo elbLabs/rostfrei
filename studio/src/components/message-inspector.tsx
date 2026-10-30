@@ -8,6 +8,7 @@ import type { FlowView, MessageGraphNode } from "@/lib/types"
 interface MessageInspectorProps {
   node?: MessageGraphNode
   parent?: MessageGraphNode
+  siblings?: number
   view: FlowView
   hidden: boolean
   closable: boolean
@@ -17,6 +18,7 @@ interface MessageInspectorProps {
 export function MessageInspector({
   node,
   parent,
+  siblings = 0,
   view,
   hidden,
   closable,
@@ -80,19 +82,34 @@ export function MessageInspector({
                   ? "Root command. Evaluates the fixture state; the fixture is not its cause."
                   : parent && node.edgeFidelity === "exact"
                     ? `${view === "expected" ? "Expected after" : view === "predicted" ? "Predicted after" : "Caused by"} ${parent.name}.`
-                    : node.kind === "command" &&
-                        node.subject !== false &&
-                        !node.causationId
-                      ? "Root command for this execution."
-                      : view === "expected"
-                        ? "No parent specified in the expectation."
-                        : "Associated with this flow. No resolved causal parent is available."}
+                    : view === "retained" &&
+                        node.causationId &&
+                        node.causationId === node.messageId
+                      ? "Origin of this correlation. The message names itself as its cause."
+                      : view === "retained" && node.causationId
+                        ? `Cause not returned in these retained events. Its type and reason for absence are unknown.${siblings ? ` ${siblings} other ${siblings === 1 ? "event shares" : "events share"} this cause.` : ""}`
+                        : node.kind === "command" &&
+                            node.subject !== false &&
+                            !node.causationId
+                          ? "Root command for this execution."
+                          : view === "expected"
+                            ? "No parent specified in the expectation."
+                            : "Associated with this flow. No resolved causal parent is available."}
             </p>
           </section>
 
           <section className="inspector-section">
             <h3>{node.kind === "command" ? "Request" : "Payload"}</h3>
-            <PayloadList payload={node.payload} />
+            <PayloadList
+              payload={node.payload}
+              unavailable={
+                view === "retained"
+                  ? node.kind === "integration-event"
+                    ? "Not loaded in this response. Integration references contain metadata only."
+                    : "Not loaded in this response. Domain payloads depend on the selected anchor, included contexts and Tracer's payload policy."
+                  : undefined
+              }
+            />
           </section>
 
           {node.kind === "command" && (
@@ -133,7 +150,11 @@ export function MessageInspector({
             <dl className="payload-list">
               <Metadata
                 label="Schema version"
-                value={String(node.schemaVersion)}
+                value={
+                  node.schemaVersion === undefined
+                    ? undefined
+                    : String(node.schemaVersion)
+                }
               />
               <Metadata label="Context" value={node.boundedContext} />
               <Metadata label="Aggregate type" value={node.aggregateType} />
@@ -144,6 +165,14 @@ export function MessageInspector({
                   node.streamVersion === undefined
                     ? undefined
                     : String(node.streamVersion)
+                }
+              />
+              <Metadata
+                label="Occurred at"
+                value={
+                  node.occurredAt === undefined
+                    ? undefined
+                    : new Date(node.occurredAt).toISOString()
                 }
               />
             </dl>
@@ -239,13 +268,15 @@ interface PayloadRow {
 
 function PayloadList({
   payload,
+  unavailable = "Redacted or unavailable.",
   collapseDuplicateRejectionDetails = false,
 }: {
   payload: unknown
+  unavailable?: string
   collapseDuplicateRejectionDetails?: boolean
 }) {
   if (payload === undefined)
-    return <p className="payload-unavailable">Redacted or unavailable.</p>
+    return <p className="payload-unavailable">{unavailable}</p>
   let rows = flattenPayload(payload)
   if (collapseDuplicateRejectionDetails) {
     const values = new Map(rows.map((row) => [row.path, row]))

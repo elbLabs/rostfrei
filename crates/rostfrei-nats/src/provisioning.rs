@@ -6,12 +6,13 @@ use async_nats::jetstream::{
     stream::{self, DiscardPolicy, RetentionPolicy, StorageType},
 };
 use rostfrei_messaging_core::{
-    ApplicationName, ConsumerConfig, MAX_CONCURRENCY, MAX_MESSAGE_PAYLOAD_BYTES,
-    PublishableAddress, TrafficScope,
+    AddressKind, ApplicationName, ConsumerConfig, IntegrationEventAddress, MAX_CONCURRENCY,
+    MAX_MESSAGE_PAYLOAD_BYTES, PublishableAddress, TrafficScope,
 };
 
 use crate::{
     error::NatsError,
+    integration_subject::IntegrationEventSubject,
     messaging_config::{MessagingTopology, StreamName, SubjectFilter, traffic_subject_prefix},
     stream_policy::{is_stream_not_found, stream_config_mismatches},
 };
@@ -253,11 +254,10 @@ impl ApplicationMessagingConfig {
             application,
             traffic_scope,
             topology.integration_event_stream().clone(),
-            vec![application_subject_filter(
-                application,
-                traffic_scope,
-                "integration",
-            )?],
+            vec![SubjectFilter::new(format!(
+                "{}.integration.*.*.>",
+                traffic_subject_prefix(application.as_str(), traffic_scope),
+            ))?],
             StreamRetention::Limits,
         )?
         .with_description(format!("{} integration events", application.as_str()))
@@ -380,6 +380,7 @@ pub async fn provision_stream(
 ) -> Result<stream::Info, NatsError> {
     match context.get_stream(config.name().as_str()).await {
         Ok(existing) => {
+            verify_integration_subject_layout(config, existing.cached_info())?;
             let subjects = existing
                 .cached_info()
                 .config
@@ -409,6 +410,17 @@ pub async fn provision_application_messaging(
     context: &jetstream::Context,
     config: &ApplicationMessagingConfig,
 ) -> Result<(), NatsError> {
+    // Reject an unsupported cutover before mutating any application streams.
+    match context
+        .get_stream(config.topology().integration_event_stream().as_str())
+        .await
+    {
+        Ok(existing) => {
+            verify_integration_subject_layout(config.integration_events(), existing.cached_info())?;
+        }
+        Err(error) if is_stream_not_found(&error) => {}
+        Err(_) => return Err(NatsError::Provisioning),
+    }
     for stream in config.streams() {
         provision_stream(context, stream).await?;
     }
@@ -424,11 +436,31 @@ pub async fn verify_application_messaging(
             .get_stream(expected.name().as_str())
             .await
             .map_err(|_| NatsError::StreamNotFound)?;
+        verify_integration_subject_layout(expected, stream.cached_info())?;
         let expected = expected.as_nats_config()?;
         let actual = &stream.cached_info().config;
         if !stream_config_mismatches(&expected, actual).is_empty() {
             return Err(NatsError::Configuration);
         }
+    }
+    Ok(())
+}
+
+fn verify_integration_subject_layout(
+    expected: &StreamProvisioningConfig,
+    actual: &stream::Info,
+) -> Result<(), NatsError> {
+    let native = format!(
+        "{}.integration.*.*.>",
+        traffic_subject_prefix(expected.application().as_str(), expected.traffic_scope()),
+    );
+    if expected
+        .subjects()
+        .iter()
+        .any(|subject| subject.as_str() == native)
+        && actual.config.subjects != [native]
+    {
+        return Err(NatsError::IntegrationSubjectLayout);
     }
     Ok(())
 }
@@ -465,7 +497,14 @@ where
         ack_wait: config.ack_wait(),
         // The adapter enforces the bound so it can quarantine before terminating delivery.
         max_deliver: -1,
-        filter_subject: config.address().as_str().to_owned(),
+        filter_subject: if config.address().kind() == AddressKind::IntegrationEvent {
+            IntegrationEventSubject::filter(
+                &IntegrationEventAddress::parse(config.address().as_str())
+                    .map_err(|_| NatsError::Configuration)?,
+            )
+        } else {
+            config.address().as_str().to_owned()
+        },
         max_ack_pending,
         max_batch,
         ..Default::default()
@@ -530,7 +569,7 @@ mod tests {
         );
         assert_eq!(
             config.integration_events.subjects()[0].as_str(),
-            "fast-inbox.integration.>"
+            "fast-inbox.integration.*.*.>"
         );
         assert_eq!(
             config.quarantine.subjects()[0].as_str(),

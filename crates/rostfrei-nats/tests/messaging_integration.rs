@@ -10,6 +10,8 @@ mod consumer;
 mod error;
 #[path = "../src/hex.rs"]
 mod hex;
+#[path = "../src/integration_subject.rs"]
+mod integration_subject;
 #[path = "../src/messaging_adapter.rs"]
 mod messaging_adapter;
 #[path = "../src/messaging_config.rs"]
@@ -26,6 +28,10 @@ mod response_publication;
 mod response_storage;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
+#[path = "messaging/subject_correlations.rs"]
+mod subject_correlations;
+#[path = "../src/subject_tokens.rs"]
+mod subject_tokens;
 
 use std::{
     collections::HashSet,
@@ -79,11 +85,18 @@ struct Fixture {
 
 impl Fixture {
     async fn new(url: String) -> TestResult<Self> {
+        Self::new_in_scope(url, rostfrei_messaging_core::TrafficScope::Normal).await
+    }
+
+    async fn new_in_scope(
+        url: String,
+        scope: rostfrei_messaging_core::TrafficScope,
+    ) -> TestResult<Self> {
         let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let application = ApplicationName::new(format!("test-{}-{sequence}", std::process::id()))?;
-        let context = application.bounded_context("messaging")?;
-        let messaging =
-            ApplicationMessagingConfig::new(&application)?.with_max_bytes(64 * 1024 * 1024)?;
+        let context = application.bounded_context_in_scope(scope, "messaging")?;
+        let messaging = ApplicationMessagingConfig::new_in_scope(&application, scope)?
+            .with_max_bytes(64 * 1024 * 1024)?;
         let topology = messaging.topology().clone();
         let connection = connect(&NatsConnectionConfig::new(
             format!("messaging-test-{sequence}"),

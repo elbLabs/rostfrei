@@ -1796,6 +1796,7 @@ dependencies = [
  "base64",
  "futures-util",
  "http-body-util",
+ "percent-encoding",
  "rostfrei-core",
  "rostfrei-domain",
  "rostfrei-fixtures",

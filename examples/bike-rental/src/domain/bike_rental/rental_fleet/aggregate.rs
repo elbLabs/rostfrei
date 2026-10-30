@@ -8,6 +8,8 @@ use crate::domain::BikeRental;
 pub struct RentalFleetAggregate;
 
 impl AggregateDefinition for RentalFleetAggregate {
+    const ANCHOR: bool = true;
+
     type Context = BikeRental;
     type Root = RentalFleet;
     type Event = RentalFleetEvent;

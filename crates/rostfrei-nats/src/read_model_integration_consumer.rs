@@ -13,6 +13,7 @@ use rostfrei_runtime::{ReadModel, ReadModelRuntime};
 use crate::{
     MessagingTopology, NatsError, NatsReadModelConsumerOptions, ReadModelWorkerError,
     consumer::{process_integration_message, verify_consumer_settings},
+    integration_subject::{IntegrationEventSubject, logical_address},
     provisioning::durable_consumer_config,
     read_model_worker::consumer_purpose,
 };
@@ -88,10 +89,12 @@ impl ReadModelIntegrationConsumer {
             let Some(message) = next else {
                 break;
             };
+            let address = logical_address(message.subject.as_str())
+                .map_err(|_| ConsumeError::new(ConsumeErrorKind::InvalidConfiguration))?;
             let route = self
                 .configuration
                 .routes
-                .get(message.subject.as_str())
+                .get(address.as_str())
                 .ok_or_else(|| ConsumeError::new(ConsumeErrorKind::InvalidConfiguration))?;
             process_integration_message(
                 &self.context,
@@ -172,7 +175,10 @@ fn configuration<M: ReadModel>(
     let mut expected = durable_consumer_config(&first.config)?;
     if routes.len() > 1 {
         expected.filter_subject.clear();
-        expected.filter_subjects = routes.keys().cloned().collect();
+        expected.filter_subjects = routes
+            .values()
+            .map(|route| IntegrationEventSubject::filter(route.config.address()))
+            .collect();
     }
     Ok(Some(Configuration {
         durable: durable.as_str().to_owned(),
