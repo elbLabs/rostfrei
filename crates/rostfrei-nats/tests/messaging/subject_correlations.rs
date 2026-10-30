@@ -48,8 +48,6 @@ async fn integration_stream(
         .await?)
 }
 
-// JetStream applies next_by_subj on the broker. No client-side envelope scan
-// can satisfy these assertions when the control IDs are absent from subjects.
 async fn native_filtered_ids(fixture: &Fixture, filter: &str) -> TestResult<Vec<String>> {
     let stream = integration_stream(fixture).await?;
     let cutoff = stream.cached_info().state.last_sequence;

@@ -383,7 +383,6 @@ impl TracerBuilder {
         self
     }
 
-    /// Enables read-only inspection of retained production correlation evidence.
     #[must_use]
     pub fn with_correlation_history(mut self, history: Arc<dyn CorrelationHistory>) -> Self {
         self.correlation_history = Some(history);

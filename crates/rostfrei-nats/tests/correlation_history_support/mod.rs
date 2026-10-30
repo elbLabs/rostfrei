@@ -209,7 +209,6 @@ pub async fn append_domain(
                     derive_event_id(&commit, u32::try_from(ordinal)?),
                     "order-changed",
                     1,
-                    // The reader needs no application payload codec, even for non-JSON facts.
                     b"opaque-domain-payload".to_vec(),
                 )?)
             })

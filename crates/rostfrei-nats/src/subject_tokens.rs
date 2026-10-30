@@ -1,8 +1,4 @@
-//! Canonical, readable identifier tokens for NATS event subjects.
-//!
-//! Business identifiers remain in their envelopes. Escaping every byte except
-//! ASCII letters, digits, hyphens and underscores prevents a literal identifier
-//! from changing subject boundaries or becoming a wildcard. `~` denotes absence.
+//! Unescaped `~` denotes absence; a literal `~` is encoded as `%7E`.
 
 pub fn encode(value: &str) -> String {
     let mut token = String::with_capacity(value.len());

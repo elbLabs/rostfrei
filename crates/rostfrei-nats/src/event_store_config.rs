@@ -291,7 +291,6 @@ impl NatsEventStoreConfig {
         self.aggregate_subject_filter()
     }
 
-    /// Concrete address of an event, including its independent causal identities.
     pub fn event_subject(
         &self,
         aggregate_type: &str,
@@ -309,8 +308,7 @@ impl NatsEventStoreConfig {
         )
     }
 
-    /// All events of one aggregate, across correlation and causation changes.
-    /// Also used by native aggregate-wide optimistic concurrency preconditions.
+    /// Used for both replay and native aggregate-wide concurrency checks.
     pub fn aggregate_history_subject_filter(
         &self,
         aggregate_type: &str,

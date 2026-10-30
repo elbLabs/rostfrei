@@ -54,8 +54,7 @@ function integration(context, event, cause, offset) {
   }
 }
 
-// Two bounded contexts: the rental starts in bike-rental, billing consumes its
-// integration event through a command that is outside retained event history.
+// Command causes are outside retained event history.
 export function correlationChains() {
   return [
     {
@@ -215,7 +214,6 @@ function equals(actual, expected) {
   return false
 }
 
-// Mirrors the anchored view's include/match contract for fixture sessions.
 export function anchorResponse(search, snapshot) {
   const params = new URLSearchParams(search)
   const contexts = params

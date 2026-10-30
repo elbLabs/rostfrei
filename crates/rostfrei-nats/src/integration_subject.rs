@@ -122,8 +122,6 @@ pub fn outbound_envelope(
     Ok(envelope)
 }
 
-/// Shared validation for durable workers and retained-history readers. A physical
-/// subject, canonical envelope and single adapter-owned headers must agree.
 pub fn decode_message(
     subject: &str,
     headers: Option<&HeaderMap>,
