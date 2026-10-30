@@ -281,6 +281,41 @@ async fn registration_collisions_and_malformed_fixture_fail_before_any_write() -
     Ok(())
 }
 
+struct BoundCounter;
+impl Aggregate for BoundCounter {
+    type State = i64;
+    type Event = Added;
+    const BOUNDED_CONTEXT: &'static str = "modular";
+    const AGGREGATE_TYPE: &'static str = "modular/bound-counter";
+    fn initial(_: &StreamId) -> i64 {
+        0
+    }
+    fn apply(state: &mut i64, e: &Added) {
+        *state = state.saturating_add(e.0);
+    }
+}
+
+#[test]
+fn shared_registry_must_contain_every_bound_aggregate() -> TestResult {
+    let mut bindings = rostfrei_tracer::ApplicationBindings::new()
+        .with_event_codecs(Arc::new(AggregateCodecs::default()));
+    let error = bindings.register_aggregate::<BoundCounter>().err();
+    assert!(
+        matches!(
+            error,
+            Some(rostfrei_tracer::ApplicationBindingError::UnknownAggregateCodec { ref aggregate_type })
+                if aggregate_type.as_str() == "modular/bound-counter"
+        ),
+        "a frozen registry must not silently fall back to generated JSON: {error:?}"
+    );
+    let mut codecs = AggregateCodecs::default();
+    codecs.register_json::<BoundCounter>()?;
+    rostfrei_tracer::ApplicationBindings::new()
+        .with_event_codecs(Arc::new(codecs))
+        .register_aggregate::<BoundCounter>()?;
+    Ok(())
+}
+
 struct OtherCounter;
 impl Aggregate for OtherCounter {
     type State = i64;

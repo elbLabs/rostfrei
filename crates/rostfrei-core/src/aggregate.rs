@@ -137,6 +137,7 @@ pub enum EventCodecErrorKind {
     UnknownEventType,
     UnsupportedSchemaVersion,
     MalformedPayload,
+    ConversionFailed,
     InvalidEnvelope,
     EncodingFailed,
 }

@@ -23,9 +23,26 @@ pub fn __install_test_macro_support(input: TokenStream) -> TokenStream {
     .into()
 }
 
+mod event_codec;
 mod query;
 mod read_model;
 mod support;
+
+/// Composes named historical event conversions through the runtime codec builder.
+///
+/// Apply `#[event_codec(aggregate = Inventory)]` to an inherent impl and mark
+/// conversion methods with `#[upcast]`. Install `rostfrei::install_macro_support!()`
+/// at the consuming crate root, then explicitly register `Codec::builder().build()?`
+/// in `AggregateCodecs`. Fallible methods use `Result<CurrentEvent, Error>`.
+///
+/// See the [schema-evolution guide](https://elblabs.github.io/rostfrei/docs/event-schema-evolution)
+/// for a complete declaration, manual builder, and compatibility-release encoder.
+#[proc_macro_attribute]
+pub fn event_codec(args: TokenStream, input: TokenStream) -> TokenStream {
+    event_codec::expand(args.into(), input.into())
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
 
 #[proc_macro_derive(QueryDefinition, attributes(rostfrei))]
 pub fn derive_query_definition(input: TokenStream) -> TokenStream {

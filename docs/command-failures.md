@@ -13,7 +13,7 @@ Diagnostic strings are not a protocol; business rejection remains a separate out
 | Corrupt history | Repair, then explicit redrive | Quarantine | 500 |
 | Capacity exhausted | Restore capacity or address transaction size, then redrive | Quarantine | 500 |
 | Store configuration mismatch | Fix configuration, then redrive | Quarantine | 500 |
-| Unknown event/schema, malformed payload/envelope, encoding failure | Repair codec/data compatibility, then redrive | Quarantine | 500 |
+| Unknown event/schema, malformed payload/envelope, conversion or encoding failure | Repair codec/data compatibility, then redrive | Quarantine | 500 |
 | Invalid processor, rejection mapper, or tracking/finalization configuration | Repair application contract, then redrive | Quarantine | 500 |
 | Operation identity conflict | Correct request identity | Rejection ACK | 409 |
 | Invalid request or payload | Correct request | Rejection ACK after required outcome durability | 400 |
@@ -34,6 +34,10 @@ Business responses use schema 1. Technical responses use schema 2 with
 workers emit schema 2; old readers cannot decode it. Keep readers compatible while
 these records remain. Technical diagnostics expire with response retention
 (default 30 days); they are not permanent completed outcomes.
+
+Fallible event upcasts can emit codec kind `conversion_failed` in schema-2
+responses. Upgrade response readers before enabling those conversions; older
+readers reject the new kind. Keep those readers for the response-retention window.
 
 Transient diagnostics cause retry, never successful ACK. A later completed result
 can supersede them. Blocked diagnostics require usable retained response evidence,

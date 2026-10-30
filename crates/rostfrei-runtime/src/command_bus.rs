@@ -1679,6 +1679,7 @@ pub fn command_technical_response_message_id(
             "codec.unsupported_schema_version"
         }
         ExecutionFailure::Codec(CodecFailureKind::MalformedPayload) => "codec.malformed_payload",
+        ExecutionFailure::Codec(CodecFailureKind::ConversionFailed) => "codec.conversion_failed",
         ExecutionFailure::Codec(CodecFailureKind::InvalidEnvelope) => "codec.invalid_envelope",
         ExecutionFailure::Codec(CodecFailureKind::EncodingFailed) => "codec.encoding_failed",
         ExecutionFailure::Processor(ProcessorFailureKind::InvalidConfiguration) => {

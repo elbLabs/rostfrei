@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Typed private-event codec composition and `#[event_codec(aggregate = ...)]`
+  declarations with ordinary `#[upcast]` methods, including fallible conversions.
+  Explicit application-owned encoders support compatibility releases that read
+  both schemas while still writing the old format.
+- `EventCodecErrorKind::ConversionFailed` distinguishes application conversion
+  errors from malformed payloads, with original-record context.
+- `ReadModels::with_event_codecs` decodes live domain events and history catch-up
+  through the application's shared `AggregateCodecs`. Without it, read models keep
+  the generated JSON codec.
+- Maintained private-event evolution example (`cargo run -p bike-rental --example
+  event_evolution`) and [schema evolution guide](docs/event-schema-evolution.md):
+  genuine v1 history, typed conversions, reader-first rollout, lossless old-format
+  writes and mixed reloads, tested in memory and through real NATS workers.
+
+### Changed
+
+- **Breaking (shared codecs):** with an installed `with_event_codecs` registry,
+  `ApplicationBindings::register_aggregate` and read-model domain registration
+  reject an aggregate without a codec in it instead of silently falling back to
+  generated JSON. Execution now agrees with fixture validation.
+- Fallible upcasts report `CodecFailureKind::ConversionFailed` (`conversion_failed`)
+  in technical responses. Upgrade response readers before enabling fallible
+  conversions; older readers reject the new kind. Exhaustive Rust matches need
+  the new variant too.
+
 ## [0.1.3] - 2026-10-29
 
 ### Added

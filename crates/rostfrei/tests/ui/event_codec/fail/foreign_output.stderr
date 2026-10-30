@@ -1,0 +1,57 @@
+error[E0277]: the trait bound `InventoryEvents: From<Foreign>` is not satisfied
+  --> tests/ui/event_codec/fail/foreign_output.rs:14:31
+   |
+14 |     fn convert(_: AddedV1) -> Foreign {
+   |                               ^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `From<Foreign>` is not implemented for `InventoryEvents`
+  --> tests/ui/event_codec/fail/../../event_codec_support.rs
+   |
+   | pub enum InventoryEvents {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+help: `InventoryEvents` implements trait `From<T>`
+  --> tests/ui/event_codec/fail/../../event_codec_support.rs
+   |
+   | #[derive(Clone, Debug, Eq, PartialEq, rostfrei::AggregateEvents)]
+   |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |                                       |
+   |                                       `From<Added>`
+   |                                       `From<Retired>`
+note: required by a bound in `rostfrei::EventCodecBuilder::<A>::upcast`
+  --> $WORKSPACE/crates/rostfrei-domain-runtime/src/event_codec.rs
+   |
+   |     pub fn upcast<Old, Current>(
+   |            ------ required by a bound in this associated function
+...
+   |         A::Event: Event + From<Current> + EventVariant<Current>,
+   |                           ^^^^^^^^^^^^^ required by this bound in `EventCodecBuilder::<A>::upcast`
+   = note: this error originates in the derive macro `rostfrei::AggregateEvents` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `InventoryEvents: EventVariant<Foreign>` is not satisfied
+  --> tests/ui/event_codec/fail/foreign_output.rs:14:31
+   |
+14 |     fn convert(_: AddedV1) -> Foreign {
+   |                               ^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EventVariant<Foreign>` is not implemented for `InventoryEvents`
+  --> tests/ui/event_codec/fail/../../event_codec_support.rs
+   |
+   | pub enum InventoryEvents {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+help: `InventoryEvents` implements trait `EventVariant<E>`
+  --> tests/ui/event_codec/fail/../../event_codec_support.rs
+   |
+   | #[derive(Clone, Debug, Eq, PartialEq, rostfrei::AggregateEvents)]
+   |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |                                       |
+   |                                       `EventVariant<Added>`
+   |                                       `EventVariant<Retired>`
+note: required by a bound in `rostfrei::EventCodecBuilder::<A>::upcast`
+  --> $WORKSPACE/crates/rostfrei-domain-runtime/src/event_codec.rs
+   |
+   |     pub fn upcast<Old, Current>(
+   |            ------ required by a bound in this associated function
+...
+   |         A::Event: Event + From<Current> + EventVariant<Current>,
+   |                                           ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EventCodecBuilder::<A>::upcast`
+   = note: this error originates in the derive macro `rostfrei::AggregateEvents` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -171,6 +171,7 @@ export const docsNavigation = [
     title: "Runtime",
     items: [
       { title: "Command execution", slug: "command-runtime", file: "command-runtime.md" },
+      { title: "Event schema evolution", slug: "event-schema-evolution", file: "event-schema-evolution.md" },
       { title: "NATS operations", slug: "runtime", file: "runtime.md" },
       { title: "Application host", slug: "nats-application-host", file: "nats-application-host.md" },
       { title: "Actor attribution", slug: "actor-attribution", file: "actor-attribution.md" },

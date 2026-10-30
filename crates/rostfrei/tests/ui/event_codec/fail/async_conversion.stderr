@@ -1,0 +1,5 @@
+error: upcast conversions must be synchronous
+  --> tests/ui/event_codec/fail/async_conversion.rs:11:5
+   |
+11 |     async fn convert(old: AddedV1) -> Added {
+   |     ^^^^^

@@ -503,6 +503,7 @@ impl CommandExecutionError {
                     CodecFailureKind::UnsupportedSchemaVersion
                 }
                 EventCodecErrorKind::MalformedPayload => CodecFailureKind::MalformedPayload,
+                EventCodecErrorKind::ConversionFailed => CodecFailureKind::ConversionFailed,
                 EventCodecErrorKind::InvalidEnvelope => CodecFailureKind::InvalidEnvelope,
                 EventCodecErrorKind::EncodingFailed => CodecFailureKind::EncodingFailed,
             }),
@@ -1236,6 +1237,10 @@ mod tests {
             (
                 crate::EventCodecErrorKind::MalformedPayload,
                 CodecFailureKind::MalformedPayload,
+            ),
+            (
+                crate::EventCodecErrorKind::ConversionFailed,
+                CodecFailureKind::ConversionFailed,
             ),
             (
                 crate::EventCodecErrorKind::InvalidEnvelope,

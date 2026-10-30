@@ -1,6 +1,9 @@
 use domain::{AggregateDefinition, AggregateEventSet, AggregateType};
 use rostfrei_core::{Aggregate, Event};
 
+mod event_codec;
+pub use event_codec::{EventCodecBuildError, EventCodecBuilder, HistoricalEventCodec};
+
 /// Applies one concrete domain event to an aggregate root.
 pub trait Apply<Event> {
     fn apply(&mut self, event: &Event);

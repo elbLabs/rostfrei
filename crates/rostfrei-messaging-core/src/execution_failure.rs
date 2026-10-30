@@ -40,6 +40,8 @@ pub enum CodecFailureKind {
     UnknownEventType,
     UnsupportedSchemaVersion,
     MalformedPayload,
+    /// Requires response readers that recognize this kind before producers emit it.
+    ConversionFailed,
     InvalidEnvelope,
     EncodingFailed,
 }

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 2,
+  "id": "compatibility-release",
+  "name": "A dual reader still writes a retirement that original readers understand",
+  "setup": { "fixture": "v1-inventory" },
+  "expected": {
+    "within": "10s",
+    "settleFor": "500ms",
+    "graphs": [{
+      "nodes": [
+        {
+          "kind": "command",
+          "key": "retire",
+          "context": "fleet-evolution",
+          "name": "retire-bicycle",
+          "schemaVersion": 1,
+          "payload": { "bicycle_id": "bike-1", "reason": "unrecorded" },
+          "outcome": "accepted"
+        },
+        {
+          "kind": "domain-event",
+          "key": "retired",
+          "parentKey": "retire",
+          "name": "bicycle-retired",
+          "schemaVersion": 1,
+          "payload": { "bicycle_id": "bike-1" }
+        }
+      ]
+    }]
+  }
+}

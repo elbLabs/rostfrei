@@ -1,0 +1,5 @@
+error: upcast conversions require exactly one owned historical event
+  --> tests/ui/event_codec/fail/multiple_inputs.rs:11:16
+   |
+11 |     fn convert(old: AddedV1, _: u32) -> Added {
+   |                ^^^^^^^^^^^^^^^^^^^^

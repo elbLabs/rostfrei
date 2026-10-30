@@ -47,6 +47,11 @@ Use the [registration builder](index.mdx) to create `model` next. Its
 `.build().await?` call opens and verifies the resources; it does not provision them.
 The limits above are small example limits, not a production sizing recommendation.
 
+For historical domain formats, pass the application's shared codec registry to
+`ReadModels::with_event_codecs` before registering models, as described in
+[historical decoding](index.mdx#decode-historical-domain-events). The NATS worker
+uses the model's configured codecs for delivery and history catch-up.
+
 ## Start the worker
 
 ```rust

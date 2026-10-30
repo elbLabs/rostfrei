@@ -1,0 +1,5 @@
+error: upcast conversions cannot take a receiver
+  --> tests/ui/event_codec/fail/receiver.rs:11:16
+   |
+11 |     fn convert(&self, old: AddedV1) -> Added {
+   |                ^^^^^

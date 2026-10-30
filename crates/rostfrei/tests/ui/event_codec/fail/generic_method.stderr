@@ -1,0 +1,5 @@
+error: upcast conversions cannot be generic
+  --> tests/ui/event_codec/fail/generic_method.rs:11:15
+   |
+11 |     fn convert<T>(old: AddedV1) -> Added {
+   |               ^^^
