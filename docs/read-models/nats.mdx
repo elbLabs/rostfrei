@@ -89,10 +89,8 @@ and causation, with one outstanding delivery. Domain consumers use the configure
 `aggregate.*.*.*.*` filter. Multiple read models can consume the same events with
 independent progress. See [subject filters](../messaging/subjects.mdx#filters-and-internal-storage-subjects).
 
-The event-subject format requires [fresh namespaces](../messaging/subjects.mdx#fresh-deployments).
-Startup rejects mismatched stream or consumer configuration; changing a model
-generation does not migrate old event subjects. Rebuilds can only use retained
-evidence, including integration events' [30-day default retention](../messaging/subjects.mdx#retention).
+See the [subject deployment requirements](../messaging/subjects.mdx#fresh-deployments)
+and [source retention](../messaging/subjects.mdx#retention).
 
 ## Scope and bucket policy
 

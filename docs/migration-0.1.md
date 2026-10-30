@@ -81,12 +81,7 @@ legacy replay/import and rollback-reader boundaries; the
 [native authority](command-runtime.md#native-authority) is the current split-storage
 contract. Retained response caches are never completed-result authority.
 
-The current [event-subject format](messaging/subjects.mdx#fresh-deployments) also
-requires a fresh application namespace. It has no old-history fallback or subject
-migration tool; the outcome cutover/import APIs do not convert event subjects.
-Update ACLs and external subscription filters for correlation/causation suffixes.
-Retained correlation inspection follows [source retention](messaging/subjects.mdx#retention),
-including the unchanged 30-day integration default.
+Event storage has separate [subject deployment requirements](messaging/subjects.mdx#fresh-deployments).
 
 ## Authorization and actor attribution
 

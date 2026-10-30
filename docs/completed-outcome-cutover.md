@@ -5,13 +5,7 @@ and [migration guide](migration-0.1.md). Do not enable new mutable workers
 on a legacy authority merely because its response cache is empty. An expired legacy
 rejection may be invisible forever.
 
-This runbook concerns outcome authority. The current
-[event-subject format](messaging/subjects.mdx#fresh-deployments) independently
-requires fresh namespaces and has no old-history reader fallback or subject
-migration tool. Changing an epoch or importing a rejected decision does not convert
-old aggregate or integration subjects. Preserve older-format evidence with its
-compatible readers; any history-preserving subject migration must be separately
-planned and fenced.
+Event storage has separate [subject deployment requirements](messaging/subjects.mdx#fresh-deployments).
 
 ## New isolated authority
 

@@ -37,13 +37,8 @@ discovery; local and operation-specific write/retry checks always run. See
 [the storage decision](adr/nats-storage.md) for the trust boundary. A successful
 history read does not itself verify writable authority.
 
-The current event-subject format requires
-[fresh namespaces](messaging/subjects.mdx#fresh-deployments); changing an outcome
-epoch alone does not convert retained subjects. Resource mismatches fail
-verification. For cross-context evidence reads and their per-source cutoffs, see
-[retained correlation inspection](continuous-observation.md#retained-correlation-inspection).
-Those reads follow source retention, including the integration stream's 30-day
-default, and do not reconstruct expired events.
+See the [subject deployment requirements](messaging/subjects.mdx#fresh-deployments)
+and [retained correlation inspection contract](continuous-observation.md#retained-correlation-inspection).
 
 ## NATS authentication
 

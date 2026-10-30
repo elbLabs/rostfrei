@@ -996,22 +996,27 @@ async fn an_anchor_id_without_a_stream_is_not_found_and_an_uncorrelated_stream_i
     assert_eq!(body["code"], "unknown-anchor-stream");
     assert!(scenario.history.calls().is_empty());
 
-    let legacy = stream("ordering/order", "O0");
-    let operation = OperationId::new("legacy-import").unwrap();
-    let commit = derive_commit_id(&legacy, &operation);
+    let uncorrelated = stream("ordering/order", "O0");
+    let operation = OperationId::new("uncorrelated").unwrap();
+    let commit = derive_commit_id(&uncorrelated, &operation);
     scenario
         .ordering
         .store
         .append(
-            &legacy,
+            &uncorrelated,
             ExpectedVersion::NoStream,
             EventBatch::new(
                 commit.clone(),
                 operation,
-                ContentFingerprint::digest("legacy"),
+                ContentFingerprint::digest("uncorrelated"),
                 vec![
-                    NewEvent::new(derive_event_id(&commit, 0), "imported", 1, b"{}".to_vec())
-                        .unwrap(),
+                    NewEvent::new(
+                        derive_event_id(&commit, 0),
+                        "uncorrelated",
+                        1,
+                        b"{}".to_vec(),
+                    )
+                    .unwrap(),
                 ],
             )
             .unwrap(),
