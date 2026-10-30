@@ -55,19 +55,8 @@ parallel historical business implementations.
 See the [compatibility-release sequence](event-schema-evolution.md#compatibility-release)
 for rolling out new readers before switching the write format.
 
-## Stored event-subject deployment
-
-The current [event-subject format](messaging/subjects.mdx#stored-event-subjects)
-adds encoded correlation and causation to domain and integration subjects, with
-separate aggregate type and ID tokens for domain history. This is a physical
-storage/subscription change, independent of payload schema versions, logical
-integration addresses, deterministic identities, and durable names.
-
-Deploy it only in a [fresh namespace](messaging/subjects.mdx#fresh-deployments).
-Existing resource mismatches are rejected; neither a schema bump nor a new outcome
-epoch migrates old subjects. Update external subscribers and NATS ACLs to match the
-new suffix filters. The supported integration publisher requires a canonical
-envelope, derives its control identities, and checks transport metadata consistency.
+For physical event-subject changes, see the
+[deployment requirements](messaging/subjects.mdx#fresh-deployments).
 
 ## Durable consumer versions
 

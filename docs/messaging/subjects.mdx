@@ -292,25 +292,15 @@ stream. In a fresh namespace its aggregate filter is
 history. Default legacy authority permits current-format history/known-outcome
 reads and low-level appends, but blocks new coordinated command execution.
 
-This authority choice is independent of the event-subject format. Older opaque
-aggregate subjects and unsuffixed integration subjects are not supported history
-inputs for the current readers, whether their authority was legacy or split.
+This authority choice is independent of the event-subject format.
 
 ### Fresh deployments
 
-The encoded event-subject format supports **fresh namespaces only**. Provision and
-runtime verification reject mismatched deployed resources; they do not silently
-rewrite streams or consumer filters. There is no old-history fallback, backfill,
-or event-subject migration tool. Select a fresh application namespace with matching
-resources and credentials. Preserving an existing deployment's history requires a
-separately planned, fenced migration.
-
-Changing an outcome epoch alone does not migrate old event subjects or the shared
-integration stream. The [outcome cutover procedure](../completed-outcome-cutover.md)
-addresses decision authority, not conversion of this subject format. Update NATS
-ACLs and external subscriptions for the new suffix filters as well as application
-readers and publishers. Stable logical addresses and durable names do not make old
-physical filters compatible.
+Use a **fresh application namespace** with the current subject format. Incompatible
+stream and consumer configurations are rejected; older event subjects are not read.
+Update publishers, NATS ACLs and external subscriptions to use the current filters.
+Changing an outcome epoch does not rewrite stored subjects or create a new shared
+integration stream.
 
 ### Subject visibility
 

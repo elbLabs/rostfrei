@@ -178,9 +178,8 @@ Writable startup requires explicit fresh split authority selection through
 `ROSTFREI_COMPLETED_OUTCOME_EPOCH` for both isolated Test and Normal configurations.
 Use an owned disposable application/broker for qualification. Existing legacy
 authorities remain read-only unless the operator performs an explicit fenced
-cutover; an application name alone is not authority selection. Older event-subject
-formats additionally require their compatible readers; the current format supports
-[fresh namespaces](messaging/subjects.mdx#fresh-deployments) only.
+cutover; an application name alone is not authority selection. See also the
+[subject deployment requirements](messaging/subjects.mdx#fresh-deployments).
 
 ### Effective codecs and execution profile
 

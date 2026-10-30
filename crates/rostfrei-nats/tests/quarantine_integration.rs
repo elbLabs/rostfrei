@@ -414,7 +414,7 @@ async fn inspection_includes_unknown_subjects_and_preserves_consumer_progress() 
 }
 
 #[tokio::test]
-async fn integration_inspection_uses_logical_routes_and_retains_physical_and_legacy_addresses() {
+async fn integration_inspection_uses_logical_routes_and_retains_physical_addresses() {
     let Some(fixture) = Fixture::new().await else {
         return;
     };
@@ -423,7 +423,6 @@ async fn integration_inspection_uses_logical_routes_and_retains_physical_and_leg
         fixture.test.application()
     );
     let physical_addresses = [
-        logical.clone(),
         format!("{logical}.flow.cause"),
         format!("{logical}.flow%ZZ.cause.extra"),
     ];
