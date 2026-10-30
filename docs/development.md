@@ -4,6 +4,15 @@ Run these commands from the repository root. The pinned Rust toolchain includes
 Clippy, rustfmt, and `rust-src`; standard-library sources keep compile-failure
 diagnostics consistent across local machines and CI.
 
+## Debugging
+
+For full debugger support, override the default `debug = 1`:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=2 cargo build
+CARGO_PROFILE_TEST_DEBUG=2 cargo test
+```
+
 ## Tests
 
 With Python 3.11+ and a running Docker engine, run the Rust workspace suite:
