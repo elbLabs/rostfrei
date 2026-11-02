@@ -16,6 +16,7 @@ use tokio::time::{Instant, timeout};
 // DELETE (default request timeout: five seconds). Allow scheduling headroom for
 // both; assert the read-timeout error and eventual consumer cleanup separately.
 const READ_AND_CLEANUP_BUDGET: Duration = Duration::from_secs(12);
+const CLUSTER_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 
 struct Cluster {
     children: Vec<Child>,
@@ -81,20 +82,29 @@ impl Cluster {
         let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
             .with_replicas(1)?
             .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
-        let context = timeout(Duration::from_secs(15), async {
+        let mut last_error = String::from("no connection attempt completed");
+        let context = timeout(CLUSTER_STARTUP_TIMEOUT, async {
             loop {
-                if let Ok(client) =
-                    async_nats::connect(self.urls.first().expect("first node")).await
-                {
-                    let context = jetstream::new(client);
-                    if provision_event_store(&context, &config).await.is_ok() {
-                        break context;
+                match async_nats::connect(self.urls.first().expect("first node")).await {
+                    Ok(client) => {
+                        let context = jetstream::new(client);
+                        match provision_event_store(&context, &config).await {
+                            Ok(()) => break context,
+                            Err(error) => last_error = error.to_string(),
+                        }
                     }
+                    Err(error) => last_error = error.to_string(),
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         })
-        .await?;
+        .await
+        .map_err(|error| {
+            self.print_logs();
+            format!(
+                "cluster fixture provisioning exceeded {CLUSTER_STARTUP_TIMEOUT:?}: {error}; last error: {last_error}"
+            )
+        })?;
         let stream = context.get_stream(config.stream_name()).await?;
         let leader = stream
             .cached_info()
@@ -117,6 +127,16 @@ impl Cluster {
         }
         Err("no remote client broker found".into())
     }
+
+    fn print_logs(&self) {
+        for index in 0..self.children.len() {
+            if let Ok(log) =
+                std::fs::read_to_string(self.directory.path().join(format!("node-{index}.log")))
+            {
+                eprintln!("cluster node {index}:\n{log}");
+            }
+        }
+    }
 }
 
 impl Drop for Cluster {
@@ -126,13 +146,7 @@ impl Drop for Cluster {
             let _ = child.wait();
         }
         if std::thread::panicking() {
-            for index in 0..3 {
-                if let Ok(log) =
-                    std::fs::read_to_string(self.directory.path().join(format!("node-{index}.log")))
-                {
-                    eprintln!("cluster node {index}:\n{log}");
-                }
-            }
+            self.print_logs();
         }
     }
 }
