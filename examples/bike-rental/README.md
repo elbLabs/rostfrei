@@ -169,6 +169,17 @@ Studio's Observe panel follows externally triggered domain and integration
 events. See [continuous observation](../../docs/continuous-observation.md) for
 backend wiring, scope isolation, and retention.
 
+With `ROSTFREI_INSPECTION_TOKEN` configured, Studio's **Correlations** workspace
+can select the rental-fleet anchor (for example, `city-fleet`) or open a correlation
+ID. It reads retained Normal domain and integration events directly from NATS;
+source cutoffs describe each read. There is no projector to start. Integration
+events keep their 30-day default expiry. Includes and payload-field matches are
+described in [retained inspection](../../docs/continuous-observation.md#retained-correlation-inspection).
+
+This event-subject format requires a fresh application namespace. Changing only
+the completed-outcome epoch does not migrate older event subjects; see
+[fresh deployments](../../docs/messaging/subjects.mdx#fresh-deployments).
+
 ### Test state and reset
 
 The application has two traffic scopes:

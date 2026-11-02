@@ -1,4 +1,5 @@
 import type {
+  CorrelationRef,
   EdgeRelationship,
   Fixture,
   MessageGraphNode,
@@ -325,6 +326,60 @@ export function observedGraph(
             : (outcome?.outcome.status ?? "indeterminate")
           : "accepted",
     }
+  })
+}
+
+export function correlationGraph(refs: CorrelationRef[]): MessageGraphNode[] {
+  const identities = new Map<string, string>()
+  const ids = refs.map((reference) => {
+    const identity =
+      reference.kind === "domain" ? reference.eventId : reference.messageId
+    const id = identities.has(identity)
+      ? `${reference.context}:${identity}`
+      : identity
+    identities.set(identity, id)
+    return id
+  })
+  return refs.map<MessageGraphNode>((reference, index) => {
+    const parentId =
+      reference.causationId &&
+      identities.get(reference.causationId) !== ids[index]
+        ? identities.get(reference.causationId)
+        : undefined
+    const origin =
+      Boolean(reference.causationId) &&
+      !parentId &&
+      identities.get(reference.causationId ?? "") === ids[index]
+    const common = {
+      id: ids[index],
+      parentId,
+      edgeFidelity: parentId
+        ? ("exact" as const)
+        : origin
+          ? undefined
+          : ("grouped" as const),
+      name: reference.eventType,
+      causationId: reference.causationId,
+      boundedContext: reference.context,
+      occurredAt: reference.occurredAt,
+      status: "accepted" as const,
+    }
+    return reference.kind === "domain"
+      ? {
+          ...common,
+          kind: "domain-event",
+          payload: reference.payload,
+          messageId: reference.eventId,
+          aggregateType: reference.aggregateType,
+          aggregateId: reference.aggregateId,
+          streamVersion: reference.streamVersion,
+        }
+      : {
+          ...common,
+          kind: "integration-event",
+          schemaVersion: reference.schemaVersion,
+          messageId: reference.messageId,
+        }
   })
 }
 

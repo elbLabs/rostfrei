@@ -50,6 +50,32 @@ It uses the same Canvas/Workbench message cards and inspector as command and
 test execution. **Executions** returns to the previous execution view; closing
 the observation sidebar does not stop capture.
 
+The **Correlations** panel reads [retained correlation events](../docs/continuous-observation.md#retained-correlation-inspection)
+that touched one business object.
+Choose an anchor the Tracer advertises (or **Other aggregate type…** to type
+`context/aggregate`), enter the anchor's aggregate ID and select a correlation,
+or open a correlation ID directly. Its retained domain and integration events
+appear with causation edges and their bounded context. Payloads for the anchor's
+own events follow Tracer's payload policy; **Load payloads from** adds contexts,
+including other aggregates in the anchor's context (`?include=context:<name>`,
+which replays each touched stream). Only returned causes get graph edges; absent parents'
+types and reasons for absence are unknown.
+**Match payload field** narrows the list to one business entity: each row is
+`context / event-type . field = value` (or a raw
+`context/event-type.field=value` expression), rows are AND-ed and sent as
+`match` parameters. A row on another context ticks its include automatically
+and says so; applied filters appear as chips from Tracer's `matched` echo, with
+Clear all. The last rows are remembered per anchor in this browser. Matching
+sees payloads after the Tracer payload policy, so a redacting policy matches
+nothing. Source cutoffs show exact sequence strings for each domain source
+and the shared integration source. They are captured independently, not as an
+atomic snapshot or proof of completion. Expired events are absent; truncated
+reads may omit retained matches. Selecting an anchor chain uses that response's
+events, payloads and cutoffs together. Refresh is manual. Correlation requests
+use the read-only inspection token (`VITE_TRACER_INSPECTION_TOKEN`); the control
+token (`VITE_TRACER_TOKEN`) keeps serving commands and tests and receives `403`
+on these routes. These reads inspect Normal traffic, not isolated Test runs.
+
 ## Run locally
 
 From the repository root:
@@ -94,7 +120,8 @@ The inspector starts Vite on an available port and launches a fresh Chrome
 session. Named scenarios intercept every API request and label their synthetic
 responses as visual fixtures. They cover the workbench overview, command form,
 accepted/rejected Test, pending and indeterminate results, a 25-message
-branching graph, long payloads, continuous observation, and the narrow-screen inspector. Unknown API
+branching graph, long payloads, continuous observation, anchored correlations
+with their error states, and the narrow-screen inspector. Unknown API
 requests fail rather than reaching a backend.
 
 Each capture writes `screenshot.png`, `state.json`, `accessibility.json`, and

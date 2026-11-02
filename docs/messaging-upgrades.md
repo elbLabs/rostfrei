@@ -52,6 +52,9 @@ not merely accepting a payload. Test with genuine historical records, then execu
 current commands and reload the mixed history. Historical decoders do not require
 parallel historical business implementations.
 
+For physical event-subject changes, see the
+[deployment requirements](messaging/subjects.mdx#fresh-deployments).
+
 ## Durable consumer versions
 
 Names follow `<application>[--test]--<context>--<purpose>--v<major>`. The suffix

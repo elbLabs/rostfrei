@@ -1126,6 +1126,7 @@ dependencies = [
  "axum",
  "base64",
  "futures-util",
+ "percent-encoding",
  "rostfrei-core",
  "rostfrei-domain",
  "rostfrei-fixtures",

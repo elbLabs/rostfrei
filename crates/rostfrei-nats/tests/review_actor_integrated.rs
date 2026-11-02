@@ -12,6 +12,8 @@ mod hex;
 mod release_contract_support;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
+#[path = "../src/subject_tokens.rs"]
+mod subject_tokens;
 mod event_store {
     mod independent {
         use super::*;

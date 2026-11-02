@@ -8,6 +8,11 @@ The durable uses explicit ACKs, `MaxWaiting = 512`, `MaxAckPending = 1`,
 `MaxRequestBatch = 1`, and unlimited redelivery with configured `AckWait` and retry
 delay. Source history uses the authoritative journal's Limits retention.
 
+The domain filter is `<domain-prefix>.aggregate.*.*.*.*`: aggregate type, aggregate
+ID, correlation, and causation occupy separate tokens. It excludes receipts and
+read guards. Consumers validate the subject against the canonical event envelope;
+see [subjects and filters](messaging/subjects.mdx#filters-and-internal-storage-subjects).
+
 ## Transaction delivery
 
 1. Receive the next source event and inspect confirmed durable progress.
@@ -23,9 +28,12 @@ The single-pending limit and ACK-after-whole-transaction rule are essential; man
 ACKs or changing that limit invalidate this contract. Permanent/corrupt work blocks
 progress rather than being skipped.
 
-Integration IDs derive from source event, address, and schema. Broker deduplication
-is bounded (default two minutes); downstream integration-command mappings retain
-stable operation IDs. Arbitrary external effects still require idempotency.
+Integration IDs derive from source event, logical address, and schema. The physical
+correlation/causation suffix does not change these identities or durable names.
+The publisher derives that suffix from a validated integration envelope and rejects
+inconsistent transport metadata. Broker deduplication is bounded (default two
+minutes); downstream integration-command mappings retain stable operation IDs.
+Arbitrary external effects still require idempotency.
 
 ## Shutdown
 
@@ -38,6 +46,10 @@ Allow pod termination grace for processing, ACK confirmation, and connection dra
 Late old attempts can overlap redelivery; shutdown is not an execution fence.
 
 ## Existing durable migration
+
+This ACK-policy procedure assumes compatible source subjects. The current
+event-subject format requires [fresh namespaces](messaging/subjects.mdx#fresh-deployments);
+recreating a durable does not convert old history or its filters.
 
 NATS cannot update legacy `AckPolicy::All`/one-waiter consumers in place. Startup
 rejects them rather than silently recreating them. For each affected durable:

@@ -1,7 +1,7 @@
 export type MessageKind = "command" | "domain-event" | "integration-event"
 export type StudioLayout = "canvas" | "workbench"
 export type FlowView =
-  "expected" | "running" | "observed" | "predicted" | "unavailable"
+  "expected" | "running" | "observed" | "predicted" | "retained" | "unavailable"
 
 export type MessageStatus =
   "idle" | "running" | "accepted" | "rejected" | "failed" | "indeterminate"
@@ -19,7 +19,7 @@ export interface MessageGraphNode {
   subject?: boolean
   kind: MessageKind
   name: string
-  schemaVersion: number
+  schemaVersion?: number
   payload?: unknown
   response?: unknown
   messageId?: string
@@ -28,6 +28,7 @@ export interface MessageGraphNode {
   aggregateType?: string
   aggregateId?: string
   streamVersion?: number
+  occurredAt?: number
   status?: MessageStatus
   expectedOutcome?: ExpectedOutcome
 }
@@ -43,6 +44,79 @@ export interface TracerCatalog {
   testRepository?: { definitionsHref: string }
   behavioralTest?: { definitionsHref?: string }
   observation?: ObservationCapability[]
+  correlations?: CorrelationCapability
+}
+
+export interface CorrelationCapability {
+  eventsHrefTemplate: string
+  anchors: CorrelationAnchor[]
+}
+
+export interface CorrelationAnchor {
+  aggregateType: string
+  label: string
+  correlationsHrefTemplate: string
+}
+
+export type CorrelationRef =
+  | {
+      kind: "domain"
+      context: string
+      aggregateType: string
+      aggregateId: string
+      streamVersion: number
+      eventId: string
+      eventType: string
+      causationId?: string
+      occurredAt: number
+      payload?: unknown
+    }
+  | {
+      kind: "integration"
+      context: string
+      subject: string
+      messageId: string
+      eventType: string
+      schemaVersion: number
+      causationId?: string
+      occurredAt: number
+    }
+
+export interface CorrelationSourceSnapshot {
+  context?: string
+  kind: "domain" | "integration"
+  stream: string
+  cutoffSequence: string
+}
+
+export interface CorrelationSnapshot {
+  sources: CorrelationSourceSnapshot[]
+}
+
+export interface CorrelationChain {
+  correlationId: string
+  truncated: boolean
+  refs: CorrelationRef[]
+}
+
+export interface RetainedCorrelationChain extends CorrelationChain {
+  snapshot: CorrelationSnapshot
+}
+
+export interface PayloadMatch {
+  context: string
+  eventType: string
+  field: string
+  value: string
+}
+
+export interface AnchorCorrelationView {
+  aggregateType: string
+  aggregateId: string
+  snapshot: CorrelationSnapshot
+  correlations: CorrelationChain[]
+  truncated: boolean
+  matched?: PayloadMatch[]
 }
 
 export interface ObservationCapability {

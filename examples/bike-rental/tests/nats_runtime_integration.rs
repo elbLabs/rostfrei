@@ -38,8 +38,8 @@ use rostfrei::messaging::{
     SchemaVersion,
 };
 use rostfrei::nats::{
-    CORRELATION_ID_HEADER, NatsConnection, NatsConnectionConfig, ServerVersion, StreamRetention,
-    connect, provision_durable_consumer,
+    CORRELATION_ID_HEADER, IntegrationEventSubject, NatsConnection, NatsConnectionConfig,
+    ServerVersion, StreamRetention, connect, provision_durable_consumer,
 };
 use rostfrei::testing::integration::nats_url as required_nats_url;
 use rostfrei::tracer::{
@@ -1196,6 +1196,14 @@ async fn wait_for_integration_chain(
         SchemaVersion::new(1)?,
         source_event.event_id(),
     )?;
+    let expected_subject = IntegrationEventSubject::new(
+        route.address().clone(),
+        source_event
+            .correlation_id()
+            .ok_or_else(|| io::Error::other("source event has no correlation"))?
+            .clone(),
+        Some(CausationId::new(source_event.event_id().as_str())?),
+    )?;
     loop {
         let mut integration_stream = connection
             .jetstream()
@@ -1210,7 +1218,7 @@ async fn wait_for_integration_chain(
             .await?;
         if integration_stream.info().await?.state.messages == expected_messages {
             let raw = integration_stream
-                .get_last_raw_message_by_subject(route.address().as_str())
+                .get_last_raw_message_by_subject(expected_subject.as_str())
                 .await?;
             let integration_info = consumer_info(
                 connection,
@@ -1248,7 +1256,7 @@ async fn wait_for_integration_chain(
                 && domain_info.ack_floor.stream_sequence >= source_event.stream_version().value();
             if integration_consumed && domain_consumed {
                 ensure(
-                    raw.subject.as_str() == route.address().as_str(),
+                    raw.subject.as_str() == expected_subject.as_str(),
                     "wrong integration subject",
                 )?;
                 ensure(

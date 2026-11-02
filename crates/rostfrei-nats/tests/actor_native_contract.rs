@@ -15,6 +15,8 @@ mod event_store_config;
 mod hex;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
+#[path = "../src/subject_tokens.rs"]
+mod subject_tokens;
 use event_store_config::NatsEventStoreConfig;
 mod event_store {
     pub fn actor_check_receipt(

@@ -3,6 +3,7 @@ mod bindings;
 mod catalog;
 mod command_bus;
 mod correlation;
+mod correlation_view;
 mod handler_simulation;
 mod input;
 mod message_series;
@@ -35,16 +36,22 @@ pub use behavioral::{
     trace_expectation_matches,
 };
 pub use catalog::{
-    AggregateInstanceCollection, AggregateInstanceSummary, CatalogAggregate, CatalogBehavioralTest,
-    CatalogCommand, CatalogCommandVersion, CatalogContext, CatalogQuarantine,
-    CatalogQuarantineScope, CatalogTestRepository, CatalogTestScenario, TestFixtureCollection,
-    TestFixtureSummary, TracerCatalog,
+    AggregateInstanceCollection, AggregateInstanceSummary, CatalogAggregate, CatalogAnchor,
+    CatalogBehavioralTest, CatalogCommand, CatalogCommandVersion, CatalogContext,
+    CatalogCorrelations, CatalogQuarantine, CatalogQuarantineScope, CatalogTestRepository,
+    CatalogTestScenario, TestFixtureCollection, TestFixtureSummary, TracerCatalog,
 };
 pub use command_bus::CommandBusTransport;
 pub use correlation::{
     CorrelationCommandOutcome, CorrelationError, CorrelationEvent, CorrelationEventKind,
     CorrelationObserver, CorrelationSubscription, DomainEventObservation,
     IntegrationEventObservation,
+};
+pub use correlation_view::{
+    AnchorCorrelations, AnchorIdentity, AnchoredCorrelation, CorrelationInspectionError,
+    CorrelationRefView, DomainRefView, MAX_ANCHOR_CORRELATIONS, MAX_INCLUDED_CONTEXTS,
+    MAX_INCLUDED_STREAMS, MAX_PAYLOAD_MATCH_FIELD_SEGMENTS, MAX_PAYLOAD_MATCH_VALUE_BYTES,
+    MAX_PAYLOAD_MATCHES, PayloadMatch, RetainedCorrelation,
 };
 pub use handler_simulation::{
     HandlerDecision, HandlerSimulationError, HandlerSimulationKind, HandlerSimulationResult,
