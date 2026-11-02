@@ -72,6 +72,9 @@ raw broker clients can still publish malformed messages. Logical
 `IntegrationEventAddress`, deterministic message/operation identities, and durable
 names retain their existing derivation; the physical suffix is a storage address.
 
+See the [storage tradeoff](../adr/nats-storage.md#subject-addressed-inspection) for
+per-subject index growth and its effect on aggregate concurrency checks.
+
 ## Explore subjects and their streams
 
 Prepend `bike-rental.` to the subject and filter suffixes below, and `BIKE_RENTAL`
