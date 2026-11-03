@@ -58,7 +58,7 @@ function SiteNavigation() {
           <strong className="text-foreground">Alpha</strong> · APIs are
           evolving.
         </p>
-        <p className="mt-1">Rust · NATS · EUPL-1.2</p>
+        <p className="mt-1">Rust · NATS · Apache-2.0</p>
       </div>
     </>
   )
