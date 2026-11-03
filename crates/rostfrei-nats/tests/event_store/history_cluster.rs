@@ -395,7 +395,7 @@ async fn initial_no_responders_stops_at_read_deadline() -> TestResult<()> {
     let (context, store) = cluster.fixture().await?;
     let aggregate = stream("unavailable-history")?;
     store
-        .append(
+        .append_fixture(
             &aggregate,
             ExpectedVersion::NoStream,
             batch(&aggregate, "seed", "seed", &[b"one"])?,
@@ -537,7 +537,7 @@ async fn late_native_recreation(cancel: bool) -> TestResult<()> {
     let (context, store) = cluster.fixture().await?;
     let aggregate = stream("late-native-recreation")?;
     store
-        .append(
+        .append_fixture(
             &aggregate,
             ExpectedVersion::NoStream,
             batch(&aggregate, "seed", "seed", &[b"one"])?,
@@ -619,8 +619,6 @@ async fn recovered_replay_still_rejects_corrupt_history() -> TestResult<()> {
             store.config().event_subject(
                 aggregate.aggregate_type().as_str(),
                 aggregate.aggregate_id().as_str(),
-                None,
-                None,
             ),
             b"malformed event".to_vec().into(),
         )

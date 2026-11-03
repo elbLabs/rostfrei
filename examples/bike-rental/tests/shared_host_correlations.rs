@@ -106,6 +106,352 @@ async fn inspection_only_host_reads_external_runtime_without_dispatch() -> TestR
 }
 
 #[tokio::test]
+async fn normal_hosts_reject_fixture_injection_before_writing() -> TestResult {
+    let connection = connect(&NatsConnectionConfig::new(
+        "normal-fixture-rejection",
+        rostfrei::testing::integration::nats_url()?,
+    ))
+    .await?;
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let application = ApplicationName::new(format!("normal-fixture-rejection-{suffix}"))?;
+    let bindings = Arc::new(tracer::bindings()?);
+    let config = NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?
+        .with_fresh_completed_outcome_epoch("normal-fixture-rejection")?;
+    let runtime =
+        NatsRuntime::provision(connection.clone(), config.clone(), bindings.clone()).await?;
+    let rejected = runtime.apply_fixture(&demo_fixture()?).await;
+    assert!(
+        matches!(rejected, Err(NatsHostError::Configuration(message)) if message.contains("Test scope"))
+    );
+    assert!(
+        runtime
+            .store()
+            .load(&bike_rental::demo::demo_stream())
+            .await?
+            .is_empty()
+    );
+    let rejected = NatsApplication::builder(
+        application.bounded_context("bike-rental")?,
+        connection.clone(),
+        bindings,
+    )?
+    .with_runtime_config(config)
+    .with_initial_fixture(demo_fixture()?)
+    .provision_and_start()
+    .await;
+    assert!(
+        matches!(rejected, Err(NatsHostError::Configuration(message)) if message.contains("Test runtime"))
+    );
+    assert!(
+        runtime
+            .store()
+            .load(&bike_rental::demo::demo_stream())
+            .await?
+            .is_empty()
+    );
+    connection.drain().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn inspection_host_survives_missing_outcome_state_but_rejects_replaced_journal() -> TestResult
+{
+    let connection = connect(&NatsConnectionConfig::new(
+        "journal-history-host",
+        rostfrei::testing::integration::nats_url()?,
+    ))
+    .await?;
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let application = ApplicationName::new(format!("journal-history-host-{suffix}"))?;
+    let bindings = Arc::new(tracer::bindings()?);
+    let runtime = NatsRuntime::provision(
+        connection.clone(),
+        NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?
+            .with_fresh_completed_outcome_epoch("journal-history-host")?,
+        bindings.clone(),
+    )
+    .await?;
+    runtime.start_workers().await?;
+    command(
+        &runtime,
+        "retained-add",
+        "add-bicycle",
+        json!({
+            "fleet_id": "city-fleet", "bicycle_id": "bike-42", "condition": "serviceable"
+        }),
+    )
+    .await?;
+    command(
+        &runtime,
+        "retained-rent",
+        "rent-bicycle",
+        json!({
+            "fleet_id": "city-fleet", "bicycle_id": "bike-42"
+        }),
+    )
+    .await?;
+    let config = runtime.config().event_store.clone();
+    let mut original = None;
+    for outcome_state_missing in [false, true] {
+        if outcome_state_missing {
+            connection
+                .delete_stream_if_exists(config.outcome_state_stream_name())
+                .await?;
+            assert!(
+                rostfrei::nats::NatsEventStore::connect(
+                    connection.jetstream().clone(),
+                    config.clone()
+                )
+                .await
+                .is_err(),
+                "mutable attachment must still require the live authority pair"
+            );
+        }
+        let http = HttpConfig::inspection_only("inspection")?;
+        let tracer_config = TracerConfig::new(
+            tokio::net::TcpListener::bind("127.0.0.1:0").await?,
+            http.clone(),
+        )
+        .with_production_event_store(config.clone())
+        .with_trace_payload_policy(Arc::new(
+            rostfrei::tracer::ExposeTracePayloadsForLocalDevelopment,
+        ));
+        let host = NatsApplication::builder(
+            application.test_bounded_context("bike-rental")?,
+            connection.clone(),
+            bindings.clone(),
+        )?
+        .with_fresh_completed_outcome_epoch("journal-history-host")?
+        .with_default_test_fixture(demo_fixture()?)
+        .with_tracer(Some(tracer_config))
+        .provision_and_start()
+        .await?;
+        let app = http::router(host.tracer().ok_or("missing Tracer")?.clone(), http);
+        published_chain(&app, "retained-rent", 2).await?;
+        runtime.stop_workers().await;
+        let path = format!("{FLEET}/city-fleet/correlations?correlation=retained-rent");
+        let (status, retained) = get(&app, &path, "inspection").await?;
+        assert_eq!(status, 200, "{retained}");
+        assert_eq!(correlation_ids(&retained), ["retained-rent"]);
+        if let Some(original) = &original {
+            assert_eq!(
+                &retained, original,
+                "journal evidence survives loss of live result state"
+            );
+            connection
+                .delete_stream_if_exists(config.stream_name())
+                .await?;
+            rostfrei::nats::provision_event_store(connection.jetstream(), &config).await?;
+            let (status, replaced) = get(&app, &path, "inspection").await?;
+            assert_eq!(
+                status, 503,
+                "a replaced source must not look like an empty anchor: {replaced}"
+            );
+            assert!(matches!(
+                replaced["code"].as_str(),
+                Some("history-read-failed" | "correlation-read-failed")
+            ));
+        } else {
+            original = Some(retained);
+        }
+        host.shutdown().await?;
+    }
+    connection.drain().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn aggregate_correlation_selection_intersects_history_and_preserves_retained_evidence()
+-> TestResult {
+    let connection = connect(&NatsConnectionConfig::new(
+        "selected-correlations-host",
+        rostfrei::testing::integration::nats_url()?,
+    ))
+    .await?;
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let application = ApplicationName::new(format!("selected-correlations-{suffix}"))?;
+    let bindings = Arc::new(tracer::bindings()?);
+    let normal = NatsRuntime::provision(
+        connection.clone(),
+        NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?
+            .with_fresh_completed_outcome_epoch("selected-correlations")?,
+        bindings.clone(),
+    )
+    .await?;
+    normal.start_workers().await?;
+    let http = HttpConfig::inspection_only("inspection")?;
+    let config = TracerConfig::new(
+        tokio::net::TcpListener::bind("127.0.0.1:0").await?,
+        http.clone(),
+    )
+    .with_production_event_store(normal.config().event_store.clone())
+    .with_trace_payload_policy(Arc::new(
+        rostfrei::tracer::ExposeTracePayloadsForLocalDevelopment,
+    ));
+    let host = NatsApplication::builder(
+        application.test_bounded_context("bike-rental")?,
+        connection.clone(),
+        bindings,
+    )?
+    .with_fresh_completed_outcome_epoch("selected-correlations")?
+    .with_default_test_fixture(demo_fixture()?)
+    .with_tracer(Some(config))
+    .provision_and_start()
+    .await?;
+    let app = http::router(host.tracer().ok_or("missing Tracer")?.clone(), http);
+
+    // Commands establish both fleets and unrequested city history without fixtures.
+    for (operation, fleet, bicycle) in [
+        ("city-bike-42", "city-fleet", "bike-42"),
+        ("city-bike-7", "city-fleet", "bike-7"),
+        ("harbor-bike-8", "harbor-fleet", "bike-8"),
+    ] {
+        command(
+            &normal,
+            operation,
+            "add-bicycle",
+            json!({"fleet_id": fleet, "bicycle_id": bicycle, "condition": "serviceable"}),
+        )
+        .await?;
+    }
+    command(
+        &normal,
+        "selected-rent",
+        "rent-bicycle",
+        json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42"}),
+    )
+    .await?;
+    command(
+        &normal,
+        "selected-transfer",
+        "transfer-bicycle",
+        json!({
+            "from_fleet_id": "city-fleet", "bicycle_id": "bike-7", "to_fleet_id": "harbor-fleet"
+        }),
+    )
+    .await?;
+    let rent = published_chain(&app, "selected-rent", 2).await?;
+    published_chain(&app, "selected-transfer", 2).await?;
+    // Freeze writes so every subsequent read must preserve the exact same cutoffs.
+    normal.stop_workers().await;
+    host.shutdown().await?;
+
+    let (status, original) = get(
+        &app,
+        &format!("{FLEET}/city-fleet/correlations?include=context:bike-rental"),
+        "inspection",
+    )
+    .await?;
+    assert_eq!(status, 200, "{original}");
+    assert_eq!(
+        correlation_ids(&original),
+        [
+            "city-bike-42",
+            "city-bike-7",
+            "selected-rent",
+            "selected-transfer"
+        ]
+    );
+    let sources = original["snapshot"]["sources"]
+        .as_array()
+        .ok_or("missing source cutoffs")?;
+    assert_eq!(sources.len(), 2);
+    for source in sources {
+        let cutoff = source["cutoff_sequence"]
+            .as_str()
+            .ok_or("cutoff must retain its decimal string representation")?;
+        assert!(cutoff.parse::<u64>()? > 0);
+    }
+    let rent_refs = rent["refs"].as_array().ok_or("missing rental refs")?;
+    let rented = rent_refs
+        .iter()
+        .find(|reference| reference["kind"] == "domain")
+        .ok_or("missing rental domain event")?;
+    let published = rent_refs
+        .iter()
+        .find(|reference| reference["kind"] == "integration")
+        .ok_or("missing rental integration event")?;
+    assert_eq!(published["causation_id"], rented["event_id"]);
+
+    // Repeated IDs select actual city event correlations, not a union with harbor history.
+    let selection = "correlation=selected-rent&correlation=selected-transfer&correlation=harbor-bike-8&correlation=not-recorded";
+    let path = format!("{FLEET}/city-fleet/correlations?{selection}");
+    let (status, selected) = get(
+        &app,
+        &format!("{path}&include=context:bike-rental"),
+        "inspection",
+    )
+    .await?;
+    assert_eq!(status, 200, "explicit correlation selection: {selected}");
+    assert_eq!(
+        correlation_ids(&selected),
+        ["selected-rent", "selected-transfer"]
+    );
+    assert_eq!(selected["anchor"], original["anchor"]);
+    assert_eq!(selected["snapshot"], original["snapshot"]);
+    assert!(selected.get("truncated").is_none());
+    assert_eq!(
+        selected["correlations"],
+        json!([original["correlations"][2], original["correlations"][3]]),
+        "selection must preserve original references, causal identities, and payloads"
+    );
+    let transfer_refs = selected["correlations"][1]["refs"]
+        .as_array()
+        .ok_or("missing selected transfer refs")?;
+    let destination = transfer_refs
+        .iter()
+        .find(|reference| reference["aggregate_id"] == "harbor-fleet")
+        .ok_or("missing included destination event")?;
+    assert_eq!(destination["payload"]["bicycle_id"], "bike-7");
+
+    let payload_match = "match=bike-rental/bicycle-transferred-in.bicycle_id=bike-7";
+    let (status, matched) = get(
+        &app,
+        &format!("{path}&include=context:bike-rental&{payload_match}"),
+        "inspection",
+    )
+    .await?;
+    assert_eq!(status, 200, "{matched}");
+    assert_eq!(correlation_ids(&matched), ["selected-transfer"]);
+    assert_eq!(matched["snapshot"], original["snapshot"]);
+    assert_eq!(matched["correlations"][0], selected["correlations"][1]);
+
+    // Without an include the destination payload cannot match. Matching must also
+    // not pull an unselected transfer back into a rent-only selection.
+    for query in [
+        format!("{selection}&{payload_match}"),
+        format!("correlation=selected-rent&include=context:bike-rental&{payload_match}"),
+        "correlation=harbor-bike-8&correlation=not-recorded".to_owned(),
+    ] {
+        let (status, empty) = get(
+            &app,
+            &format!("{FLEET}/city-fleet/correlations?{query}"),
+            "inspection",
+        )
+        .await?;
+        assert_eq!(status, 200, "{empty}");
+        assert_eq!(empty["correlations"], json!([]));
+        assert!(empty.get("truncated").is_none());
+    }
+    let (status, unknown) = get(
+        &app,
+        &format!("{FLEET}/missing-fleet/correlations?{selection}"),
+        "inspection",
+    )
+    .await?;
+    assert_eq!(status, 404, "{unknown}");
+    assert_eq!(unknown["code"], "unknown-anchor-stream");
+    connection.drain().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn production_inspection_rejects_wrong_scope_application_and_conflicting_sources()
 -> TestResult {
     let connection = connect(&NatsConnectionConfig::new(
@@ -177,7 +523,6 @@ async fn inspect_retained_events(inspection_only: bool) -> TestResult {
         )
         .await?,
     );
-    normal.apply_fixture(&demo_fixture()?).await?;
     let http = if inspection_only {
         HttpConfig::inspection_only("inspection")?
     } else {
@@ -223,6 +568,13 @@ async fn inspect_retained_events(inspection_only: bool) -> TestResult {
         }]))
     );
 
+    command(
+        &normal,
+        "seed-city-bike-42",
+        "add-bicycle",
+        json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42", "condition": "serviceable"}),
+    )
+    .await?;
     command(
         &normal,
         "external-rent",

@@ -19,6 +19,26 @@ fn configuration(message: impl Into<String>) -> EventStoreError {
     EventStoreError::new(EventStoreErrorKind::ConfigurationMismatch, message)
 }
 
+pub(super) fn validate_evidence_scope(
+    config: &NatsEventStoreConfig,
+    evidence: Option<&rostfrei_core::OutcomeEvidence>,
+) -> Result<(), EventStoreError> {
+    let expected = format!(
+        "{}:{}",
+        config.application().as_str(),
+        config.traffic_scope().subject_segment().unwrap_or("normal"),
+    );
+    if evidence
+        .and_then(|evidence| evidence.authority_scope.as_ref())
+        .is_some_and(|scope| scope != &expected)
+    {
+        return Err(configuration(
+            "completed evidence belongs to another application/traffic authority",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn authority(
     config: &NatsEventStoreConfig,
     journal: &str,
@@ -41,6 +61,44 @@ pub(super) fn authority(
     }
     CommandAuthority::new(format!("nats:{}", encode_lower_hex(hash.finalize())))
         .map_err(|e| invalid(e.to_string()))
+}
+
+/// Historical evidence binds to the authority incarnations recorded in the
+/// append-only journal. Inspecting it never requires live result-detail storage.
+pub(super) fn historical_authority(
+    config: &NatsEventStoreConfig,
+    journal: &jetstream::stream::Info,
+) -> Result<CommandAuthority, EventStoreError> {
+    let expected = config.stream_config();
+    verify_stream_config(&expected, &journal.config)?;
+    for key in [
+        "rostfrei.completed-outcomes.epoch",
+        "rostfrei.completed-outcomes.version",
+    ] {
+        if journal.config.metadata.get(key) != expected.metadata.get(key) {
+            return Err(configuration(
+                "historical journal epoch differs from its configured authority",
+            ));
+        }
+    }
+    if !config.split_outcomes() && journal.config.metadata.contains_key(STATE_BINDING) {
+        return Err(configuration(
+            "inline journal carries a split outcome-state binding",
+        ));
+    }
+    let split = if config.split_outcomes() {
+        let state_incarnation = journal
+            .config
+            .metadata
+            .get(STATE_BINDING)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| configuration("journal has no recorded outcome-state incarnation"))?
+            .clone();
+        Some(SplitAuthority { state_incarnation })
+    } else {
+        None
+    };
+    authority(config, &journal.created.to_string(), split.as_ref())
 }
 
 pub(super) async fn connect_split(
@@ -167,6 +225,16 @@ struct ObservedState {
 }
 
 impl NatsEventStore {
+    pub(super) async fn verify_history_attachment(&self) -> Result<(), EventStoreError> {
+        if self.history_only {
+            let journal = self.verify_journal().await?;
+            if historical_authority(&self.config, journal.cached_info())? != self.authority {
+                return Err(configuration("recorded journal authority binding changed"));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) async fn acceptance_receipt(
         &self,
         operation: &OperationId,
@@ -231,6 +299,11 @@ impl NatsEventStore {
     pub(super) async fn verify_authority(
         &self,
     ) -> Result<Option<jetstream::stream::Stream>, EventStoreError> {
+        if self.history_only {
+            return Err(configuration(
+                "journal-only history handle cannot access live outcome authority",
+            ));
+        }
         let journal = self.verify_journal().await?;
         let state = inspect_split_state(&self.context, &self.config, &journal).await?;
         let incarnation = state.as_ref().map(|s| s.cached_info().created.to_string());
@@ -564,7 +637,6 @@ impl OutcomeReader for NatsEventStore {
                 key.operation_id(),
                 false,
                 &mut raw_histories,
-                TransactionSubjectLayout::Operation,
             )
             .await
             .map_err(EventStoreError::in_outcome_recovery)?

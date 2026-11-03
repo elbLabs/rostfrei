@@ -368,17 +368,9 @@ fn aggregate_event_filter_matches_family(filter: &str, family_filter: &str) -> b
     };
     let tokens: Vec<_> = remainder.split('.').collect();
     let (context, identifiers) = match tokens.as_slice() {
-        [
-            context,
-            "aggregate",
-            aggregate_type,
-            aggregate_id,
-            correlation,
-            causation,
-        ] => (
-            context,
-            [aggregate_type, aggregate_id, correlation, causation],
-        ),
+        [context, "aggregate", aggregate_type, aggregate_id] => {
+            (context, [aggregate_type, aggregate_id])
+        }
         [
             context,
             "split",
@@ -386,12 +378,9 @@ fn aggregate_event_filter_matches_family(filter: &str, family_filter: &str) -> b
             "aggregate",
             aggregate_type,
             aggregate_id,
-            correlation,
-            causation,
-        ] if epoch.len() == 64 && epoch.bytes().all(|byte| byte.is_ascii_hexdigit()) => (
-            context,
-            [aggregate_type, aggregate_id, correlation, causation],
-        ),
+        ] if epoch.len() == 64 && epoch.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
+            (context, [aggregate_type, aggregate_id])
+        }
         _ => return false,
     };
     !context.is_empty()
@@ -442,12 +431,12 @@ mod tests {
     fn observer_accepts_readable_subject_filters_and_rejects_old_aggregate_hashes() {
         let family = "shop.test.domain.>";
         for aggregate_filter in [
-            "shop.test.domain.orders.aggregate.*.*.*.*".to_owned(),
+            "shop.test.domain.orders.aggregate.*.*".to_owned(),
             format!(
-                "shop.test.domain.orders.split.{}.aggregate.*.*.*.*",
+                "shop.test.domain.orders.split.{}.aggregate.*.*",
                 "a".repeat(64)
             ),
-            "shop.test.domain.orders.aggregate.Order.order-7.*.*".to_owned(),
+            "shop.test.domain.orders.aggregate.Order.order-7".to_owned(),
         ] {
             assert!(aggregate_event_filter_matches_family(
                 &aggregate_filter,
@@ -456,6 +445,7 @@ mod tests {
         }
         for invalid in [
             "shop.test.domain.orders.aggregate.*",
+            "shop.test.domain.orders.aggregate.*.*.*.*",
             "shop.test.domain.orders.aggregate.*.*.*.>",
             "shop.test.domain.orders.aggregate.*..*.*",
             "shop.domain.orders.aggregate.*.*.*.*",
@@ -509,16 +499,16 @@ mod tests {
             &filter,
         ));
         assert!(filter_matches_family(
-            "bike-rental.test.domain.bike-rental.aggregate.*.*.*.*",
+            "bike-rental.test.domain.bike-rental.aggregate.*.*",
             &filter,
         ));
         assert!(aggregate_event_filter_matches_family(
-            "bike-rental.test.domain.bike-rental.aggregate.*.*.*.*",
+            "bike-rental.test.domain.bike-rental.aggregate.*.*",
             &filter,
         ));
         let epoch = "a".repeat(64);
         assert!(aggregate_event_filter_matches_family(
-            &format!("bike-rental.test.domain.bike-rental.split.{epoch}.aggregate.*.*.*.*"),
+            &format!("bike-rental.test.domain.bike-rental.split.{epoch}.aggregate.*.*"),
             &filter
         ));
         assert!(!aggregate_event_filter_matches_family(
@@ -579,7 +569,7 @@ mod integration_tests {
         let suffix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let application = ApplicationName::new(format!("delivery-health-{suffix}"))?;
         let name = format!("DELIVERY_HEALTH_{suffix}");
-        let filter = format!("{}.domain.test.aggregate.*.*.*.*", application.as_str());
+        let filter = format!("{}.domain.test.aggregate.*.*", application.as_str());
         let client = crate::connect(&crate::NatsConnectionConfig::new(
             "native-regression-fixture",
             rostfrei_testing::integration::nats_url()?,

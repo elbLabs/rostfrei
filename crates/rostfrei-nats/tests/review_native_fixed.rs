@@ -7,12 +7,14 @@
 #[allow(clippy::indexing_slicing, reason = "existing owned wire relay")]
 mod modular_state_fault_support;
 mod release_contract_support;
+mod transaction_support;
 use async_trait::async_trait;
 use modular_state_fault_support::StateProxy;
 use release_contract_support::*;
 use rostfrei_runtime::{
     CommandAccess, CommandProcessingService, PrincipalId, TrustedCommandContext,
 };
+use transaction_support::AppendOneTransaction;
 rostfrei_runtime::install_macro_support!();
 
 fn caller() -> TestResult<TrustedCommandContext> {
@@ -131,7 +133,7 @@ async fn in_place_metadata_damage_blocks_even_exact_compatibility_replays_then_r
         let id = stream("retained-event")?;
         let event = batch(&id, "retained-event")?;
         store
-            .append(&id, ExpectedVersion::NoStream, event.clone())
+            .append_one_transaction(&id, ExpectedVersion::NoStream, event.clone())
             .await?;
         let tx = transaction(&f, "retained-tx")?;
         store.append_transaction(tx.clone()).await?;
@@ -178,13 +180,13 @@ async fn in_place_metadata_damage_blocks_even_exact_compatibility_replays_then_r
         let before = snapshot(&f, &store).await?;
         configuration(
             store
-                .append(&id, ExpectedVersion::NoStream, event.clone())
+                .append_one_transaction(&id, ExpectedVersion::NoStream, event.clone())
                 .await,
         );
         configuration(store.append_transaction(tx.clone()).await);
         configuration(
             open_append
-                .append(&id, ExpectedVersion::NoStream, event.clone())
+                .append_one_transaction(&id, ExpectedVersion::NoStream, event.clone())
                 .await,
         );
         configuration(open_tx.append_transaction(tx.clone()).await);
@@ -199,7 +201,7 @@ async fn in_place_metadata_damage_blocks_even_exact_compatibility_replays_then_r
             store
                 .append_session()
                 .await?
-                .append(&id, ExpectedVersion::NoStream, event.clone())
+                .append_one_transaction(&id, ExpectedVersion::NoStream, event.clone())
                 .await,
         );
         configuration(store.commit_outcome(p.clone()).await);
@@ -231,7 +233,9 @@ async fn in_place_metadata_damage_blocks_even_exact_compatibility_replays_then_r
         f.js.update_stream(original.cached_info().config.clone())
             .await?;
         assert!(matches!(
-            store.append(&id, ExpectedVersion::NoStream, event).await?,
+            store
+                .append_one_transaction(&id, ExpectedVersion::NoStream, event)
+                .await?,
             AppendOutcome::ExactReplay(_)
         ));
         assert!(matches!(
@@ -299,7 +303,7 @@ async fn repairing_cross_bindings_cannot_hide_state_reincarnation_from_captured_
     let id = stream("new-event")?;
     configuration(
         store
-            .append(&id, ExpectedVersion::NoStream, batch(&id, "direct")?)
+            .append_one_transaction(&id, ExpectedVersion::NoStream, batch(&id, "direct")?)
             .await,
     );
     configuration(
@@ -309,7 +313,7 @@ async fn repairing_cross_bindings_cannot_hide_state_reincarnation_from_captured_
     );
     configuration(
         open_append
-            .append(&id, ExpectedVersion::NoStream, batch(&id, "open")?)
+            .append_one_transaction(&id, ExpectedVersion::NoStream, batch(&id, "open")?)
             .await,
     );
     configuration(
@@ -331,7 +335,7 @@ async fn repairing_cross_bindings_cannot_hide_state_reincarnation_from_captured_
         store
             .append_session()
             .await?
-            .append(&id, ExpectedVersion::NoStream, batch(&id, "new")?)
+            .append_one_transaction(&id, ExpectedVersion::NoStream, batch(&id, "new")?)
             .await,
     );
     configuration(
@@ -649,7 +653,7 @@ async fn writable_legacy_transactions_keep_guards_and_replay_while_readonly_clon
     configuration(clone.append_session().await);
     configuration(
         clone
-            .append(&id, ExpectedVersion::NoStream, batch(&id, "legacy-tx")?)
+            .append_one_transaction(&id, ExpectedVersion::NoStream, batch(&id, "legacy-tx")?)
             .await,
     );
     assert_eq!(snapshot(&f, &clone).await?, before);
@@ -657,7 +661,7 @@ async fn writable_legacy_transactions_keep_guards_and_replay_while_readonly_clon
     writer
         .append_session()
         .await?
-        .append(
+        .append_one_transaction(
             &stream("later")?,
             ExpectedVersion::NoStream,
             batch(&stream("later")?, "later")?,

@@ -404,10 +404,15 @@ impl NatsRuntime {
     /// Test backend across resets, while diagnostics remain history-only.
     pub fn tracer_builder(&self) -> crate::TracerBuilder {
         let current = Arc::new(self.backend.clone());
-        self.bindings
+        let builder = self
+            .bindings
             .tracer_builder(current.clone())
-            .with_test_event_store(current.clone())
-            .with_stream_directory(current)
+            .with_stream_directory(current.clone());
+        if self.config.context.traffic_scope() == TrafficScope::Test {
+            builder.with_test_event_store(current)
+        } else {
+            builder
+        }
     }
     pub fn transport(&self) -> Arc<dyn CommandTransport> {
         self.transport.clone()
@@ -441,6 +446,11 @@ impl NatsRuntime {
         &self,
         fixture: &Fixture,
     ) -> Result<FixtureApplyReport, NatsHostError> {
+        if self.config.context.traffic_scope() != TrafficScope::Test {
+            return Err(NatsHostError::Configuration(
+                "fixture injection requires Test scope".into(),
+            ));
+        }
         let plan = FixtureEventSet::new(std::slice::from_ref(fixture))?;
         let mut events = self.fixture_events.write().await;
         events.extend(plan);
@@ -864,7 +874,7 @@ impl NatsApplicationBuilder {
         Ok(self)
     }
 
-    /// Explicit, idempotent initialization without deleting resources, also in Normal scope.
+    /// Explicit, idempotent Test initialization without deleting resources.
     #[must_use]
     pub fn with_initial_fixture(mut self, fixture: Fixture) -> Self {
         self.initial_fixture = Some(fixture);
@@ -903,7 +913,10 @@ impl NatsApplicationBuilder {
         reason = "startup preparation and rollback are kept together"
     )]
     async fn start(self, provision: bool) -> Result<NatsApplication, NatsHostError> {
-        if (self.fixture.is_some() || self.tracer.is_some())
+        if (self.fixture.is_some()
+            || self.initial_fixture.is_some()
+            || !self.fixtures.is_empty()
+            || self.tracer.is_some())
             && self.config.context.traffic_scope() != TrafficScope::Test
         {
             return Err(NatsHostError::Configuration("fixtures and Tracer require an explicitly isolated Test runtime; production dispatch is a separate attachment".into()));

@@ -1,24 +1,20 @@
 use crate::{
-    CORRELATION_ID_HEADER, MessagingTopology, NatsEventStoreConfig,
-    event_store::decode_consumed_event, integration_subject,
+    MessagingTopology, NatsEventStoreConfig, event_store::receipt_inspection, integration_subject,
     messaging_config::traffic_subject_prefix,
 };
-use async_nats::{
-    HeaderMap,
-    jetstream::{
-        self,
-        consumer::{self, pull},
-        stream::{self, RetentionPolicy},
-    },
+use async_nats::jetstream::{
+    self,
+    consumer::{self, pull},
+    stream::{self, RetentionPolicy},
 };
 use async_trait::async_trait;
 use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use rostfrei_core::{
     CorrelationChain, CorrelationHistory, CorrelationRead, CorrelationRef, CorrelationSnapshot,
-    CorrelationSourceKind, CorrelationSourceSnapshot, DomainEventRef, EventStoreError,
-    EventStoreErrorKind, IntegrationEventRef,
+    CorrelationSourceKind, CorrelationSourceSnapshot, EventStoreError, EventStoreErrorKind,
+    IntegrationEventRef,
 };
-use rostfrei_messaging_core::{CorrelationId, MessageTimestamp};
+use rostfrei_messaging_core::CorrelationId;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
@@ -41,6 +37,7 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 pub struct NatsCorrelationHistory {
     context: jetstream::Context,
     sources: Vec<Source>,
+    domain_attachments: BTreeMap<String, Attachment>,
     limits: Limits,
     active: Arc<Semaphore>,
 }
@@ -99,18 +96,29 @@ impl NatsCorrelationHistory {
             .map(|config| Source::Domain(Box::new(config)))
             .collect();
         sources.push(Source::Integration(Box::new(topology.clone())));
-        let reader = Self {
+        let mut reader = Self {
             context,
             sources,
+            domain_attachments: BTreeMap::new(),
             limits: Limits {
                 refs: MAX_REFS,
                 bytes: MAX_READ_BYTES,
             },
             active: Arc::new(Semaphore::new(MAX_ACTIVE_READS)),
         };
-        tokio::time::timeout(READ_TIMEOUT, reader.capture())
+        let sources = tokio::time::timeout(READ_TIMEOUT, reader.capture())
             .await
             .map_err(|_| unavailable("correlation source verification timed out"))??;
+        reader.domain_attachments = sources
+            .into_iter()
+            .filter(|source| matches!(source.source, Source::Domain(_)))
+            .map(|source| {
+                (
+                    source.source.name().to_owned(),
+                    Attachment::from_info(source.stream.cached_info()),
+                )
+            })
+            .collect();
         Ok(reader)
     }
 
@@ -124,6 +132,9 @@ impl NatsCorrelationHistory {
                     .map_err(|error| {
                         unavailable(format!("correlation source {}: {error}", source.name()))
                     })?;
+                if let Some(attachment) = self.domain_attachments.get(source.name()) {
+                    attachment.verify(stream.cached_info())?;
+                }
                 source.validate(stream.cached_info())?;
                 Ok(Captured { source, stream })
             })
@@ -201,11 +212,31 @@ impl NatsCorrelationHistory {
         if lock(state)?.truncated {
             return Ok(());
         }
-        let filters = ids.iter().map(|id| source.source.filter(id)).collect();
-        let mut replay = Replay::open(self.context.clone(), source, filters, permit).await?;
+        let mut filters: Vec<_> = ids
+            .iter()
+            .flat_map(|id| source.source.filters(id))
+            .collect();
+        let Some(witness) = source.witness(&self.context, state).await? else {
+            return Ok(());
+        };
+        // Generated selectors have only single-token wildcards. Do not add an
+        // overlapping exact filter when the witness is already selected.
+        let witness_only = if selection_covers(&filters, &witness) {
+            None
+        } else {
+            filters.push(witness.clone());
+            Some(witness)
+        };
+        let mut replay =
+            Replay::open(self.context.clone(), source, filters, witness_only, permit).await?;
         let result = Self::collect(source, &mut replay, state).await;
         let cleanup = replay.close().await;
         drop(replay);
+        if result.is_err() {
+            // A replacement can first appear as a missing or incompatible raw
+            // event. Preserve the source-incarnation error in that case.
+            source.recheck(&self.context).await?;
+        }
         result?;
         cleanup
     }
@@ -226,8 +257,44 @@ impl NatsCorrelationHistory {
             if !lock(state)?.admit(bytes) {
                 break;
             }
-            let (id, reference) = source.source.decode(&message)?;
-            lock(state)?.insert(id, reference)?;
+            if message
+                .info()
+                .map_err(|_| corrupt("invalid correlation delivery metadata"))?
+                .stream_sequence
+                > source.stream.cached_info().state.last_sequence
+            {
+                break; // Above-cutoff overfetch still consumed examined-data budget.
+            }
+            if replay.witness_only.as_deref() == Some(message.subject.as_str()) {
+                continue; // Exact-subject overfetch is charged but is not selected evidence.
+            }
+            match &source.source {
+                Source::Domain(config) => {
+                    let Some((id, references)) =
+                        receipt_inspection::inspect(config, &source.stream, &message, |bytes| {
+                            Ok(lock(state)?.admit(bytes))
+                        })
+                        .await?
+                    else {
+                        break;
+                    };
+                    if !lock(state)?.chains.contains_key(&id) {
+                        return Err(corrupt(
+                            "native receipt filter returned an unrequested correlation",
+                        ));
+                    }
+                    for reference in references {
+                        lock(state)?.insert(id.clone(), CorrelationRef::Domain(reference))?;
+                        if lock(state)?.truncated {
+                            break;
+                        }
+                    }
+                }
+                Source::Integration(topology) => {
+                    let (id, reference) = decode_integration(topology, &message)?;
+                    lock(state)?.insert(id, reference)?;
+                }
+            }
         }
         Ok(())
     }
@@ -268,10 +335,10 @@ impl Source {
             Self::Integration(topology) => topology.integration_event_stream().as_str(),
         }
     }
-    fn filter(&self, id: &str) -> String {
+    fn filters(&self, id: &str) -> Vec<String> {
         match self {
-            Self::Domain(config) => config.correlation_subject_filter(id),
-            Self::Integration(topology) => topology.integration_correlation_filter(id),
+            Self::Domain(config) => config.correlation_receipt_subject_filters(id).to_vec(),
+            Self::Integration(topology) => vec![topology.integration_correlation_filter(id)],
         }
     }
 
@@ -305,6 +372,7 @@ impl Source {
                         "domain correlation source must preserve its append-only journal",
                     ));
                 }
+                receipt_inspection::validate_authority(store, info)?;
                 store.stream_config().subjects
             }
             Self::Integration(topology) => vec![format!(
@@ -322,83 +390,62 @@ impl Source {
         }
         Ok(())
     }
+}
 
-    fn decode(
-        &self,
-        message: &jetstream::Message,
-    ) -> Result<(String, CorrelationRef), EventStoreError> {
-        match self {
-            Self::Domain(config) => {
-                let headers = message
-                    .headers
-                    .as_ref()
-                    .ok_or_else(|| corrupt("domain event has no headers"))?;
-                let decoded = decode_consumed_event(
-                    config,
-                    message.subject.as_str(),
-                    headers,
-                    &message.payload,
-                )?;
-                let event = decoded.recorded;
-                let id = event
-                    .correlation_id()
-                    .ok_or_else(|| corrupt("filtered domain event has no correlation"))?;
-                if one_header(headers, CORRELATION_ID_HEADER)? != id.as_str()
-                    || one_header(headers, "Nats-Msg-Id")? != event.event_id().as_str()
-                {
-                    return Err(corrupt("domain event headers disagree with its envelope"));
-                }
-                let info = message
-                    .info()
-                    .map_err(|_| corrupt("invalid domain publication metadata"))?;
-                let milliseconds = info
-                    .published
-                    .unix_timestamp_nanos()
-                    .checked_div(1_000_000)
-                    .and_then(|value| u64::try_from(value).ok())
-                    .ok_or_else(|| corrupt("invalid domain publication timestamp"))?;
-                let occurred_at = MessageTimestamp::from_unix_milliseconds(milliseconds)
-                    .map_err(|_| corrupt("invalid domain publication timestamp"))?;
-                Ok((
-                    id.as_str().to_owned(),
-                    CorrelationRef::Domain(DomainEventRef::from_recorded(
-                        config.bounded_context().as_str(),
-                        &event,
-                        occurred_at,
-                    )),
-                ))
-            }
-            Self::Integration(topology) => {
-                let (subject, envelope) = integration_subject::decode_message(
-                    message.subject.as_str(),
-                    message.headers.as_ref(),
-                    &message.payload,
-                )
-                .map_err(|_| corrupt("integration subject, headers and envelope must agree"))?;
-                let address = subject.address();
-                if address.application() != topology.application().as_str()
-                    || address.traffic_scope() != topology.traffic_scope()
-                    || subject.as_str() != message.subject.as_str()
-                {
-                    return Err(corrupt("integration event belongs to another source scope"));
-                }
-                Ok((
-                    envelope.correlation_id().as_str().to_owned(),
-                    CorrelationRef::Integration(IntegrationEventRef {
-                        context: address.context().to_owned(),
-                        subject: message.subject.to_string(),
-                        message_id: envelope.message_id().as_str().to_owned(),
-                        event_type: address.name().to_owned(),
-                        schema_version: envelope.schema_version().get(),
-                        causation_id: envelope.causation_id().map(|id| id.as_str().to_owned()),
-                        occurred_at: envelope.occurred_at(),
-                    }),
-                ))
-            }
+fn decode_integration(
+    topology: &MessagingTopology,
+    message: &jetstream::Message,
+) -> Result<(String, CorrelationRef), EventStoreError> {
+    let (subject, envelope) = integration_subject::decode_message(
+        message.subject.as_str(),
+        message.headers.as_ref(),
+        &message.payload,
+    )
+    .map_err(|_| corrupt("integration subject, headers and envelope must agree"))?;
+    let address = subject.address();
+    if address.application() != topology.application().as_str()
+        || address.traffic_scope() != topology.traffic_scope()
+        || subject.as_str() != message.subject.as_str()
+    {
+        return Err(corrupt("integration event belongs to another source scope"));
+    }
+    Ok((
+        envelope.correlation_id().as_str().to_owned(),
+        CorrelationRef::Integration(IntegrationEventRef {
+            context: address.context().to_owned(),
+            subject: message.subject.to_string(),
+            message_id: envelope.message_id().as_str().to_owned(),
+            event_type: address.name().to_owned(),
+            schema_version: envelope.schema_version().get(),
+            causation_id: envelope.causation_id().map(|id| id.as_str().to_owned()),
+            occurred_at: envelope.occurred_at(),
+        }),
+    ))
+}
+
+#[derive(Clone)]
+struct Attachment {
+    created: time::OffsetDateTime,
+    config: stream::Config,
+}
+impl Attachment {
+    fn from_info(info: &stream::Info) -> Self {
+        Self {
+            created: info.created,
+            config: info.config.clone(),
         }
+    }
+    fn verify(&self, info: &stream::Info) -> Result<(), EventStoreError> {
+        if self.created != info.created || self.config != info.config {
+            return Err(unavailable(
+                "attached domain correlation source was replaced or reconfigured; reconnect its history readers",
+            ));
+        }
+        Ok(())
     }
 }
 
+#[derive(Clone)]
 struct Captured {
     source: Source,
     stream: stream::Stream,
@@ -419,7 +466,7 @@ impl Captured {
             cutoff_sequence: self.stream.cached_info().state.last_sequence.to_string(),
         }
     }
-    async fn recheck(&self, context: &jetstream::Context) -> Result<(), EventStoreError> {
+    async fn current(&self, context: &jetstream::Context) -> Result<stream::Info, EventStoreError> {
         let current = context
             .get_stream(self.source.name())
             .await
@@ -432,8 +479,69 @@ impl Captured {
         {
             return Err(unavailable("correlation source changed during the read"));
         }
-        Ok(())
+        Ok(current.clone())
     }
+    async fn recheck(&self, context: &jetstream::Context) -> Result<(), EventStoreError> {
+        self.current(context).await.map(|_| ())
+    }
+    async fn expired_through_cutoff(
+        &self,
+        context: &jetstream::Context,
+    ) -> Result<bool, EventStoreError> {
+        if matches!(self.source, Source::Domain(_)) {
+            return Ok(false);
+        }
+        let current = self.current(context).await?;
+        Ok(current.state.messages == 0
+            || current.state.first_sequence > self.stream.cached_info().state.last_sequence)
+    }
+    async fn witness(
+        &self,
+        context: &jetstream::Context,
+        state: &Mutex<ReadState>,
+    ) -> Result<Option<String>, EventStoreError> {
+        let captured = self.stream.cached_info();
+        if captured.state.messages == 0 || !lock(state)?.admit(0) {
+            return Ok(None);
+        }
+        let raw = match self
+            .stream
+            .get_raw_message(captured.state.last_sequence)
+            .await
+        {
+            Ok(raw) => raw,
+            Err(error) => {
+                if error.kind() == stream::RawMessageErrorKind::NoMessageFound
+                    && self.expired_through_cutoff(context).await?
+                {
+                    return Ok(None);
+                }
+                return Err(unavailable(format!(
+                    "cannot obtain retained correlation cutoff witness: {error}"
+                )));
+            }
+        };
+        if !lock(state)?.admit(receipt_inspection::raw_examined_bytes(&raw)?) {
+            return Ok(None);
+        }
+        if raw.sequence != captured.state.last_sequence {
+            return Err(corrupt(
+                "cutoff witness lookup returned a different sequence",
+            ));
+        }
+        Ok(Some(raw.subject.to_string()))
+    }
+}
+
+fn selection_covers(filters: &[String], subject: &str) -> bool {
+    filters.iter().any(|filter| {
+        let mut tokens = subject.split('.');
+        filter.split('.').all(|pattern| {
+            tokens
+                .next()
+                .is_some_and(|token| pattern == "*" || pattern == token)
+        }) && tokens.next().is_none()
+    })
 }
 
 struct ReadState {
@@ -457,7 +565,10 @@ impl ReadState {
     }
     fn admit(&mut self, bytes: usize) -> bool {
         let total = self.bytes.checked_add(bytes);
-        if self.count >= self.limits.refs || total.is_none_or(|total| total > self.limits.bytes) {
+        if self.truncated
+            || self.count >= self.limits.refs
+            || total.is_none_or(|total| total > self.limits.bytes)
+        {
             self.truncated = true;
             return false;
         }
@@ -475,6 +586,10 @@ impl ReadState {
             if prior_id != &id || prior != Some(&reference) {
                 return Err(corrupt("conflicting retained correlation event identity"));
             }
+            return Ok(());
+        }
+        if self.count >= self.limits.refs {
+            self.truncated = true;
             return Ok(());
         }
         let chain = self
@@ -499,19 +614,19 @@ fn lock(state: &Mutex<ReadState>) -> Result<std::sync::MutexGuard<'_, ReadState>
 struct Replay {
     lease: ConsumerLease,
     messages: Option<pull::Ordered>,
-    stream: stream::Stream,
+    source: Captured,
     filters: Vec<String>,
-    created: String,
-    remaining: u64,
+    witness_only: Option<String>,
+    complete: bool,
     cutoff: u64,
     last_sequence: u64,
-    last_consumer_sequence: u64,
 }
 impl Replay {
     async fn open(
         context: jetstream::Context,
         source: &Captured,
         filters: Vec<String>,
+        witness_only: Option<String>,
         permit: Arc<OwnedSemaphorePermit>,
     ) -> Result<Self, EventStoreError> {
         let name = context.client().new_inbox().replace('.', "_");
@@ -551,33 +666,33 @@ impl Replay {
                 "correlation replay did not start with the complete retained selection",
             ));
         }
-        let remaining = consumer.cached_info().num_pending;
-        let created = consumer.cached_info().created.to_string();
         // async-nats 0.50 ordered pulls own 500-message batching/recovery and have
         // no batch-byte tuning. Our byte bound covers examined messages and
         // reference state, not the client's transport prefetch buffers.
+        // Native gap: OrderedConfig fixes replicas=1, so its consumer can run on
+        // a lagging stream follower. No pending count proves leader-cutoff coverage.
+        // MSG.GET supplied a retained witness at C and its exact subject is in the
+        // filters. Ordered delivery at C (or later) proves traversal: NATS applies
+        // stream records contiguously; native recovery resumes after the last
+        // yielded sequence with these same filters. A fresh leader INFO can only
+        // substitute when every record <= C has expired, never just pending=0.
         let messages =
-            if remaining == 0 {
-                None
-            } else {
-                Some(consumer.messages().await.map_err(|error| {
-                    unavailable(format!("cannot open correlation replay: {error}"))
-                })?)
-            };
+            Some(consumer.messages().await.map_err(|error| {
+                unavailable(format!("cannot open correlation replay: {error}"))
+            })?);
         Ok(Self {
             lease,
             messages,
-            stream: source.stream.clone(),
+            source: source.clone(),
             filters,
-            created,
-            remaining,
+            witness_only,
+            complete: false,
             cutoff: source.stream.cached_info().state.last_sequence,
             last_sequence: 0,
-            last_consumer_sequence: 0,
         })
     }
     async fn next(&mut self) -> Result<Option<jetstream::Message>, EventStoreError> {
-        if self.remaining == 0 {
+        if self.complete {
             return Ok(None);
         }
         tokio::time::timeout(API_TIMEOUT, self.next_proven())
@@ -599,28 +714,22 @@ impl Replay {
                         return Err(corrupt("correlation delivery identity or ordering mismatch"));
                     }
                     self.last_sequence = info.stream_sequence;
-                    self.last_consumer_sequence = info.consumer_sequence;
-                    if info.stream_sequence > self.cutoff { self.remaining = 0; return Ok(None); }
-                    self.remaining = self.remaining.checked_sub(1).ok_or_else(|| corrupt("correlation replay count overflow"))?;
-                    // Expiry can reduce the initial matching count. This is
-                    // broker evidence; silence or a timeout is not completion.
-                    if info.pending == 0 { self.remaining = 0; }
+                    self.complete = info.stream_sequence >= self.cutoff;
                     return Ok(Some(message));
                 }
                 () = tokio::time::sleep(PROGRESS_INTERVAL) => {
                     let name = self.lease.name.as_deref().ok_or_else(|| unavailable("correlation replay is closed"))?;
-                    match self.stream.consumer_info(name).await {
+                    match self.source.stream.consumer_info(name).await {
                         Ok(info) => {
                             validate_consumer(&info, &self.lease, &self.filters)?;
-                            // Pending excludes messages in client buffers, so
-                            // require delivery progress to agree as well.
-                            let received_all = info.delivered.stream_sequence == self.last_sequence
-                                || (info.created.to_string() == self.created && info.delivered.consumer_sequence == self.last_consumer_sequence);
-                            if info.num_pending == 0 && received_all { self.remaining = 0; return Ok(None); }
                         }
                         Err(error) if matches!(error.kind(), jetstream::context::ConsumerInfoErrorKind::JetStream(error)
                             if error.error_code() == jetstream::ErrorCode::CONSUMER_NOT_FOUND) => (), // Native recovery.
                         Err(error) => return Err(unavailable(format!("cannot verify correlation replay progress: {error}"))),
+                    }
+                    if self.source.expired_through_cutoff(&self.lease.context).await? {
+                        self.complete = true;
+                        return Ok(None);
                     }
                 }
             }
@@ -711,16 +820,6 @@ async fn delete_consumer(
 fn consumer_missing(error: &stream::ConsumerError) -> bool {
     matches!(error.kind(), stream::ConsumerErrorKind::JetStream(error)
         if matches!(error.error_code(), jetstream::ErrorCode::CONSUMER_NOT_FOUND | jetstream::ErrorCode::STREAM_NOT_FOUND))
-}
-fn one_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str, EventStoreError> {
-    let mut values = headers.get_all(name.to_owned());
-    let value = values
-        .next()
-        .ok_or_else(|| corrupt("missing domain correlation header"))?;
-    if values.next().is_some() {
-        return Err(corrupt("ambiguous domain correlation header"));
-    }
-    Ok(value.as_str())
 }
 fn invalid(message: impl Into<String>) -> EventStoreError {
     EventStoreError::new(EventStoreErrorKind::InvalidRequest, message)

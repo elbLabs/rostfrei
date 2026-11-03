@@ -59,11 +59,11 @@ async fn ordinary_history_reads_do_not_traverse_historical_receipts() -> TestRes
             .checked_sub(before_audit)
             .ok_or("audit counter regressed")?;
         assert!(
-            audit_requests
-                >= requests
-                    .checked_add(size.checked_mul(2).ok_or("audit budget overflow")?)
-                    .ok_or("audit budget overflow")?
+            audit_requests >= requests.checked_add(size).ok_or("audit budget overflow")?,
+            "audit of {size} transactions used {audit_requests} requests; ordinary read used {requests}"
         );
+        // Current receipts need one operation-wide lookup each; obsolete primary-
+        // scoped receipt probes no longer double the explicit audit's read cost.
         eprintln!("audit of {size} transactions: {audit_requests} requests");
         let strict = store.clone().with_history_auditing(true);
         for explicit in [false, true] {
@@ -149,7 +149,7 @@ async fn auditing_policy_is_local_to_the_handle_and_rejects_bad_receipts_before_
             &[b"must-not-write"],
         )?;
         assert!(
-            matches!(strict.append(&aggregate, ExpectedVersion::Exact(StreamVersion::new(1)), direct).await,
+            matches!(strict.append_fixture(&aggregate, ExpectedVersion::Exact(StreamVersion::new(1)), direct).await,
             Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory)
         );
         let valid = stream("strict-valid-writer")?;
@@ -216,7 +216,7 @@ async fn history_reads_preserve_commits_across_sparse_ranges() -> TestResult<()>
         ("second", ExpectedVersion::Exact(StreamVersion::new(40))),
     ] {
         let outcome = store
-            .append(
+            .append_fixture(
                 &writer,
                 expected_version,
                 batch(&writer, operation, operation, &payloads)?,
@@ -229,7 +229,7 @@ async fn history_reads_preserve_commits_across_sparse_ranges() -> TestResult<()>
         if operation == "first" {
             let unrelated = stream("unrelated")?;
             store
-                .append(
+                .append_fixture(
                     &unrelated,
                     ExpectedVersion::NoStream,
                     repeated_batch(&unrelated, "noise", "noise", 100)?,
@@ -295,7 +295,7 @@ pub async fn seed_history(
     for index in 0..7_u64 {
         let operation = format!("history-{index}");
         let outcome = store
-            .append(
+            .append_fixture(
                 aggregate,
                 if index == 0 {
                     ExpectedVersion::NoStream
@@ -308,7 +308,7 @@ pub async fn seed_history(
         expected.extend_from_slice(outcome.events());
         let unrelated = stream(&format!("unrelated-{index}"))?;
         store
-            .append(
+            .append_fixture(
                 &unrelated,
                 ExpectedVersion::NoStream,
                 batch(&unrelated, &operation, &operation, &[b"noise"])?,
@@ -396,7 +396,7 @@ async fn compare_history_windows() -> TestResult<()> {
                     ))
                     .await?;
             } else {
-                batched.append(&writer, expected, events).await?;
+                batched.append_fixture(&writer, expected, events).await?;
             }
             version = version
                 .checked_add(u64::from(count))
@@ -446,7 +446,7 @@ async fn history_replay_loads_large_events_across_batches() -> TestResult<()> {
         for index in 0..commits {
             let operation = format!("large-{index}");
             let outcome = store
-                .append(
+                .append_fixture(
                     &aggregate,
                     if index == 0 {
                         ExpectedVersion::NoStream
@@ -484,8 +484,6 @@ async fn history_replay_ignores_concurrent_appends_after_its_cutoff() -> TestRes
                 store.config().event_subject(
                     aggregate.aggregate_type().as_str(),
                     aggregate.aggregate_id().as_str(),
-                    None,
-                    None,
                 ),
                 b"later malformed event".to_vec().into(),
             )
@@ -512,7 +510,7 @@ async fn history_replay_cleans_up_after_cancellation() -> TestResult<()> {
     let (context, store) = directory_fixture("history-cancel").await?;
     let aggregate = stream("cancel")?;
     store
-        .append(
+        .append_fixture(
             &aggregate,
             ExpectedVersion::NoStream,
             batch(&aggregate, "seed", "seed", &[b"one"])?,
@@ -544,7 +542,7 @@ async fn history_replay_does_not_touch_durable_progress() -> TestResult<()> {
     let (context, store) = directory_fixture("history-durable").await?;
     let aggregate = stream("durable")?;
     let expected = store
-        .append(
+        .append_fixture(
             &aggregate,
             ExpectedVersion::NoStream,
             batch(&aggregate, "seed", "seed", &[b"one", b"two"])?,

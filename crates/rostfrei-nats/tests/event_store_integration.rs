@@ -19,6 +19,9 @@ mod history_cluster;
 #[path = "event_store/history_reads.rs"]
 mod history_reads;
 mod native_connection_support;
+mod transaction_support;
+use rostfrei_core::FixtureEventStore;
+use transaction_support::AppendOneTransaction;
 #[path = "../src/stream_policy.rs"]
 mod stream_policy;
 #[path = "event_store/subject_correlations.rs"]
@@ -164,7 +167,7 @@ async fn event_free_operation_identity_is_bounded_context_scoped() -> TestResult
     let second_context = first_store
         .config()
         .application()
-        .bounded_context("other-context")?;
+        .bounded_context_in_scope(first_store.config().traffic_scope(), "other-context")?;
     let second_config = NatsEventStoreConfig::for_bounded_context(&second_context)?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     provision_event_store(&context, &second_config).await?;
@@ -258,7 +261,7 @@ async fn directory_handles_empty_control_only_and_transaction_histories() {
     );
 
     for subject in [
-        config.transaction_subject("control-only"),
+        config.transaction_receipt_subject("control-only", None, None),
         config.transaction_guard_subject("control-only", 0),
     ] {
         context
@@ -344,7 +347,7 @@ async fn directory_excludes_appends_after_its_snapshot() {
     let append = async {
         let _ = reached.wait().await;
         store
-            .append(
+            .append_fixture(
                 &primary,
                 ExpectedVersion::Exact(StreamVersion::new(2)),
                 batch(&primary, "after-snapshot", "after-snapshot", &[b"later"])
@@ -353,7 +356,7 @@ async fn directory_excludes_appends_after_its_snapshot() {
             .await
             .expect("concurrent append");
         store
-            .append(
+            .append_fixture(
                 &later,
                 ExpectedVersion::NoStream,
                 batch(&later, "new-aggregate", "new-aggregate", &[b"new"]).expect("new batch"),
@@ -445,7 +448,7 @@ async fn directory_and_load_reject_wrong_aggregate_expectation_subjects() {
             let aggregate = stream("sequence-expectation").expect("aggregate identity");
             if base_version != 0 {
                 store
-                    .append(
+                    .append_fixture(
                         &aggregate,
                         ExpectedVersion::NoStream,
                         batch(
@@ -528,8 +531,6 @@ async fn publish_commit_with_wrong_sequence_expectation(
         subject: config.event_subject(
             aggregate.aggregate_type().as_str(),
             aggregate.aggregate_id().as_str(),
-            None,
-            None,
         ),
         payload: forged_event_payload_at(
             config,
@@ -564,10 +565,10 @@ async fn publish_commit_with_wrong_sequence_expectation(
             }],
         };
         messages.push(RawAtomicMessage {
-            subject: config.transaction_subject(operation),
+            subject: config.transaction_receipt_subject(operation, None, None),
             payload: forged_receipt_payload(&receipt)?,
             expected_last_subject_sequence: Some(0),
-            expectation_subject: None,
+            expectation_subject: Some(config.transaction_receipt_subject_filter(operation)),
         });
     }
     publish_raw_atomic_batch(context, config, "wrong-predecessor-batch", messages).await
@@ -592,8 +593,6 @@ async fn directory_rejects_version_gaps_and_incomplete_commits() {
                     subject: config.event_subject(
                         aggregate.aggregate_type().as_str(),
                         aggregate.aggregate_id().as_str(),
-                        None,
-                        None,
                     ),
                     payload: forged_transaction_event_payload_at(
                         config,
@@ -710,8 +709,6 @@ async fn directory_snapshot_excludes_later_malformed_participant_history() {
                     store.config().event_subject(
                         participant.aggregate_type().as_str(),
                         participant.aggregate_id().as_str(),
-                        None,
-                        None,
                     ),
                     b"malformed post-snapshot event".to_vec().into(),
                 )
@@ -766,12 +763,12 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     transaction_history_remains_readable_after_lower_limit_provisioning(&context)
         .await
         .expect("transaction history migration coverage");
-    primary_scoped_transaction_history_remains_readable(&context)
+    primary_scoped_receipts_and_mismatched_guards_are_rejected(&context)
         .await
-        .expect("primary-scoped transaction subject migration coverage");
-    legacy_event_store_policy_is_upgraded(&context)
+        .expect("receipt and guard addressing integrity");
+    event_store_message_capacity_is_explicitly_upgraded(&context)
         .await
-        .expect("legacy stream policy migration coverage");
+        .expect("explicit message capacity policy update");
     max_payload_is_validated_before_provisioning(&context)
         .await
         .expect("maximum payload validation coverage");
@@ -827,7 +824,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
 
     let concurrent_stream = stream("concurrent-atomic-batches").expect("concurrent stream id");
     let concurrent_results: [_; 2] = tokio::join!(
-        store.append(
+        store.append_fixture(
             &concurrent_stream,
             ExpectedVersion::NoStream,
             batch(
@@ -838,7 +835,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
             )
             .expect("first concurrent batch"),
         ),
-        store.append(
+        store.append_fixture(
             &concurrent_stream,
             ExpectedVersion::NoStream,
             batch(
@@ -888,7 +885,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     )
     .expect("restart retry batch");
     let first = store
-        .append(
+        .append_fixture(
             &restart_stream,
             ExpectedVersion::NoStream,
             retried_batch.clone(),
@@ -896,7 +893,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         .await
         .expect("initial restart-retry append should succeed");
     store
-        .append(
+        .append_fixture(
             &restart_stream,
             ExpectedVersion::Exact(StreamVersion::new(2)),
             batch(
@@ -919,7 +916,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     .await
     .expect("a new adapter should connect without provisioning");
     let replay = reconnected
-        .append(&restart_stream, ExpectedVersion::NoStream, retried_batch)
+        .append_fixture(&restart_stream, ExpectedVersion::NoStream, retried_batch)
         .await
         .expect("exact retry should survive adapter and client restart");
     assert!(matches!(replay, AppendOutcome::ExactReplay(_)));
@@ -937,7 +934,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         .messages;
     let atomic_stream = stream("one-wire-commit").expect("one-wire stream id");
     store
-        .append(
+        .append_fixture(
             &atomic_stream,
             ExpectedVersion::NoStream,
             batch(
@@ -958,13 +955,13 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         .messages;
     let expected_messages_after = checked_add_u64(
         messages_before,
-        3,
+        4,
         "expected JetStream message count after atomic append",
     )
     .expect("expected message count arithmetic");
     assert_eq!(
         messages_after, expected_messages_after,
-        "each domain event must use one JetStream message"
+        "three events and one terminal fixture manifest share the atomic batch"
     );
     let atomic_subject = config.aggregate_history_subject_filter(
         atomic_stream.aggregate_type().as_str(),
@@ -1032,7 +1029,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
                 .headers
                 .get("Nats-Batch-Commit")
                 .map(async_nats::HeaderValue::as_str),
-            (index == 2).then_some("1")
+            None
         );
         let wire: serde_json::Value =
             serde_json::from_slice(&stored_event.payload).expect("stored event should be JSON");
@@ -1048,7 +1045,7 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         assert_eq!(
             wire.pointer("/schemaVersion")
                 .and_then(serde_json::Value::as_u64),
-            Some(3)
+            Some(7)
         );
         assert_eq!(
             wire.pointer("/event/application")
@@ -1067,9 +1064,46 @@ async fn real_nats_event_store_contract_and_operator_policy() {
         );
     }
 
+    let manifest = stream_info
+        .get_last_raw_message_by_subject(
+            &config.fixture_receipt_subject_filter(&atomic_stream, "one-wire-operation"),
+        )
+        .await
+        .expect("atomic fixture manifest");
+    assert_eq!(
+        manifest
+            .headers
+            .get("Nats-Batch-Id")
+            .map(async_nats::HeaderValue::as_str),
+        batch_id.as_deref()
+    );
+    assert_eq!(
+        manifest
+            .headers
+            .get("Nats-Batch-Sequence")
+            .map(async_nats::HeaderValue::as_str),
+        Some("4")
+    );
+    assert_eq!(
+        manifest
+            .headers
+            .get("Nats-Batch-Commit")
+            .map(async_nats::HeaderValue::as_str),
+        Some("1")
+    );
+    assert!(
+        store
+            .load_transaction_receipt(
+                &OperationId::new("one-wire-operation").expect("fixture operation")
+            )
+            .await
+            .expect("no command decision")
+            .is_none()
+    );
+
     let boundary_stream = stream("maximum-atomic-batch").expect("maximum batch stream id");
     let boundary_outcome = store
-        .append(
+        .append_fixture(
             &boundary_stream,
             ExpectedVersion::NoStream,
             repeated_batch(
@@ -1096,8 +1130,6 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     let incompatible_subject = config.event_subject(
         incompatible_stream.aggregate_type().as_str(),
         incompatible_stream.aggregate_id().as_str(),
-        None,
-        None,
     );
     context
         .send_publish(
@@ -1117,10 +1149,10 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     ));
 
     let mismatch = NatsEventStoreConfig::new(
-        &BoundedContext::new(
-            config.application().clone(),
-            config.bounded_context().clone(),
-        ),
+        &config
+            .application()
+            .bounded_context_in_scope(config.traffic_scope(), config.bounded_context().as_str())
+            .expect("matching scope"),
         config.stream_name(),
     )
     .expect("valid mismatching config")
@@ -1157,14 +1189,13 @@ async fn real_nats_event_store_contract_and_operator_policy() {
     );
 }
 
-async fn legacy_event_store_policy_is_upgraded(
+async fn event_store_message_capacity_is_explicitly_upgraded(
     context: &async_nats::jetstream::Context,
 ) -> TestResult<()> {
     let (bounded_context, stream_name) = unique_names("legacy-policy-upgrade")?;
     let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
         .with_storage_limits(64 * 1024 * 1024, 512 * 1024)?;
     let mut legacy = config.stream_config();
-    legacy.subjects = vec![config.aggregate_subject_filter()];
     legacy.max_message_size = i32::try_from(config.max_event_bytes())?;
     context.create_stream(legacy).await?;
 
@@ -1177,7 +1208,7 @@ async fn legacy_event_store_policy_is_upgraded(
     let upgraded = context.get_stream(config.stream_name()).await?;
     check(
         upgraded.cached_info().config.subjects == config.stream_config().subjects,
-        "legacy stream subjects were not upgraded",
+        "message capacity update changed the stable subject layout",
     )?;
     check(
         upgraded.cached_info().config.max_message_size == config.stream_config().max_message_size,
@@ -1208,7 +1239,7 @@ async fn legacy_history_remains_readable_after_lower_limit_provisioning(
     let aggregate = stream("legacy-limit-migration")?;
     let historical_payload = vec![7; HISTORICAL_PAYLOAD_BYTES];
     historical_store
-        .append(
+        .append_fixture(
             &aggregate,
             ExpectedVersion::NoStream,
             owned_payload_batch(
@@ -1236,9 +1267,7 @@ async fn legacy_history_remains_readable_after_lower_limit_provisioning(
         "historical event exceeded the supported read limit",
     )?;
 
-    let mut legacy_policy = legacy_stream.cached_info().config.clone();
-    legacy_policy.subjects = vec![current.aggregate_subject_filter()];
-    context.create_or_update_stream(legacy_policy).await?;
+    // Payload-limit changes retain the current subject layout and historical bytes.
     update_event_store(context, &current).await?;
 
     legacy_stream = context.get_stream(current.stream_name()).await?;
@@ -1249,7 +1278,7 @@ async fn legacy_history_remains_readable_after_lower_limit_provisioning(
     )?;
     check(
         legacy_stream.cached_info().config.subjects == current.stream_config().subjects,
-        "legacy stream subjects were not migrated",
+        "message limit update changed the stable subject layout",
     )?;
     let current_store = NatsEventStore::connect(context.clone(), current.clone()).await?;
     let loaded = current_store.load(&aggregate).await?;
@@ -1262,7 +1291,7 @@ async fn legacy_history_remains_readable_after_lower_limit_provisioning(
     )?;
 
     let oversized = current_store
-        .append(
+        .append_fixture(
             &aggregate,
             ExpectedVersion::Exact(StreamVersion::new(1)),
             owned_payload_batch(
@@ -1335,7 +1364,7 @@ async fn transaction_history_remains_readable_after_lower_limit_provisioning(
         ))
         .await?;
     let receipt = stream_info
-        .get_last_raw_message_by_subject(&current.transaction_subject(operation))
+        .get_last_raw_message_by_subject(&current.transaction_receipt_subject_filter(operation))
         .await?;
     check(
         event.payload.len() > current.max_event_bytes(),
@@ -1374,7 +1403,7 @@ async fn transaction_history_remains_readable_after_lower_limit_provisioning(
 }
 
 #[allow(clippy::too_many_lines)]
-async fn primary_scoped_transaction_history_remains_readable(
+async fn primary_scoped_receipts_and_mismatched_guards_are_rejected(
     context: &async_nats::jetstream::Context,
 ) -> TestResult<()> {
     let (bounded_context, stream_name) = unique_names("primary-subject-migration")?;
@@ -1436,8 +1465,6 @@ async fn primary_scoped_transaction_history_remains_readable(
                 subject: config.event_subject(
                     legacy_primary.aggregate_type().as_str(),
                     legacy_primary.aggregate_id().as_str(),
-                    None,
-                    None,
                 ),
                 payload: forged_transaction_event_payload(&config, &legacy_primary, &legacy_batch)?,
                 expected_last_subject_sequence: Some(0),
@@ -1464,7 +1491,9 @@ async fn primary_scoped_transaction_history_remains_readable(
                     .legacy_primary_transaction_subject(&legacy_primary, legacy_operation),
                 payload: forged_receipt_payload(&legacy_receipt)?,
                 expected_last_subject_sequence: Some(0),
-                expectation_subject: None,
+                expectation_subject: Some(
+                    config.transaction_receipt_subject_filter(legacy_operation),
+                ),
             },
         ],
     )
@@ -1472,8 +1501,8 @@ async fn primary_scoped_transaction_history_remains_readable(
 
     let loaded = store.load(&legacy_primary).await?;
     check(
-        store.audit_history(&legacy_primary).await? == loaded,
-        "legacy audit differs from normal load",
+        matches!(store.audit_history(&legacy_primary).await, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory),
+        "a primary-scoped receipt cannot establish current operation-wide authority",
     )?;
     check(
         loaded.len() == 1
@@ -1537,8 +1566,6 @@ async fn primary_scoped_transaction_history_remains_readable(
                 subject: config.event_subject(
                     mismatched_primary.aggregate_type().as_str(),
                     mismatched_primary.aggregate_id().as_str(),
-                    None,
-                    None,
                 ),
                 payload: forged_transaction_event_payload(
                     &config,
@@ -1552,7 +1579,11 @@ async fn primary_scoped_transaction_history_remains_readable(
                 )),
             },
             RawAtomicMessage {
-                subject: config.transaction_guard_subject(mismatched_operation, 0),
+                subject: config.legacy_primary_transaction_guard_subject(
+                    &mismatched_primary,
+                    mismatched_operation,
+                    0,
+                ),
                 payload: serde_json::to_vec(&serde_json::json!({
                     "operationId": mismatched_operation,
                     "guardedStream": {
@@ -1567,11 +1598,12 @@ async fn primary_scoped_transaction_history_remains_readable(
                 )),
             },
             RawAtomicMessage {
-                subject: config
-                    .legacy_primary_transaction_subject(&mismatched_primary, mismatched_operation),
+                subject: config.transaction_receipt_subject(mismatched_operation, None, None),
                 payload: forged_receipt_payload(&mismatched_receipt)?,
                 expected_last_subject_sequence: Some(0),
-                expectation_subject: None,
+                expectation_subject: Some(
+                    config.transaction_receipt_subject_filter(mismatched_operation),
+                ),
             },
         ],
     )
@@ -1581,7 +1613,7 @@ async fn primary_scoped_transaction_history_remains_readable(
             store.audit_history(&mismatched_primary).await,
             Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory
         ),
-        "legacy receipt accepted an operation-scoped guard",
+        "operation-scoped receipt accepted a primary-scoped guard",
     )?;
 
     let current_writer = stream("operation-subject-writer")?;
@@ -1609,7 +1641,9 @@ async fn primary_scoped_transaction_history_remains_readable(
 
     let stream = context.get_stream(config.stream_name()).await?;
     stream
-        .get_last_raw_message_by_subject(&config.transaction_subject(current_operation))
+        .get_last_raw_message_by_subject(
+            &config.transaction_receipt_subject_filter(current_operation),
+        )
         .await?;
     stream
         .get_last_raw_message_by_subject(&config.transaction_guard_subject(current_operation, 0))
@@ -1682,7 +1716,7 @@ async fn transaction_contract_and_wire_policy(
     let primary_batch = batch(&primary, operation, operation, &[b"debited", b"audited"])?;
 
     store
-        .append(
+        .append_fixture(
             &observed,
             ExpectedVersion::NoStream,
             batch(&observed, operation, operation, &[b"observed"])?,
@@ -1745,7 +1779,7 @@ async fn transaction_contract_and_wire_policy(
         "secondary transaction history has the wrong length",
     )?;
     let direct_primary_retry = store
-        .append(&primary, ExpectedVersion::NoStream, primary_batch)
+        .append_fixture(&primary, ExpectedVersion::NoStream, primary_batch)
         .await;
     check(
         matches!(
@@ -1887,7 +1921,7 @@ async fn transaction_contract_and_wire_policy(
         "read guard has the wrong operation identity",
     )?;
 
-    let receipt_subject = config.transaction_subject(operation);
+    let receipt_subject = config.transaction_receipt_subject(operation, None, None);
     let receipt = stream_info
         .get_last_raw_message_by_subject(&receipt_subject)
         .await?;
@@ -1914,6 +1948,18 @@ async fn transaction_contract_and_wire_policy(
             .map(async_nats::HeaderValue::as_str)
             == Some("0"),
         "transaction receipt has the wrong duplicate guard",
+    )?;
+    check(
+        receipt
+            .headers
+            .get("Nats-Expected-Last-Subject-Sequence-Subject")
+            .map(async_nats::HeaderValue::as_str)
+            == Some(
+                config
+                    .transaction_receipt_subject_filter(operation)
+                    .as_str(),
+            ),
+        "transaction winner CAS must cover every provenance address for the operation",
     )?;
     check(
         receipt
@@ -2030,7 +2076,7 @@ async fn transaction_contract_and_wire_policy(
 
     let stale_stream = stream("transaction-stale-read")?;
     store
-        .append(
+        .append_fixture(
             &stale_stream,
             ExpectedVersion::NoStream,
             batch(
@@ -2075,7 +2121,7 @@ async fn transaction_contract_and_wire_policy(
     let oversized_operation = "transaction-oversized-before-io";
     context
         .send_publish(
-            config.transaction_subject(oversized_operation),
+            config.transaction_receipt_subject(oversized_operation, None, None),
             PublishMessage::build()
                 .payload(br#"{"corrupt":"receipt"}"#.to_vec().into())
                 .expected_stream(config.stream_name()),
@@ -2232,7 +2278,7 @@ async fn unavailable_reconciliation_policy(
     let read_only_primary = stream("unavailable-reconcile-read-only-primary")?;
     let observed = stream("unavailable-reconcile-observed")?;
     store
-        .append(
+        .append_fixture(
             &observed,
             ExpectedVersion::NoStream,
             batch(
@@ -2286,7 +2332,7 @@ async fn unavailable_reconciliation_policy(
         &[b"existing write"],
     )?;
     store
-        .append(
+        .append_fixture(
             &existing_writer,
             ExpectedVersion::NoStream,
             existing_batch.clone(),
@@ -2410,7 +2456,7 @@ async fn forged_receipt_cannot_bind_a_direct_commit(
     let operation = "forged-receipt-direct-operation";
     let direct_batch = batch(&primary, operation, operation, &[b"direct"])?;
     store
-        .append(&primary, ExpectedVersion::NoStream, direct_batch.clone())
+        .append_fixture(&primary, ExpectedVersion::NoStream, direct_batch.clone())
         .await?;
 
     let receipt = ForgedReceiptContent {
@@ -2470,10 +2516,14 @@ async fn forged_receipt_cannot_bind_a_direct_commit(
     receipt_headers.insert("Nats-Batch-Sequence", "2");
     receipt_headers.insert("Nats-Batch-Commit", "1");
     receipt_headers.insert("Nats-Expected-Last-Subject-Sequence", "0");
+    receipt_headers.insert(
+        "Nats-Expected-Last-Subject-Sequence-Subject",
+        config.transaction_receipt_subject_filter(operation),
+    );
     let receipt_response = context
         .client()
         .send_request(
-            config.transaction_subject(operation),
+            config.transaction_receipt_subject(operation, None, None),
             Request::new()
                 .headers(receipt_headers)
                 .payload(payload.into())
@@ -2493,7 +2543,7 @@ async fn forged_receipt_cannot_bind_a_direct_commit(
         "a forged receipt bound a separately appended direct commit",
     )?;
     let replay = store
-        .append(&primary, ExpectedVersion::NoStream, direct_batch)
+        .append_fixture(&primary, ExpectedVersion::NoStream, direct_batch)
         .await;
     check(
         matches!(replay, Err(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory),
@@ -2727,8 +2777,6 @@ async fn publish_schema_four_event_without_receipt(
                 subject: config.event_subject(
                     aggregate.aggregate_type().as_str(),
                     aggregate.aggregate_id().as_str(),
-                    None,
-                    None,
                 ),
                 payload: forged_transaction_event_payload(config, &aggregate, &event_batch)?,
                 expected_last_subject_sequence: Some(0),
@@ -2767,8 +2815,6 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
     let reused_event_subject = config.event_subject(
         reused_primary.aggregate_type().as_str(),
         reused_primary.aggregate_id().as_str(),
-        None,
-        None,
     );
     publish_raw_atomic_batch(
         context,
@@ -2823,10 +2869,12 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
                 expectation_subject: None,
             },
             RawAtomicMessage {
-                subject: config.transaction_subject(reused_operation),
+                subject: config.transaction_receipt_subject(reused_operation, None, None),
                 payload: forged_receipt_payload(&reused_receipt)?,
                 expected_last_subject_sequence: Some(0),
-                expectation_subject: None,
+                expectation_subject: Some(
+                    config.transaction_receipt_subject_filter(reused_operation),
+                ),
             },
         ],
     )
@@ -2894,8 +2942,6 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
                 subject: config.event_subject(
                     guard_primary.aggregate_type().as_str(),
                     guard_primary.aggregate_id().as_str(),
-                    None,
-                    None,
                 ),
                 payload: forged_transaction_event_payload(config, &guard_primary, &guard_batch)?,
                 expected_last_subject_sequence: Some(0),
@@ -2911,10 +2957,12 @@ async fn reused_batch_id_and_filler_guard_are_rejected(
                 expectation_subject: Some(guarded_subject),
             },
             RawAtomicMessage {
-                subject: config.transaction_subject(guard_operation),
+                subject: config.transaction_receipt_subject(guard_operation, None, None),
                 payload: forged_receipt_payload(&guard_receipt)?,
                 expected_last_subject_sequence: Some(0),
-                expectation_subject: None,
+                expectation_subject: Some(
+                    config.transaction_receipt_subject_filter(guard_operation),
+                ),
             },
         ],
     )
@@ -2947,7 +2995,7 @@ async fn capacity_observations(
     let store = NatsEventStore::connect(context.clone(), config).await?;
     let capacity_stream = stream("capacity")?;
     store
-        .append(
+        .append_fixture(
             &capacity_stream,
             ExpectedVersion::NoStream,
             owned_payload_batch(
@@ -2961,7 +3009,7 @@ async fn capacity_observations(
     let before = store.load(&capacity_stream).await?;
     let large_payload = vec![2; 700];
     let append_result = store
-        .append(
+        .append_fixture(
             &capacity_stream,
             ExpectedVersion::Exact(StreamVersion::new(1)),
             batch(
@@ -2995,7 +3043,7 @@ fn unique_names(label: &str) -> TestResult<(BoundedContext, String)> {
     let process = std::process::id();
     Ok((
         ApplicationName::new(format!("rostfrei-test-{process}-{counter}"))?
-            .bounded_context(label)?,
+            .bounded_context_in_scope(rostfrei_messaging_core::TrafficScope::Test, label)?,
         format!("EVENT_STORE_{label}_{process}_{nanos}_{counter}").to_ascii_uppercase(),
     ))
 }

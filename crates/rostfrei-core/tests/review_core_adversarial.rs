@@ -664,7 +664,7 @@ async fn duplicate_registry_failure_preserves_shared_codec_and_explicit_replacem
     let store = InMemoryEventStore::new();
     let p = proposal("history", None);
     let history = store
-        .append(
+        .append_fixture(
             &stream("one"),
             ExpectedVersion::NoStream,
             batch(&p, &stream("one"), b"2"),
@@ -796,7 +796,7 @@ impl CommandCommitSession for TracedSession<'_> {
                 let rival = proposal("rival", None);
                 self.backend
                     .inner
-                    .append(
+                    .append_fixture(
                         &stream("guard"),
                         ExpectedVersion::NoStream,
                         batch(&rival, &stream("guard"), b"3"),
@@ -990,7 +990,7 @@ async fn observation_with_codec_overrides_and_forks_a_shared_registry() {
     let store = InMemoryEventStore::new();
     let p = proposal("history", None);
     let history = store
-        .append(
+        .append_fixture(
             &stream("one"),
             ExpectedVersion::NoStream,
             batch(&p, &stream("one"), b"2"),

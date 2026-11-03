@@ -46,7 +46,12 @@ async fn broker_subjects(
 }
 
 #[tokio::test]
-async fn ordinary_appends_store_readable_identity_and_escaped_metadata_tokens() -> TestResult<()> {
+#[allow(
+    clippy::too_many_lines,
+    reason = "the table covers both stable event identities and escaped manifest provenance"
+)]
+async fn fixture_events_keep_stable_identity_and_manifests_escape_metadata_tokens() -> TestResult<()>
+{
     let (context, store) = directory_fixture("subject-tokens").await?;
     let examples = [
         (
@@ -54,47 +59,53 @@ async fn ordinary_appends_store_readable_identity_and_escaped_metadata_tokens() 
             "550e8400-e29b-41d4-a716-446655440000",
             Some("550e8400-e29b-41d4-a716-446655440001"),
             Some("550e8400-e29b-41d4-a716-446655440002"),
-            "RentalFleet.550e8400-e29b-41d4-a716-446655440000.550e8400-e29b-41d4-a716-446655440001.550e8400-e29b-41d4-a716-446655440002",
+            "RentalFleet.550e8400-e29b-41d4-a716-446655440000",
+            "550e8400-e29b-41d4-a716-446655440001.550e8400-e29b-41d4-a716-446655440002",
         ),
         (
             "Fleet.Type-1_/*>%~é",
             "fleet.id/*>%~é",
             Some("flow.*>%/~"),
             Some("cause.*>%/~"),
-            "Fleet%2EType-1_%2F%2A%3E%25%7E%C3%A9.fleet%2Eid%2F%2A%3E%25%7E%C3%A9.flow%2E%2A%3E%25%2F%7E.cause%2E%2A%3E%25%2F%7E",
+            "Fleet%2EType-1_%2F%2A%3E%25%7E%C3%A9.fleet%2Eid%2F%2A%3E%25%7E%C3%A9",
+            "flow%2E%2A%3E%25%2F%7E.cause%2E%2A%3E%25%2F%7E",
         ),
-        ("Fleet", "missing", None, None, "Fleet.missing.~.~"),
+        ("Fleet", "missing", None, None, "Fleet.missing", "~.~"),
         (
             "Fleet",
             "literal-tilde",
             Some("~"),
             Some("~"),
-            "Fleet.literal-tilde.%7E.%7E",
+            "Fleet.literal-tilde",
+            "%7E.%7E",
         ),
         (
             "Fleet",
             "missing-cause",
             Some("flow"),
             None,
-            "Fleet.missing-cause.flow.~",
+            "Fleet.missing-cause",
+            "flow.~",
         ),
         (
             "Fleet",
             "missing-correlation",
             None,
             Some("cause"),
-            "Fleet.missing-correlation.~.cause",
+            "Fleet.missing-correlation",
+            "~.cause",
         ),
         (
             "Fleet",
             "literal-percent",
             Some("%2E"),
             Some("%7E"),
-            "Fleet.literal-percent.%252E.%257E",
+            "Fleet.literal-percent",
+            "%252E.%257E",
         ),
     ];
     let mut expected = Vec::new();
-    for (index, (aggregate_type, aggregate_id, correlation, causation, suffix)) in
+    for (index, (aggregate_type, aggregate_id, correlation, causation, suffix, receipt_suffix)) in
         examples.into_iter().enumerate()
     {
         let aggregate = StreamId::new(
@@ -102,7 +113,7 @@ async fn ordinary_appends_store_readable_identity_and_escaped_metadata_tokens() 
             AggregateId::new(aggregate_id)?,
         );
         let appended = store
-            .append(
+            .append_fixture(
                 &aggregate,
                 ExpectedVersion::NoStream,
                 correlated_batch(
@@ -115,6 +126,20 @@ async fn ordinary_appends_store_readable_identity_and_escaped_metadata_tokens() 
             )
             .await?;
         assert_eq!(store.load(&aggregate).await?, appended.events());
+        let manifests = broker_subjects(
+            &context,
+            &store,
+            &store
+                .config()
+                .fixture_receipt_subject_filter(&aggregate, &format!("tokens-{index}")),
+        )
+        .await?;
+        assert_eq!(manifests.len(), 1);
+        assert!(
+            manifests
+                .first()
+                .is_some_and(|subject| subject.ends_with(&format!(".receipt.{receipt_suffix}")))
+        );
         for event in appended.events() {
             assert_eq!(
                 event.correlation_id().map(CorrelationId::as_str),
@@ -136,7 +161,7 @@ async fn ordinary_appends_store_readable_identity_and_escaped_metadata_tokens() 
     context.delete_stream(store.config().stream_name()).await?;
     assert_eq!(
         actual, expected,
-        "stored subjects must expose four safe identity tokens"
+        "event subjects contain only the two aggregate identity tokens"
     );
     Ok(())
 }
@@ -159,7 +184,7 @@ async fn correlated_subjects_preserve_application_scope_context_and_split_epoch(
         let store = NatsEventStore::connect(context.clone(), config.clone()).await?;
         let aggregate = stream("readable-id")?;
         store
-            .append(
+            .append_one_transaction(
                 &aggregate,
                 ExpectedVersion::NoStream,
                 correlated_batch(
@@ -180,7 +205,7 @@ async fn correlated_subjects_preserve_application_scope_context_and_split_epoch(
             .await?,
         );
         expected.push(format!(
-            "{}.aggregate.IntegrationAggregate.readable-id.flow.cause",
+            "{}.aggregate.IntegrationAggregate.readable-id",
             config.subject_prefix()
         ));
         context.delete_stream(config.stream_name()).await?;
@@ -205,7 +230,7 @@ async fn broker_filters_correlation_and_causation_independently_across_aggregate
     ] {
         let aggregate = StreamId::new(AggregateType::new(aggregate_type)?, AggregateId::new(id)?);
         store
-            .append(
+            .append_fixture(
                 &aggregate,
                 ExpectedVersion::NoStream,
                 correlated_batch(
@@ -222,22 +247,45 @@ async fn broker_filters_correlation_and_causation_independently_across_aggregate
     let correlation = broker_subjects(
         &context,
         &store,
-        &format!("{prefix}.aggregate.*.*.flow%2E%2A%3E%25.*"),
+        &format!("{prefix}.fixture.*.receipt.flow%2E%2A%3E%25.*"),
     )
     .await?;
     let causation = broker_subjects(
         &context,
         &store,
-        &format!("{prefix}.aggregate.*.*.*.cause%2E%2A%3E%25"),
+        &format!("{prefix}.fixture.*.receipt.*.cause%2E%2A%3E%25"),
     )
     .await?;
     let expected_correlation = vec![
-        format!("{prefix}.aggregate.Fleet.first.flow%2E%2A%3E%25.cause%2E%2A%3E%25"),
-        format!("{prefix}.aggregate.Reservation.second.flow%2E%2A%3E%25.other-cause"),
+        store.config().fixture_receipt_subject(
+            &StreamId::new(AggregateType::new("Fleet")?, AggregateId::new("first")?),
+            "first",
+            Some("flow.*>%"),
+            Some("cause.*>%"),
+        ),
+        store.config().fixture_receipt_subject(
+            &StreamId::new(
+                AggregateType::new("Reservation")?,
+                AggregateId::new("second")?,
+            ),
+            "second",
+            Some("flow.*>%"),
+            Some("other-cause"),
+        ),
     ];
     let expected_causation = vec![
-        format!("{prefix}.aggregate.Fleet.first.flow%2E%2A%3E%25.cause%2E%2A%3E%25"),
-        format!("{prefix}.aggregate.Fleet.third.other-flow.cause%2E%2A%3E%25"),
+        store.config().fixture_receipt_subject(
+            &StreamId::new(AggregateType::new("Fleet")?, AggregateId::new("first")?),
+            "first",
+            Some("flow.*>%"),
+            Some("cause.*>%"),
+        ),
+        store.config().fixture_receipt_subject(
+            &StreamId::new(AggregateType::new("Fleet")?, AggregateId::new("third")?),
+            "third",
+            Some("other-flow"),
+            Some("cause.*>%"),
+        ),
     ];
     context.delete_stream(store.config().stream_name()).await?;
     assert_eq!(
@@ -254,11 +302,11 @@ async fn full_history_and_directory_span_changing_correlation_and_causation() ->
     let mut expected_events = Vec::new();
     let mut expected_subjects = Vec::new();
     let mut first_batch = None;
-    for (index, (correlation, causation, suffix)) in [
-        (None, None, "~.~"),
-        (Some("flow-one"), Some("cause-one"), "flow-one.cause-one"),
-        (Some("flow-two"), Some("cause-two"), "flow-two.cause-two"),
-        (Some("~"), Some("~"), "%7E.%7E"),
+    for (index, (correlation, causation)) in [
+        (None, None),
+        (Some("flow-one"), Some("cause-one")),
+        (Some("flow-two"), Some("cause-two")),
+        (Some("~"), Some("~")),
     ]
     .into_iter()
     .enumerate()
@@ -279,11 +327,13 @@ async fn full_history_and_directory_span_changing_correlation_and_causation() ->
         } else {
             ExpectedVersion::Exact(StreamVersion::new(u64::try_from(expected_events.len())?))
         };
-        let appended = store.append(&aggregate, expected_version, events).await?;
+        let appended = store
+            .append_fixture(&aggregate, expected_version, events)
+            .await?;
         expected_events.extend_from_slice(appended.events());
         for _ in appended.events() {
             expected_subjects.push(format!(
-                "{}.aggregate.IntegrationAggregate.history.{suffix}",
+                "{}.aggregate.IntegrationAggregate.history",
                 store.config().subject_prefix()
             ));
         }
@@ -292,7 +342,7 @@ async fn full_history_and_directory_span_changing_correlation_and_causation() ->
             AggregateId::new(format!("noise-{index}"))?,
         );
         store
-            .append(
+            .append_fixture(
                 &unrelated,
                 ExpectedVersion::NoStream,
                 batch(&unrelated, &operation, &operation, &[b"noise"])?,
@@ -310,7 +360,7 @@ async fn full_history_and_directory_span_changing_correlation_and_causation() ->
         vec![StreamSummary::new(aggregate.clone(), StreamVersion::new(8))]
     );
     let replay = store
-        .append(
+        .append_fixture(
             &aggregate,
             ExpectedVersion::NoStream,
             first_batch.ok_or("missing first batch")?,
@@ -325,7 +375,7 @@ async fn full_history_and_directory_span_changing_correlation_and_causation() ->
         &context,
         &store,
         &format!(
-            "{}.aggregate.IntegrationAggregate.history.*.*",
+            "{}.aggregate.IntegrationAggregate.history",
             store.config().subject_prefix()
         ),
     )
@@ -333,13 +383,13 @@ async fn full_history_and_directory_span_changing_correlation_and_causation() ->
     context.delete_stream(store.config().stream_name()).await?;
     assert_eq!(
         subjects, expected_subjects,
-        "one aggregate history spans every metadata subject"
+        "one aggregate history keeps its exact subject across metadata changes"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn stale_sessions_use_aggregate_wide_cas_across_metadata_subjects() -> TestResult<()> {
+async fn stale_sessions_use_exact_aggregate_cas_across_metadata_changes() -> TestResult<()> {
     let (context, store) = directory_fixture("subject-session-cas").await?;
     let mut actual_expectations = Vec::new();
     let mut expected_expectations = Vec::new();
@@ -347,7 +397,7 @@ async fn stale_sessions_use_aggregate_wide_cas_across_metadata_subjects() -> Tes
         let aggregate = stream(if seeded { "existing" } else { "absent" })?;
         let expected_version = if seeded {
             store
-                .append(
+                .append_fixture(
                     &aggregate,
                     ExpectedVersion::NoStream,
                     correlated_batch(
@@ -369,20 +419,20 @@ async fn stale_sessions_use_aggregate_wide_cas_across_metadata_subjects() -> Tes
         assert_eq!(replay_session.load(&aggregate).await?, before);
         let winner = correlated_batch(
             &aggregate,
-            "winner",
+            &format!("winner-{seeded}"),
             Some("winner-flow"),
             Some("winner-cause"),
             &[b"one", b"two"],
         )?;
         let appended = store
-            .append(&aggregate, expected_version, winner.clone())
+            .append_one_transaction(&aggregate, expected_version, winner.clone())
             .await?;
         let journal = context.get_stream(store.config().stream_name()).await?;
         let winning_first_sequence = journal
             .cached_info()
             .state
             .last_sequence
-            .checked_sub(1)
+            .checked_sub(2)
             .ok_or("missing winning batch")?;
         let first = journal.get_raw_message(winning_first_sequence).await?;
         actual_expectations.push(
@@ -392,13 +442,13 @@ async fn stale_sessions_use_aggregate_wide_cas_across_metadata_subjects() -> Tes
                 .map(ToString::to_string),
         );
         expected_expectations.push(Some(format!(
-            "{}.aggregate.IntegrationAggregate.{}.*.*",
+            "{}.aggregate.IntegrationAggregate.{}",
             store.config().subject_prefix(),
             aggregate.aggregate_id()
         )));
         let messages_before = journal.cached_info().state.messages;
         let result = stale
-            .append(
+            .append_one_transaction(
                 &aggregate,
                 expected_version,
                 correlated_batch(
@@ -412,7 +462,7 @@ async fn stale_sessions_use_aggregate_wide_cas_across_metadata_subjects() -> Tes
             .await;
         assert!(matches!(result, Err(error) if error.kind() == EventStoreErrorKind::Conflict));
         let replay = replay_session
-            .append(&aggregate, expected_version, winner)
+            .append_one_transaction(&aggregate, expected_version, winner)
             .await?;
         assert!(matches!(replay, AppendOutcome::ExactReplay(_)));
         assert_eq!(replay.events(), appended.events());
@@ -432,21 +482,20 @@ async fn stale_sessions_use_aggregate_wide_cas_across_metadata_subjects() -> Tes
     context.delete_stream(store.config().stream_name()).await?;
     assert_eq!(
         actual_expectations, expected_expectations,
-        "native CAS must cover all correlation and causation subjects"
+        "native CAS uses the stable aggregate subject"
     );
     Ok(())
 }
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
-async fn atomic_multi_aggregate_writes_and_read_guards_cover_all_metadata_subjects()
--> TestResult<()> {
+async fn atomic_multi_aggregate_writes_and_read_guards_use_stable_subjects() -> TestResult<()> {
     let (context, store) = directory_fixture("subject-transactions").await?;
     let writer = stream("writer")?;
     let secondary = stream("secondary")?;
     let guard = stream("guard")?;
     store
-        .append(
+        .append_fixture(
             &guard,
             ExpectedVersion::NoStream,
             correlated_batch(
@@ -504,7 +553,7 @@ async fn atomic_multi_aggregate_writes_and_read_guards_cover_all_metadata_subjec
         .with_causation_id(CausationId::new(causation)?))
     };
     store
-        .append(
+        .append_fixture(
             &guard,
             ExpectedVersion::Exact(StreamVersion::new(1)),
             correlated_batch(
@@ -585,7 +634,7 @@ async fn atomic_multi_aggregate_writes_and_read_guards_cover_all_metadata_subjec
     ];
     let prefix = store.config().subject_prefix();
     let mut expected_expectations = vec![Some(format!(
-        "{prefix}.aggregate.IntegrationAggregate.guard.*.*"
+        "{prefix}.aggregate.IntegrationAggregate.guard"
     ))];
     for aggregate in [&writer, &secondary] {
         let expected_event = accepted
@@ -611,7 +660,7 @@ async fn atomic_multi_aggregate_writes_and_read_guards_cover_all_metadata_subjec
                         .map(ToString::to_string),
                 );
                 expected_expectations.push(Some(format!(
-                    "{prefix}.aggregate.IntegrationAggregate.{}.*.*",
+                    "{prefix}.aggregate.IntegrationAggregate.{}",
                     aggregate.aggregate_id()
                 )));
             }
@@ -622,16 +671,34 @@ async fn atomic_multi_aggregate_writes_and_read_guards_cover_all_metadata_subjec
         3,
         "read guard and both writing participants were inspected"
     );
-    let subjects = broker_subjects(
+    let subjects = broker_subjects(&context, &store, &format!("{prefix}.aggregate.*.*"))
+        .await?
+        .into_iter()
+        .filter(|subject| {
+            subject
+                != &store
+                    .config()
+                    .event_subject("IntegrationAggregate", "guard")
+        })
+        .collect::<Vec<_>>();
+    let receipts = broker_subjects(
         &context,
         &store,
-        &format!("{prefix}.aggregate.*.*.committed-flow.committed-cause"),
+        &format!("{prefix}.transaction.*.receipt.committed-flow.committed-cause"),
     )
     .await?;
+    assert_eq!(
+        receipts,
+        vec![store.config().transaction_receipt_subject(
+            "committed-transaction",
+            Some("committed-flow"),
+            Some("committed-cause")
+        )]
+    );
     let expected_subjects = vec![
-        format!("{prefix}.aggregate.IntegrationAggregate.writer.committed-flow.committed-cause"),
-        format!("{prefix}.aggregate.IntegrationAggregate.writer.committed-flow.committed-cause"),
-        format!("{prefix}.aggregate.IntegrationAggregate.secondary.committed-flow.committed-cause"),
+        format!("{prefix}.aggregate.IntegrationAggregate.writer"),
+        format!("{prefix}.aggregate.IntegrationAggregate.writer"),
+        format!("{prefix}.aggregate.IntegrationAggregate.secondary"),
     ];
     context.delete_stream(store.config().stream_name()).await?;
     assert_eq!(

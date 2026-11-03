@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use crate::{
-    AppendOutcome, EventBatch, EventHistory, EventStore, EventStoreError, EventTransaction,
-    ExpectedVersion, RecordedEvent, StreamId, TransactionAppendOutcome,
+    EventHistory, EventStore, EventStoreError, EventTransaction, RecordedEvent, StreamId,
+    TransactionAppendOutcome,
 };
 
 #[async_trait]
@@ -12,12 +12,6 @@ pub trait AppendSession: EventHistory {
         self: Box<Self>,
         transaction: EventTransaction,
     ) -> Result<crate::CompletedAppendOutcome, EventStoreError>;
-    async fn append(
-        self: Box<Self>,
-        stream_id: &StreamId,
-        expected_version: ExpectedVersion,
-        batch: EventBatch,
-    ) -> Result<AppendOutcome, EventStoreError>;
 
     /// Consumes this attempt to atomically persist its acceptance and any events/read guards.
     /// Event-free and participant-free transactions follow [`EventStore::append_transaction`].
@@ -45,14 +39,6 @@ impl<S: EventStore + ?Sized> AppendSession for ForwardingAppendSession<'_, S> {
         transaction: EventTransaction,
     ) -> Result<crate::CompletedAppendOutcome, EventStoreError> {
         self.store.commit_outcome(transaction).await
-    }
-    async fn append(
-        self: Box<Self>,
-        stream_id: &StreamId,
-        expected_version: ExpectedVersion,
-        batch: EventBatch,
-    ) -> Result<AppendOutcome, EventStoreError> {
-        self.store.append(stream_id, expected_version, batch).await
     }
 
     async fn append_transaction(

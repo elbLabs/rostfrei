@@ -8,9 +8,9 @@ The durable uses explicit ACKs, `MaxWaiting = 512`, `MaxAckPending = 1`,
 `MaxRequestBatch = 1`, and unlimited redelivery with configured `AckWait` and retry
 delay. Source history uses the authoritative journal's Limits retention.
 
-The domain filter is `<domain-prefix>.aggregate.*.*.*.*`: aggregate type, aggregate
-ID, correlation, and causation occupy separate tokens. It excludes receipts and
-read guards. Consumers validate the subject against the canonical event envelope;
+The domain filter is `<domain-prefix>.aggregate.*.*`: aggregate type and aggregate
+ID occupy separate tokens. It excludes receipts, fixture manifests, and read guards.
+Consumers validate the subject against the canonical event envelope;
 see [subjects and filters](messaging/subjects.mdx#filters-and-internal-storage-subjects).
 
 ## Transaction delivery
@@ -27,6 +27,9 @@ A crash afterward lets another worker confirm the tail without republishing it.
 The single-pending limit and ACK-after-whole-transaction rule are essential; manual
 ACKs or changing that limit invalidate this contract. Permanent/corrupt work blocks
 progress rather than being skipped.
+
+Test fixture batches are validated and acknowledged without invoking application
+handlers. Their atomic manifests identify supplied facts, not command decisions.
 
 Integration IDs derive from source event, logical address, and schema. The physical
 correlation/causation suffix does not change these identities or durable names.

@@ -51,7 +51,7 @@ pub use correlation_view::{
     AnchorCorrelations, AnchorIdentity, AnchoredCorrelation, CorrelationInspectionError,
     CorrelationRefView, DomainRefView, MAX_ANCHOR_CORRELATIONS, MAX_INCLUDED_CONTEXTS,
     MAX_INCLUDED_STREAMS, MAX_PAYLOAD_MATCH_FIELD_SEGMENTS, MAX_PAYLOAD_MATCH_VALUE_BYTES,
-    MAX_PAYLOAD_MATCHES, PayloadMatch, RetainedCorrelation,
+    MAX_PAYLOAD_MATCHES, MAX_SELECTED_CORRELATIONS, PayloadMatch, RetainedCorrelation,
 };
 pub use handler_simulation::{
     HandlerDecision, HandlerSimulationError, HandlerSimulationKind, HandlerSimulationResult,

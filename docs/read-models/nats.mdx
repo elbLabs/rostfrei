@@ -86,7 +86,7 @@ Each model has its own domain durable when it registers domain handlers, and one
 ordered integration durable when it registers integration handlers. That integration
 consumer filters each registered logical address with `.>` appended, validating the correlation
 and causation, with one outstanding delivery. Domain consumers use the configured
-`aggregate.*.*.*.*` filter. Multiple read models can consume the same events with
+`aggregate.*.*` filter. Multiple read models can consume the same events with
 independent progress. See [subject filters](../messaging/subjects.mdx#filters-and-internal-storage-subjects).
 
 See the [subject deployment requirements](../messaging/subjects.mdx#fresh-deployments)

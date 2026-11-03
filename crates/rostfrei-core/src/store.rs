@@ -494,6 +494,22 @@ pub trait EventHistory: Send + Sync {
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError>;
 }
 
+/// Explicit persistence capability for isolated test fixtures.
+///
+/// Fixture batches contain up to [`crate::MAX_EVENTS_PER_BATCH`] domain events and
+/// retain aggregate-scoped operation identities. Exact retries return the original
+/// events; changed batch content or provenance conflicts. Fixtures do not establish
+/// command decisions. Persistent adapters must restrict this capability to Test scope.
+#[async_trait]
+pub trait FixtureEventStore: EventHistory {
+    async fn append_fixture(
+        &self,
+        stream_id: &StreamId,
+        expected_version: ExpectedVersion,
+        batch: EventBatch,
+    ) -> Result<AppendOutcome, EventStoreError>;
+}
+
 #[async_trait]
 pub trait EventStore: EventHistory {
     /// Same authoritative namespace/atomic decision as acceptance receipts. Required API:
@@ -513,13 +529,6 @@ pub trait EventStore: EventHistory {
             store: self,
         }))
     }
-
-    async fn append(
-        &self,
-        stream_id: &StreamId,
-        expected_version: ExpectedVersion,
-        batch: EventBatch,
-    ) -> Result<AppendOutcome, EventStoreError>;
 
     async fn load_transaction_receipt(
         &self,
@@ -582,6 +591,20 @@ impl<History: EventHistory + ?Sized> EventHistory for Arc<History> {
 }
 
 #[async_trait]
+impl<Store: FixtureEventStore + ?Sized> FixtureEventStore for Arc<Store> {
+    async fn append_fixture(
+        &self,
+        stream_id: &StreamId,
+        expected_version: ExpectedVersion,
+        batch: EventBatch,
+    ) -> Result<AppendOutcome, EventStoreError> {
+        self.as_ref()
+            .append_fixture(stream_id, expected_version, batch)
+            .await
+    }
+}
+
+#[async_trait]
 impl<Store: EventStore + ?Sized> EventStore for Arc<Store> {
     async fn load_completed_outcome_in_context(
         &self,
@@ -600,17 +623,6 @@ impl<Store: EventStore + ?Sized> EventStore for Arc<Store> {
     }
     async fn append_session(&self) -> Result<Box<dyn crate::AppendSession + '_>, EventStoreError> {
         self.as_ref().append_session().await
-    }
-
-    async fn append(
-        &self,
-        stream_id: &StreamId,
-        expected_version: ExpectedVersion,
-        batch: EventBatch,
-    ) -> Result<AppendOutcome, EventStoreError> {
-        self.as_ref()
-            .append(stream_id, expected_version, batch)
-            .await
     }
 
     async fn load_transaction_receipt(

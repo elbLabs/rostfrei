@@ -9,7 +9,7 @@ use std::{error::Error, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use axum::{body::Body, http::Request};
 use bike_rental::{
-    demo::{demo_fixture, demo_stream},
+    demo::{demo_fixture, demo_stream, seed_demo},
     tracer,
 };
 use http_body_util::BodyExt as _;
@@ -117,7 +117,7 @@ async fn shared_host_observes_external_flows_and_owns_scope_readiness_across_res
         )
         .await?,
     );
-    normal.apply_fixture(&demo_fixture()?).await?;
+    seed_demo(&normal.store()).await?;
     let test_feed = ObservationFeed::new(application.clone(), ObservationScope::Test);
     let production_feed = ObservationFeed::new(application.clone(), ObservationScope::Production);
     let http = HttpConfig::new("control")?.with_inspection_token("inspection")?;

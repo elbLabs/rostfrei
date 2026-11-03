@@ -17,6 +17,7 @@ use axum::{
 use bike_rental::{
     demo::{
         apply_fixture, demo_fixture, demo_stream, no_rental_fleets_fixture, rented_demo_fixture,
+        seed_demo,
     },
     domain_model,
     rental_fleet::{
@@ -38,8 +39,9 @@ use rostfrei::tracer::{
 use rostfrei::{
     AppendOutcome, Command, CommandExecutionError, CommandExecutionMetadata, CommandExecutor,
     ContentFingerprint, DomainError, EventBatch, EventHistory, EventStore, EventStoreError,
-    EventTransaction, ExpectedVersion, InMemoryEventStore, JsonCommandPayload, JsonErrorPayload,
-    OperationId, StreamAggregateType, StreamId, TransactionAppendOutcome, TransactionReceipt,
+    EventTransaction, ExpectedVersion, FixtureEventStore, InMemoryEventStore, JsonCommandPayload,
+    JsonErrorPayload, OperationId, StreamAggregateType, StreamId, TransactionAppendOutcome,
+    TransactionReceipt,
 };
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -100,18 +102,6 @@ impl EventStore for ResettableStore {
     ) -> Result<rostfrei::CompletedAppendOutcome, EventStoreError> {
         self.snapshot().await.commit_outcome(transaction).await
     }
-    async fn append(
-        &self,
-        stream_id: &StreamId,
-        expected_version: ExpectedVersion,
-        batch: EventBatch,
-    ) -> Result<AppendOutcome, EventStoreError> {
-        self.snapshot()
-            .await
-            .append(stream_id, expected_version, batch)
-            .await
-    }
-
     async fn load_transaction_receipt(
         &self,
         operation_id: &OperationId,
@@ -138,6 +128,21 @@ impl EventStore for ResettableStore {
         transaction: EventTransaction,
     ) -> Result<TransactionAppendOutcome, EventStoreError> {
         self.snapshot().await.append_transaction(transaction).await
+    }
+}
+
+#[async_trait]
+impl FixtureEventStore for ResettableStore {
+    async fn append_fixture(
+        &self,
+        stream_id: &StreamId,
+        expected_version: ExpectedVersion,
+        batch: EventBatch,
+    ) -> Result<AppendOutcome, EventStoreError> {
+        self.snapshot()
+            .await
+            .append_fixture(stream_id, expected_version, batch)
+            .await
     }
 }
 
@@ -373,9 +378,7 @@ async fn fixture() -> (Tracer, ResettableStore, InMemoryEventStore) {
     let default_fixture = demo_fixture().unwrap();
     apply_fixture(&test_store, &default_fixture).await.unwrap();
     let production_store = InMemoryEventStore::new();
-    apply_fixture(&production_store, &default_fixture)
-        .await
-        .unwrap();
+    seed_demo(&production_store).await.unwrap();
     let history: Arc<dyn EventHistory> = Arc::new(test_store.clone());
     let test_transport: Arc<dyn CommandTransport> =
         Arc::new(LocalCommandTransport::new(test_store.clone()));

@@ -664,12 +664,8 @@ mod tests {
             .unwrap()
             .pop()
             .unwrap();
-        let subject = config.event_subject(
-            id.aggregate_type().as_str(),
-            id.aggregate_id().as_str(),
-            None,
-            None,
-        );
+        let subject =
+            config.event_subject(id.aggregate_type().as_str(), id.aggregate_id().as_str());
         for sequence in [1, 1000, 1_000_000_000, u64::MAX] {
             let mut event = message(&subject, sequence);
             event.payload = payload.clone().into();
@@ -751,12 +747,8 @@ mod tests {
         )
         .unwrap();
         let recorded = record_batch(id, StreamVersion::new(base_version), &batch).unwrap();
-        let subject = config.event_subject(
-            id.aggregate_type().as_str(),
-            id.aggregate_id().as_str(),
-            None,
-            None,
-        );
+        let subject =
+            config.event_subject(id.aggregate_type().as_str(), id.aggregate_id().as_str());
         encode_events(config, id, &batch, recorded.events())
             .unwrap()
             .into_iter()

@@ -25,6 +25,7 @@ mod event_store {
                 .bounded_context("orders")
                 .unwrap();
             let config = NatsEventStoreConfig::for_bounded_context(&context).unwrap();
+            let receipt_filter = config.transaction_receipt_subject_filter("review");
             let mut headers = HeaderMap::new();
             for (key, value) in [
                 ("Content-Type", "application/json"),
@@ -32,6 +33,10 @@ mod event_store {
                 ("Nats-Batch-Sequence", "1"),
                 ("Nats-Batch-Commit", NATS_BATCH_COMMIT_FINAL),
                 ("Nats-Expected-Last-Subject-Sequence", "0"),
+                (
+                    "Nats-Expected-Last-Subject-Sequence-Subject",
+                    receipt_filter.as_str(),
+                ),
                 ("Nats-Expected-Stream", config.stream_name()),
             ] {
                 headers.insert(key, value);

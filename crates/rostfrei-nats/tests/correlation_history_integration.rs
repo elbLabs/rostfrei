@@ -28,6 +28,14 @@ use correlation_history_support::{
 async fn native_union_accepts_the_full_256_correlation_anchor_window() -> TestResult {
     let fixture = Fixture::new().await?;
     append_domain(&fixture.sales, "large-anchor", "anchor-255", "command", 1).await?;
+    append_domain(
+        &fixture.sales,
+        "unselected-tail",
+        "outside-window",
+        "command",
+        1,
+    )
+    .await?;
     let reader = fixture.reader().await?;
     let mut ids = (0..256)
         .map(|index| CorrelationId::new(format!("anchor-{index}")))
@@ -134,15 +142,32 @@ async fn native_union_reads_two_contexts_and_one_shared_integration_snapshot() -
     let mut expected_filters = Vec::new();
     for config in fixture.configs() {
         let prefix = config.subject_prefix();
-        expected_filters.push((
-            config.stream_name().to_owned(),
-            BTreeSet::from([
-                format!("{prefix}.aggregate.*.*.flow%2E%2A%3E%25%2F%7E.*"),
-                format!("{prefix}.aggregate.*.*.second.*"),
-            ]),
-        ));
+        let mut filters = BTreeSet::from([
+            format!("{prefix}.transaction.*.receipt.flow%2E%2A%3E%25%2F%7E.*"),
+            format!("{prefix}.fixture.*.receipt.flow%2E%2A%3E%25%2F%7E.*"),
+            format!("{prefix}.transaction.*.receipt.second.*"),
+            format!("{prefix}.fixture.*.receipt.second.*"),
+        ]);
+        if config.stream_name() == fixture.sales.config().stream_name() {
+            let journal = fixture.js().get_stream(config.stream_name()).await?;
+            filters.insert(
+                journal
+                    .get_raw_message(journal.cached_info().state.last_sequence)
+                    .await?
+                    .subject
+                    .to_string(),
+            );
+        }
+        expected_filters.push((config.stream_name().to_owned(), filters));
     }
     let application = fixture.topology.application().as_str();
+    let integration = fixture
+        .js()
+        .get_stream(fixture.topology.integration_event_stream().as_str())
+        .await?;
+    let witness = integration
+        .get_raw_message(integration.cached_info().state.last_sequence)
+        .await?;
     expected_filters.push((
         fixture
             .topology
@@ -152,6 +177,7 @@ async fn native_union_reads_two_contexts_and_one_shared_integration_snapshot() -
         BTreeSet::from([
             format!("{application}.integration.*.*.flow%2E%2A%3E%25%2F%7E.*"),
             format!("{application}.integration.*.*.second.*"),
+            witness.subject.to_string(),
         ]),
     ));
     expected_filters.sort();
@@ -425,32 +451,47 @@ async fn a_domain_envelope_on_another_aggregate_subject_is_not_trusted() -> Test
         .js()
         .get_stream(fixture.sales.config().stream_name())
         .await?;
-    let original = stream
-        .get_last_raw_message_by_subject(&fixture.sales.config().event_subject(
-            "Order",
-            "real-aggregate",
-            Some("flow"),
-            Some("root"),
-        ))
-        .await?;
-    let mut headers = HeaderMap::new();
-    headers.insert("Nats-Msg-Id", "forged-physical-identity");
-    headers.insert(CORRELATION_ID_HEADER, "flow");
-    // Keep the real, checksummed envelope intact; only its transport identity lies.
+    let original = stream.get_raw_message(1).await?;
+    let receipt = stream.get_raw_message(2).await?;
+    // Reconstruct a corrupted journal before connecting the reader: the original
+    // checked receipt still selects the event, but its aggregate subject lies.
     fixture
         .js()
-        .publish_with_headers(
-            fixture.sales.config().event_subject(
-                "Order",
-                "another-aggregate",
-                Some("flow"),
-                Some("root"),
-            ),
-            headers,
-            original.payload,
-        )
-        .await?
+        .delete_stream(fixture.sales.config().stream_name())
         .await?;
+    fixture
+        .js()
+        .create_stream(fixture.sales.config().stream_config())
+        .await?;
+    for (subject, record) in [
+        (
+            fixture
+                .sales
+                .config()
+                .event_subject("Order", "another-aggregate"),
+            original,
+        ),
+        (receipt.subject.to_string(), receipt),
+    ] {
+        let response = fixture
+            .connection
+            .client()
+            .send_request(
+                subject,
+                async_nats::Request::new()
+                    .headers(record.headers)
+                    .payload(record.payload)
+                    .timeout(Some(READ_TIMEOUT)),
+            )
+            .await?;
+        if !response.payload.is_empty() {
+            let ack: Value = serde_json::from_slice(&response.payload)?;
+            assert!(
+                ack.get("error").is_none(),
+                "corrupt-journal setup was refused: {ack}"
+            );
+        }
+    }
     let reader = fixture.reader().await?;
     let result = tokio::time::timeout(
         READ_TIMEOUT,
@@ -481,12 +522,21 @@ async fn normal_and_test_history_are_separate_and_application_durables_do_not_ad
         let mut workers = Vec::new();
         for source in fixture.source_names() {
             let stream = fixture.js().get_stream(source).await?;
+            let filter_subject = fixture
+                .configs()
+                .iter()
+                .find(|config| config.stream_name() == source)
+                .map_or_else(
+                    String::new,
+                    rostfrei_nats::NatsEventStoreConfig::aggregate_subject_filter,
+                );
             let worker: consumer::PullConsumer = stream
                 .create_consumer(consumer::pull::Config {
                     durable_name: Some("application-worker".to_owned()),
                     name: Some("application-worker".to_owned()),
                     deliver_policy: DeliverPolicy::All,
                     ack_policy: AckPolicy::Explicit,
+                    filter_subject,
                     ..Default::default()
                 })
                 .await?;
@@ -755,6 +805,116 @@ async fn messages_published_after_capture_are_excluded_until_the_next_read() -> 
     assert_eq!(first.snapshot.sources, expected_snapshot);
     let second = reader.load_correlations(&ids).await?;
     assert_eq!(chain(&second, "flow")?.refs.len(), 4);
+    wait_for_consumer_count(&fixture, 0).await?;
+    fixture.cleanup().await
+}
+
+#[tokio::test]
+async fn witness_subject_overfetch_consumes_budget_for_an_empty_selection() -> TestResult {
+    let fixture = Fixture::new().await?;
+    for index in 0..32 {
+        fixture
+            .publish(
+                "sales",
+                &format!("witness-overfetch-{index}"),
+                "unselected",
+                None,
+            )
+            .await?;
+    }
+    let ids = [CorrelationId::new("absent")?];
+    let reader = fixture.reader().await?;
+    let complete = reader.load_correlations(&ids).await?;
+    assert!(chain(&complete, "absent")?.refs.is_empty());
+    assert!(!chain(&complete, "absent")?.truncated);
+    // The shared integration subject traverses earlier unrequested records too.
+    // Both the raw witness and all delivered overfetch are examined data.
+    for bytes in [1, 4096] {
+        let limited = reader
+            .clone()
+            .with_limits(2048, bytes)?
+            .load_correlations(&ids)
+            .await?;
+        assert!(chain(&limited, "absent")?.refs.is_empty());
+        assert!(
+            chain(&limited, "absent")?.truncated,
+            "witness work escaped the {bytes}-byte budget: {limited:?}"
+        );
+    }
+    wait_for_consumer_count(&fixture, 0).await?;
+    fixture.cleanup().await
+}
+
+#[tokio::test]
+async fn expired_cutoff_witness_is_unavailable_while_earlier_records_remain() -> TestResult {
+    let fixture = Fixture::new().await?;
+    let name = fixture.topology.integration_event_stream().as_str();
+    let mut integration = fixture.js().get_stream(name).await?;
+    let mut config = integration.cached_info().config.clone();
+    config.allow_message_ttl = true;
+    fixture.js().update_stream(config).await?;
+    fixture
+        .publish("sales", "retained-predecessor", "selected", None)
+        .await?;
+    let reader = fixture.reader().await?;
+    let mut creates = fixture
+        .connection
+        .client()
+        .subscribe(format!("$JS.API.CONSUMER.CREATE.{name}.>"))
+        .await?;
+    fixture.connection.client().flush().await?;
+    let address = fixture
+        .topology
+        .application()
+        .bounded_context("sales")?
+        .integration_event_address("order-updated")?;
+    let envelope = integration_envelope("expiring-witness", "unselected", None)?;
+    let mut headers = HeaderMap::new();
+    headers.insert("Content-Type", "application/json");
+    headers.insert("Nats-Msg-Id", "expiring-witness");
+    headers.insert(CORRELATION_ID_HEADER, "unselected");
+    headers.insert("Nats-TTL", "2s");
+    fixture
+        .js()
+        .publish_with_headers(
+            format!("{}.unselected.~", address.as_str()),
+            headers,
+            serde_json::to_vec(&envelope)?.into(),
+        )
+        .await?
+        .await?;
+    let ids = [CorrelationId::new("selected")?];
+    let read = reader.load_correlations(&ids);
+    tokio::pin!(read);
+    tokio::time::timeout(READ_TIMEOUT, async {
+        tokio::select! {
+            biased;
+            request = creates.next() => { request.ok_or("no integration replay creation")?; TestResult::Ok(()) },
+            result = &mut read => Err(format!("read completed before the witness expiry barrier: {result:?}").into()),
+        }
+    }).await??;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let state = &integration.info().await?.state;
+            if state.messages == 1 && state.last_sequence == 2 {
+                assert_eq!(state.first_sequence, 1);
+                return TestResult::Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await??;
+    let result = read.await;
+    assert!(
+        matches!(result, Err(ref error) if error.kind() == EventStoreErrorKind::Unavailable),
+        "pending-empty after witness expiry concealed a retained predecessor: {result:?}"
+    );
+    // A new capture cannot obtain C either. Missing C alone proves no coverage.
+    let result = reader.load_correlations(&ids).await;
+    assert!(
+        matches!(result, Err(ref error) if error.kind() == EventStoreErrorKind::Unavailable),
+        "missing raw cutoff witness was accepted despite retained predecessors: {result:?}"
+    );
     wait_for_consumer_count(&fixture, 0).await?;
     fixture.cleanup().await
 }

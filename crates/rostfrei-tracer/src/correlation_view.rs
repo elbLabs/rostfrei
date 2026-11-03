@@ -17,6 +17,8 @@ use crate::TracePayloadPolicy;
 
 /// Correlations returned for one anchor; the most recently started are kept.
 pub const MAX_ANCHOR_CORRELATIONS: usize = 256;
+/// Counts requested IDs before deduplication.
+pub const MAX_SELECTED_CORRELATIONS: usize = 256;
 pub const MAX_INCLUDED_CONTEXTS: usize = 16;
 /// Each included stream requires a full replay.
 pub const MAX_INCLUDED_STREAMS: usize = 64;
@@ -38,6 +40,8 @@ pub enum CorrelationInspectionError {
     },
     #[error("invalid identifier: {0}")]
     InvalidId(String),
+    #[error("invalid correlation selection: {0}")]
+    InvalidSelection(String),
     #[error("correlation `{0}` has no retained references")]
     NotFound(String),
     #[error("no production event history is configured for context `{0}`")]
@@ -246,8 +250,14 @@ impl CorrelationInspection {
         aggregate_id: &str,
         include: &BTreeSet<String>,
         matches: &[PayloadMatch],
+        selection: Option<&[CorrelationId]>,
         policy: &dyn TracePayloadPolicy,
     ) -> Result<AnchorCorrelations, CorrelationInspectionError> {
+        if selection.is_some_and(|ids| ids.len() > MAX_SELECTED_CORRELATIONS) {
+            return Err(CorrelationInspectionError::InvalidSelection(format!(
+                "at most {MAX_SELECTED_CORRELATIONS} correlation IDs can be requested"
+            )));
+        }
         if !self.anchors.contains(aggregate_type) {
             return Err(CorrelationInspectionError::UnknownAnchor(
                 aggregate_type.to_owned(),
@@ -277,23 +287,13 @@ impl CorrelationInspection {
                 aggregate_id: aggregate_id.to_owned(),
             });
         }
-        let mut seen = BTreeSet::new();
-        let mut correlations = Vec::new();
-        for event in &events {
-            if let Some(id) = event.correlation_id()
-                && seen.insert(id.as_str())
-            {
-                correlations.push(id.clone());
-            }
-        }
-        let skipped = correlations.len().saturating_sub(MAX_ANCHOR_CORRELATIONS);
-        let selected: Vec<_> = correlations.into_iter().skip(skipped).collect();
+        let (selected, selection_truncated) = anchor_selection(&events, selection);
         let read = self
             .reader
             .load_correlations(&selected)
             .await
             .map_err(CorrelationInspectionError::Read)?;
-        let truncated = skipped > 0 || read.chains.iter().any(|chain| chain.truncated);
+        let truncated = selection_truncated || read.chains.iter().any(|chain| chain.truncated);
         let mut by_id: HashMap<_, _> = read
             .chains
             .into_iter()
@@ -431,6 +431,34 @@ impl CorrelationInspection {
         }
         Ok(())
     }
+}
+
+fn anchor_selection(
+    events: &[RecordedEvent],
+    selection: Option<&[CorrelationId]>,
+) -> (Vec<CorrelationId>, bool) {
+    let selection = selection.map(|ids| {
+        ids.iter()
+            .map(CorrelationId::as_str)
+            .collect::<BTreeSet<_>>()
+    });
+    let mut seen = BTreeSet::new();
+    let mut correlations = Vec::new();
+    for event in events {
+        if let Some(id) = event.correlation_id()
+            && selection
+                .as_ref()
+                .is_none_or(|ids| ids.contains(id.as_str()))
+            && seen.insert(id.as_str())
+        {
+            correlations.push(id.clone());
+        }
+    }
+    let skipped = correlations.len().saturating_sub(MAX_ANCHOR_CORRELATIONS);
+    (
+        correlations.into_iter().skip(skipped).collect(),
+        skipped > 0,
+    )
 }
 
 // Correlation cutoffs can follow the first anchor load. Refresh only when a
