@@ -37,6 +37,19 @@ command payloads and headers do not establish a principal or security scope.
 Zero disables reevaluation after conflicts, not initial lookup or winner
 reconciliation. Handlers can run more than once and must account for external effects.
 
+### Application and fixture writes
+
+Application events are committed through coordinated transactions with permanent
+decision evidence. `EventStore` and `AppendSession` expose no unreceipted append.
+Test setup uses the separate `FixtureEventStore::append_fixture` capability; the
+NATS adapter rejects it outside `TrafficScope::Test`.
+
+A fixture batch atomically includes its own aggregate-scoped manifest. It preserves
+fixture event identities and exact retries, supports up to 100 domain events, and
+does not occupy the store-wide command winner slot or invoke post-commit application
+handlers. Fixture participation in retained inspection is evidence of supplied test
+facts, not command execution. Normal demo seeding executes ordinary commands.
+
 ## Identity and results
 
 `OutcomeKey` is authority + bounded context + operation ID. Exact retry preserves

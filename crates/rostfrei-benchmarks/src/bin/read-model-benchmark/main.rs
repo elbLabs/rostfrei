@@ -19,8 +19,8 @@ use rostfrei::{
 };
 use rostfrei_core::{
     AggregateId, AggregateType, ContentFingerprint, EventBatch, EventStore, EventTransaction,
-    ExpectedVersion, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
-    TransactionParticipant, derive_commit_id, derive_event_id,
+    ExpectedVersion, FixtureEventStore, NewEvent, OperationId, RecordedEvent, StreamId,
+    StreamVersion, TransactionParticipant, derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{
     CallerMetadata, CorrelationId, EnvelopeContext, MessageId, MessageTimestamp, SchemaVersion,
@@ -46,13 +46,13 @@ struct Options {
     rounds: u32,
     #[arg(long, default_value_t = 10)]
     warmup: u32,
-    /// Events grouped into each source commit (one represents one-event commands).
+    /// Events grouped into each Test fixture batch or coordinated transaction.
     #[arg(long, default_value_t = 1)]
     events_per_commit: u32,
     /// Padding in each domain-event payload, beyond event fields/JSON framing.
     #[arg(long, default_value_t = 256)]
     extra_event_bytes: usize,
-    /// Seed through command-style transactions with durable acceptance receipts.
+    /// Seed through coordinated transactions with durable receipts instead of Test fixtures.
     #[arg(long)]
     transactional: bool,
     /// Audit historical transaction evidence during measured reads (off by default).
@@ -218,6 +218,7 @@ async fn main() -> BenchResult {
     let application = ApplicationName::new(format!("kv-bench-{nonce}"))?;
     let context = application.bounded_context_in_scope(TrafficScope::Test, "access")?;
     let events = NatsEventStoreConfig::for_bounded_context(&context)?
+        .with_fresh_split_outcome_epoch("isolated-read-model-benchmark")?
         .with_storage_limits(256 * 1024 * 1024, 512 * 1024)?;
     let models = options
         .events_per_aggregate
@@ -253,6 +254,9 @@ async fn cleanup(
     }
     connection
         .delete_stream_if_exists(events.stream_name())
+        .await?;
+    connection
+        .delete_stream_if_exists(events.outcome_state_stream_name())
         .await?;
     Ok(())
 }
@@ -429,7 +433,7 @@ async fn seed(
                 )
                 .await?;
         } else {
-            history.append(stream, expected, batch).await?;
+            history.append_fixture(stream, expected, batch).await?;
         }
         version = version
             .checked_add(u64::try_from(chunk.len())?)

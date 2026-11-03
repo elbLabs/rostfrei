@@ -58,7 +58,8 @@ pub(super) async fn attach(
             .await?;
     for config in configs {
         let context = config.bounded_context().as_str().to_owned();
-        let history = NatsEventStore::connect(connection.jetstream().clone(), config).await?;
+        let history =
+            NatsEventStore::connect_history(connection.jetstream().clone(), config).await?;
         builder = builder.with_production_history(context, Arc::new(history));
     }
     Ok(builder.with_correlation_history(Arc::new(reader)))

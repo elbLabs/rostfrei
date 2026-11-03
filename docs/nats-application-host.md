@@ -96,7 +96,11 @@ Each config must match the host application and Normal traffic scope, including
 the deployed authority epoch. Conflicting configs for the same context are
 rejected. These registrations connect read-only to existing resources; they do
 not provision resources or start application workers for those configs. The
-shared integration topology uses the attached Normal runtime's configuration,
+history handle uses `NatsEventStore::connect_history`, validating and pinning the
+journal's historical authority without opening live result state. Missing or
+expired result details do not erase retained events; replacing the journal
+invalidates the attached history handle. The shared integration topology uses
+the attached Normal runtime's configuration,
 or the host application's Normal defaults for inspection-only registration.
 Source credentials need the [retained reader's permissions](continuous-observation.md#retained-correlation-inspection).
 
@@ -160,8 +164,8 @@ cargo run --locked -p bike-rental -- --tracer
 
 Both starts use `tracer::bindings()` and run Normal command consumers, preserving
 the released durable generation `2`. Changing a command payload schema does not
-change its subscription. The example explicitly applies its idempotent demo
-fixture to Normal state in both modes, as its former API entry point did.
+change its subscription. Both modes seed Normal state through idempotent
+`AddBicycle` commands. Named fixtures are reserved for isolated Test state.
 
 Set `ROSTFREI_NATS_URL`. For Tracer also set `ROSTFREI_API_TOKEN` and the separately
 configured `ROSTFREI_DISPATCH_TOKEN`; optional `ROSTFREI_INSPECTION_TOKEN` enables

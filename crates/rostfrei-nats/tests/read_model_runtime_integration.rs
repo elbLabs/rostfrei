@@ -7,6 +7,8 @@ mod broker_order;
 #[path = "read_model/runtime_faults.rs"]
 mod faults;
 mod native_connection_support;
+mod transaction_support;
+use transaction_support::AppendOneTransaction;
 #[path = "../examples/read_model/source.rs"]
 mod source;
 
@@ -23,7 +25,7 @@ use application::{GetAccess, OrganizationAccess};
 use async_nats::jetstream;
 use rostfrei_core::{
     AggregateCodecs, AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventCodec,
-    EventCodecError, EventCodecErrorKind, EventId, EventStore, ExpectedVersion, JsonEventCodec,
+    EventCodecError, EventCodecErrorKind, EventHistory, EventId, ExpectedVersion, JsonEventCodec,
     NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion, derive_commit_id,
     derive_event_id,
 };
@@ -227,7 +229,7 @@ impl Fixture {
         )?;
         Ok(self
             .history
-            .append(&stream, expected, batch)
+            .append_one_transaction(&stream, expected, batch)
             .await?
             .into_events())
     }

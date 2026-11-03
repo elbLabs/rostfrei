@@ -213,7 +213,7 @@ async fn dedup_probe(
     headers.insert("Nats-Msg-Id", "dedup-probe");
     Ok(js
         .publish_with_headers(
-            config.transaction_subject("dedup-probe"),
+            config.transaction_receipt_subject("dedup-probe", None, None),
             headers,
             b"probe".to_vec().into(),
         )

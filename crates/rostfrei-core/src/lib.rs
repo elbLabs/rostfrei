@@ -65,9 +65,9 @@ pub use read_model::{
 };
 pub use store::{
     AppendOutcome, EventHistory, EventStore, EventStoreError, EventStoreErrorKind,
-    EventStoreErrorOrigin, EventTransaction, MAX_TRANSACTION_ITEMS, StreamDirectory, StreamSummary,
-    TransactionAppendOutcome, TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
-    validate_transaction_item_limit,
+    EventStoreErrorOrigin, EventTransaction, FixtureEventStore, MAX_TRANSACTION_ITEMS,
+    StreamDirectory, StreamSummary, TransactionAppendOutcome, TransactionParticipant,
+    TransactionReceipt, TransactionStreamReceipt, validate_transaction_item_limit,
 };
 
 #[doc(hidden)]

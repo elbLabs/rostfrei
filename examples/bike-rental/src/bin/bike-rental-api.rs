@@ -1,6 +1,6 @@
 use bike_rental::{
     APPLICATION_NAME, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
-    demo::{demo_fixture, no_rental_fleets_fixture, rented_demo_fixture},
+    demo::{demo_fixture, no_rental_fleets_fixture, rented_demo_fixture, seed_demo},
     tracer,
 };
 use rostfrei::nats::{NatsConnectionConfig, ServerVersion, connect};
@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             )
             .await?,
         );
-        dispatch.apply_fixture(&demo_fixture()?).await?;
+        seed_demo(&dispatch.store()).await?;
         let address = env::var("ROSTFREI_API_ADDR").unwrap_or_else(|_| "127.0.0.1:1309".to_owned());
         let listener = tokio::net::TcpListener::bind(&address).await?;
         let mut http = HttpConfig::new(env::var("ROSTFREI_API_TOKEN")?)?
@@ -85,10 +85,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("bike-rental tracer listening on http://{address}");
         host
     } else {
+        normal.provision(&connection).await?;
+        seed_demo(&normal.connect_store(&connection).await?).await?;
         NatsApplication::builder(normal.context().clone(), connection.clone(), bindings)?
             .with_runtime_config(normal.host_config().clone())
-            .with_initial_fixture(demo_fixture()?)
-            .provision_and_start()
+            .connect_and_start()
             .await?
     };
     let result = host

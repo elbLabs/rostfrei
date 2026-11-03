@@ -9,8 +9,8 @@ use crate::identity::{derive_commit_id, derive_event_id};
 use crate::store::validate_transaction_item_limit;
 use crate::{
     AggregateType, AppendOutcome, CommitId, EventBatch, EventHistory, EventId, EventStore,
-    EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion, OperationId,
-    RecordedEvent, StreamDirectory, StreamId, StreamSummary, StreamVersion,
+    EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion, FixtureEventStore,
+    OperationId, RecordedEvent, StreamDirectory, StreamId, StreamSummary, StreamVersion,
     TransactionAppendOutcome, TransactionReceipt, TransactionStreamReceipt,
 };
 use crate::{
@@ -29,7 +29,7 @@ struct StoredAppend {
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum AppendProvenance {
-    Direct,
+    Fixture,
     Transaction,
 }
 
@@ -180,47 +180,8 @@ impl StreamDirectory for InMemoryEventStore {
 
 #[async_trait]
 #[allow(clippy::too_many_lines)]
-impl EventStore for InMemoryEventStore {
-    async fn load_completed_outcome_in_context(
-        &self,
-        context: &BoundedContextName,
-        operation: &OperationId,
-    ) -> Result<Option<crate::InlineCompletedOutcome>, EventStoreError> {
-        match self
-            .lookup_outcome(&OutcomeKey::new(
-                self.authority.clone(),
-                context.clone(),
-                operation.clone(),
-            ))
-            .await?
-        {
-            OutcomeLookup::Missing => Ok(None),
-            OutcomeLookup::Completed(outcome) => {
-                Ok(Some(outcome.to_inline().map_err(|e| recovery_error(&e))?))
-            }
-        }
-    }
-
-    async fn commit_outcome(
-        &self,
-        transaction: EventTransaction,
-    ) -> Result<crate::CompletedAppendOutcome, EventStoreError> {
-        let committed = self
-            .begin_command()
-            .await?
-            .commit_outcome(transaction)
-            .await?;
-        let inline = committed
-            .outcome()
-            .to_inline()
-            .map_err(|e| recovery_error(&e))?;
-        Ok(if committed.is_exact_replay() {
-            crate::CompletedAppendOutcome::ExactReplay(inline)
-        } else {
-            crate::CompletedAppendOutcome::Appended(inline)
-        })
-    }
-    async fn append(
+impl FixtureEventStore for InMemoryEventStore {
+    async fn append_fixture(
         &self,
         stream_id: &StreamId,
         expected_version: ExpectedVersion,
@@ -230,7 +191,7 @@ impl EventStore for InMemoryEventStore {
 
         let operation_key = (stream_id.clone(), batch.operation_id().clone());
         if let Some(previous) = state.operations.get(&operation_key) {
-            if previous.provenance == AppendProvenance::Direct && previous.batch == batch {
+            if previous.provenance == AppendProvenance::Fixture && previous.batch == batch {
                 return Ok(AppendOutcome::ExactReplay(previous.events.clone()));
             }
             if previous.provenance == AppendProvenance::Transaction {
@@ -326,7 +287,7 @@ impl EventStore for InMemoryEventStore {
         let stored = StoredAppend {
             batch: batch.clone(),
             events: recorded.clone(),
-            provenance: AppendProvenance::Direct,
+            provenance: AppendProvenance::Fixture,
         };
         state
             .commits
@@ -346,6 +307,49 @@ impl EventStore for InMemoryEventStore {
         state.event_count = new_count;
         drop(state);
         Ok(AppendOutcome::Appended(recorded))
+    }
+}
+
+#[async_trait]
+impl EventStore for InMemoryEventStore {
+    async fn load_completed_outcome_in_context(
+        &self,
+        context: &BoundedContextName,
+        operation: &OperationId,
+    ) -> Result<Option<crate::InlineCompletedOutcome>, EventStoreError> {
+        match self
+            .lookup_outcome(&OutcomeKey::new(
+                self.authority.clone(),
+                context.clone(),
+                operation.clone(),
+            ))
+            .await?
+        {
+            OutcomeLookup::Missing => Ok(None),
+            OutcomeLookup::Completed(outcome) => {
+                Ok(Some(outcome.to_inline().map_err(|e| recovery_error(&e))?))
+            }
+        }
+    }
+
+    async fn commit_outcome(
+        &self,
+        transaction: EventTransaction,
+    ) -> Result<crate::CompletedAppendOutcome, EventStoreError> {
+        let committed = self
+            .begin_command()
+            .await?
+            .commit_outcome(transaction)
+            .await?;
+        let inline = committed
+            .outcome()
+            .to_inline()
+            .map_err(|e| recovery_error(&e))?;
+        Ok(if committed.is_exact_replay() {
+            crate::CompletedAppendOutcome::ExactReplay(inline)
+        } else {
+            crate::CompletedAppendOutcome::Appended(inline)
+        })
     }
 
     async fn load_transaction_receipt(
@@ -743,8 +747,8 @@ fn validate_transaction(
             batch.operation_id().clone(),
         )) {
             let message = match previous.provenance {
-                AppendProvenance::Direct => {
-                    "operation identity was already used outside an event transaction"
+                AppendProvenance::Fixture => {
+                    "operation identity was already used by a fixture batch"
                 }
                 AppendProvenance::Transaction => {
                     "operation identity was already used by another event transaction"

@@ -6,9 +6,9 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
-- Native NATS correlation and causation filtering: domain subjects contain
-  readable aggregate type/ID and control-ID tokens; integration subjects append
-  control IDs while preserving logical addresses and durable identities.
+- Native NATS correlation and causation addressing on permanent transaction receipts
+  and Test fixture manifests. Domain subjects stay stable per aggregate; integration
+  subjects append control IDs while preserving logical addresses and durable identities.
 - On-demand retained correlation inspection with source cutoff snapshots, anchor
   payload includes and matches, and inspection-only host wiring. No correlation
   KV index or projector is required; integration retention remains unchanged.
@@ -19,6 +19,8 @@ All notable changes to this project are documented in this file.
   bounded-context labels, using the read-only inspection capability.
 - Payload-field match rows filter anchored correlations, request additional
   context payloads explicitly, and show applied filters as removable chips.
+- Repeated `correlation` parameters select explicit flows on an aggregate anchor,
+  including correlations older than its default recent-history window.
 - Typed private-event codec composition and `#[event_codec(aggregate = ...)]`
   declarations with ordinary `#[upcast]` methods, including fallible conversions.
   Explicit application-owned encoders support compatibility releases that read
@@ -43,14 +45,16 @@ All notable changes to this project are documented in this file.
   in technical responses. Upgrade response readers before enabling fallible
   conversions; older readers reject the new kind. Exhaustive Rust matches need
   the new variant too.
-
-### Changed
-
 - The event-subject format requires fresh namespaces. Existing subject layouts
   are rejected; historical migration is not included. See
   [subjects and deployment compatibility](docs/messaging/subjects.mdx#fresh-deployments).
 - Low-level integration publication requires a valid envelope and derives its
   correlation/causation subject tokens, rejecting inconsistent transport metadata.
+- **Breaking (fixture writes):** replace `EventStore::append` and
+  `AppendSession::append` with the separate `FixtureEventStore::append_fixture`
+  capability. NATS fixtures require Test scope and retain aggregate-scoped retry
+  identity and 100-event batches with atomic manifests. Application writes use
+  coordinated transactions; bike-rental seeds Normal state through commands.
 
 ### Fixed
 

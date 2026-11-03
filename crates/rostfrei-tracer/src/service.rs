@@ -10,13 +10,13 @@ use std::{
 use async_trait::async_trait;
 use rostfrei_core::{
     AggregateType, CommandHandler, ContentFingerprint, CorrelationHistory, EventHistory,
-    EventStore, OperationId, StreamDirectory,
+    FixtureEventStore, OperationId, StreamDirectory,
 };
 use rostfrei_fixtures::Fixture;
 use rostfrei_messaging_core::{
     ApplicationErrorCode, CommandRejection as MessagingCommandRejection,
-    CommandRejectionClassification, CommandResponseOutcome, QuarantineQuery, QuarantineReadError,
-    QuarantineReader, TrafficScope,
+    CommandRejectionClassification, CommandResponseOutcome, CorrelationId, QuarantineQuery,
+    QuarantineReadError, QuarantineReader, TrafficScope,
 };
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde::{Deserialize, Serialize};
@@ -319,7 +319,7 @@ pub struct TracerBuilder {
     correlation_history: Option<Arc<dyn CorrelationHistory>>,
     production_histories: BTreeMap<String, Arc<dyn EventHistory>>,
     observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
-    test_event_store: Option<Arc<dyn EventStore>>,
+    test_event_store: Option<Arc<dyn FixtureEventStore>>,
     test_transport: Option<Arc<dyn CommandTransport>>,
     dispatch_transport: Option<Arc<dyn CommandTransport>>,
     test_scenario_reset: Option<Arc<dyn TestScenarioReset>>,
@@ -413,10 +413,7 @@ impl TracerBuilder {
     }
 
     #[must_use]
-    pub fn with_test_event_store<Store>(mut self, store: Arc<Store>) -> Self
-    where
-        Store: EventStore + 'static,
-    {
+    pub fn with_test_event_store(mut self, store: Arc<dyn FixtureEventStore>) -> Self {
         self.history = store.clone();
         self.test_event_store = Some(store);
         self
@@ -1125,6 +1122,27 @@ impl Tracer {
         includes: &BTreeSet<String>,
         matches: &[PayloadMatch],
     ) -> Result<AnchorCorrelations, CorrelationInspectionError> {
+        self.anchor_correlations_with_selection(
+            aggregate_type,
+            aggregate_id,
+            includes,
+            matches,
+            None,
+        )
+        .await
+    }
+
+    /// Intersects explicit IDs with the anchor's event correlations before applying
+    /// the recent-correlation limit. `None` selects the usual anchor window;
+    /// `Some(&[])` selects no correlations. Includes and matches retain their policy.
+    pub async fn anchor_correlations_with_selection(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: &str,
+        includes: &BTreeSet<String>,
+        matches: &[PayloadMatch],
+        selection: Option<&[CorrelationId]>,
+    ) -> Result<AnchorCorrelations, CorrelationInspectionError> {
         self.inner
             .correlation_inspection
             .as_ref()
@@ -1134,6 +1152,7 @@ impl Tracer {
                 aggregate_id,
                 includes,
                 matches,
+                selection,
                 self.inner.trace_payload_policy.as_ref(),
             )
             .await

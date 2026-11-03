@@ -5,7 +5,6 @@
 NATS event storage requires NATS Server 2.12.1 or newer. One event transaction
 can atomically append commits to multiple aggregate streams in the same
 bounded-context event store. The repository's disposable test runner uses 2.12.15.
-Wildcard subject concurrency support alone does not lower this minimum.
 
 Accepted commands persist an acceptance receipt, including commands that emit
 no domain events or load no aggregates. Event-free acceptance returns
@@ -15,11 +14,10 @@ Changed command content or provenance conflicts under the accepted operation
 identity. Rejections are also durable, with read guards and no speculative events.
 See [command runtime](command-runtime.md) for outcome identity and lifecycle.
 
-Aggregate histories use native ordered ephemeral replay over
-`<domain-prefix>.aggregate.<encoded-type>.<encoded-id>.*.*`, covering all correlation
-and causation suffixes without advancing application durable consumers. Native
-optimistic concurrency uses that same aggregate-wide wildcard and the expected
-last matching stream sequence, on the first event per aggregate in a transaction.
+Aggregate histories use native ordered ephemeral replay over the exact subject
+`<domain-prefix>.aggregate.<encoded-type>.<encoded-id>`, without advancing application
+durable consumers. Native optimistic concurrency checks that subject's last stream
+sequence on the first event per aggregate in a transaction.
 See [subjects and filters](messaging/subjects.mdx#filters-and-internal-storage-subjects).
 Reader credentials need scoped replay-consumer
 create/pull/delete and inbox permissions, plus stream-info/raw-message access.

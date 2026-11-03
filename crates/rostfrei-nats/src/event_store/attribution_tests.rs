@@ -60,8 +60,6 @@ fn reconstruction_refuses_internally_checksummed_actor_disagreement() {
     let subject = config.event_subject(
         stream.aggregate_type().as_str(),
         stream.aggregate_id().as_str(),
-        None,
-        None,
     );
     for changed in [false, true] {
         let mut builder = HistoryBuilder::default();
@@ -172,8 +170,6 @@ fn event_discriminators_reject_actor_in_legacy_and_absence_in_new_even_with_new_
     let subject = config.event_subject(
         stream.aggregate_type().as_str(),
         stream.aggregate_id().as_str(),
-        None,
-        None,
     );
     for version in 1..=6 {
         let mut base = template.clone();

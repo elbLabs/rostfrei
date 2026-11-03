@@ -37,36 +37,26 @@ adds coordination work.
 
 ### Subject-addressed inspection
 
-Putting correlation and causation in [event subjects](../messaging/subjects.mdx#stored-event-subjects)
-allows native retained correlation reads without a separate index/projector or its
-freshness lag. It trades that application infrastructure for more broker indexing
-and aggregate-write work.
+Ordinary execution takes priority over occasional inspection. Domain events use
+one stable subject per aggregate, preserving exact-subject history and optimistic
+concurrency. Existing permanent transaction receipts carry correlation and causation
+in their [addresses](../messaging/subjects.mdx#filters-and-internal-storage-subjects).
+Inspection discovers those receipts and fetches their bounded event ranges, without
+a projector, freshness lag, or another per-command reference record. Test-only
+fixture batches have separate atomic manifests; they do not establish command decisions.
 
-Domain-event subjects identify distinct `(type, id, correlation, causation)`
-combinations. Events within one commit normally share a subject; a new cause or
-correlation creates another. Their count can therefore approach the number of
-aggregate commits rather than aggregates. These entries never age out of the
-journal. JetStream's per-subject bookkeeping adds memory and index restore/rebuild
-work as cardinality grows, including for file-backed streams. Permanent transaction
-and read-guard subjects already contribute separate operation-scoped growth.
+This reuses authoritative evidence but does not create an independent correlation
+index: a correlation filter traverses operation branches. Receipt discovery can
+therefore become expensive as the journal grows, even for a small result. Client
+limits bound fetched work, not all broker index traversal or its contention with
+writes. Operation lookup and winner CAS stay narrowly scoped to one operation.
 
-Aggregate-wide optimistic concurrency uses
-`Nats-Expected-Last-Subject-Sequence-Subject` with `<type>.<id>.*.*`. In NATS 2.12.15,
-the file store's wildcard last-message lookup traverses matching subject-index
-entries, unlike its exact-subject lookup. This adds work proportional to the
-aggregate's distinct subjects on each concurrency check; it need not reread every
-event payload. Busy, long-lived aggregates therefore have a growing write-path
-cost. Capacity qualification must cover subject cardinality, restart recovery,
-and writes to aged aggregates, not only event bytes or fresh-namespace throughput.
-
-Causation remains authoritative in event envelopes. Its subject token currently
-has no non-test query caller in this repository; retained inspection selects by
-correlation and reads causation from the envelope. Removing that token would
-reduce domain-event subjects to distinct `(type, id, correlation)` combinations,
-helping when a correlation revisits an aggregate. It would still create a subject
-for each new aggregate/correlation pair and require wildcard concurrency checks.
-Integration-event subject growth is limited by configured retention (30 days by
-default); domain journals have no equivalent expiry.
+Permanent receipts, guards, and fixture manifests still grow with retained writes.
+JetStream's per-subject bookkeeping adds memory and index restore/rebuild work,
+including with file storage. Capacity qualification must cover lifetime subject
+cardinality, restart recovery, and inspection concurrent with ordinary commands.
+Integration-event subjects retain both trace identities and remain independently
+bounded by their retention policy (30 days by default); domain journals never age out.
 
 See [runtime operations](../runtime.md), [native authority](../command-runtime.md#native-authority),
 and the [cutover runbook](../completed-outcome-cutover.md).

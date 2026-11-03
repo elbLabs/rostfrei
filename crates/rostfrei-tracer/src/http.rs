@@ -13,8 +13,8 @@ use axum::{
 };
 use futures_util::stream;
 use rostfrei_messaging_core::{
-    BoundedContextName, DEFAULT_QUARANTINE_PAGE_SIZE, QuarantineFilter, QuarantineMessageKind,
-    QuarantineQuery, QuarantineReadError,
+    BoundedContextName, CorrelationId, DEFAULT_QUARANTINE_PAGE_SIZE, QuarantineFilter,
+    QuarantineMessageKind, QuarantineQuery, QuarantineReadError,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,8 +23,8 @@ use thiserror::Error;
 use crate::{
     CommandInputError, CommandRequest, CorrelationError, CorrelationInspectionError,
     DiscoveryError, MAX_COMMAND_PAYLOAD_LEN, MAX_INCLUDED_CONTEXTS, MAX_PAYLOAD_MATCHES,
-    MessageSeriesCaptureError, OperationMode, OperationSnapshot, PayloadMatch,
-    QuarantineInspectionError, QuarantineScope, SubmissionError, TestDefinition,
+    MAX_SELECTED_CORRELATIONS, MessageSeriesCaptureError, OperationMode, OperationSnapshot,
+    PayloadMatch, QuarantineInspectionError, QuarantineScope, SubmissionError, TestDefinition,
     TestDefinitionError, TestDefinitionValidationError, TestRepositoryError, TestRunError,
     TestScenarioResetError, TestTimeout, Tracer, behavioral_test_schema,
 };
@@ -910,13 +910,19 @@ async fn get_anchor_correlations(
     Path((aggregate_type, aggregate_id)): Path<(String, String)>,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let (include, matches) = match anchor_query(query.as_deref()) {
+    let query = match anchor_query(query.as_deref()) {
         Ok(query) => query,
         Err(response) => return *response,
     };
     match state
         .tracer
-        .anchor_correlations(&aggregate_type, &aggregate_id, &include, &matches)
+        .anchor_correlations_with_selection(
+            &aggregate_type,
+            &aggregate_id,
+            &query.include,
+            &query.matches,
+            query.selection.as_deref(),
+        )
         .await
     {
         Ok(correlations) => private_no_store(Json(correlations).into_response()),
@@ -924,19 +930,45 @@ async fn get_anchor_correlations(
     }
 }
 
-/// Accepts repeated or comma-separated `include=context:<name>` parameters and
-/// repeated form-URL-encoded `match=<context>/<event-type>.<field>=<value>`.
-fn anchor_query(
-    query: Option<&str>,
-) -> Result<(BTreeSet<String>, Vec<PayloadMatch>), Box<Response>> {
+#[derive(Default)]
+struct AnchorQuery {
+    include: BTreeSet<String>,
+    matches: Vec<PayloadMatch>,
+    selection: Option<Vec<CorrelationId>>,
+}
+
+/// Accepts repeated or comma-separated includes, repeated payload matches and
+/// repeated form-URL-encoded correlation IDs.
+fn anchor_query(query: Option<&str>) -> Result<AnchorQuery, Box<Response>> {
     let mut contexts = BTreeSet::new();
     let mut matches = Vec::new();
+    let mut selection = None;
     for parameter in query
         .unwrap_or_default()
         .split('&')
         .filter(|p| !p.is_empty())
     {
         match parameter.split_once('=') {
+            Some(("correlation", value)) => {
+                let ids = selection.get_or_insert_with(Vec::new);
+                let invalid = |message: String| {
+                    Box::new(correlation_inspection_error_response(
+                        &CorrelationInspectionError::InvalidSelection(message),
+                    ))
+                };
+                if ids.len() == MAX_SELECTED_CORRELATIONS {
+                    return Err(invalid(format!(
+                        "at most {MAX_SELECTED_CORRELATIONS} correlation IDs can be requested"
+                    )));
+                }
+                let value = value.replace('+', " ");
+                let decoded = percent_encoding::percent_decode_str(&value)
+                    .decode_utf8()
+                    .map_err(|error| invalid(error.to_string()))?;
+                let id = CorrelationId::new(decoded.into_owned())
+                    .map_err(|error| invalid(error.to_string()))?;
+                ids.push(id);
+            }
             Some(("include", value)) => {
                 for item in value.replace("%3A", ":").replace("%3a", ":").split(',') {
                     let context = item
@@ -976,12 +1008,16 @@ fn anchor_query(
             }
             _ => {
                 return Err(Box::new(bad_request(
-                    "only `include=context:<name>` and `match=<context>/<event-type>.<field>=<value>` query parameters are supported",
+                    "only `correlation=<id>`, `include=context:<name>` and `match=<context>/<event-type>.<field>=<value>` query parameters are supported",
                 )));
             }
         }
     }
-    Ok((contexts, matches))
+    Ok(AnchorQuery {
+        include: contexts,
+        matches,
+        selection,
+    })
 }
 
 async fn correlation_events(
@@ -1322,6 +1358,9 @@ fn correlation_inspection_error_response(error: &CorrelationInspectionError) -> 
         }
         CorrelationInspectionError::NotFound(_) => (StatusCode::NOT_FOUND, "not-found"),
         CorrelationInspectionError::InvalidId(_) => (StatusCode::BAD_REQUEST, "invalid-identifier"),
+        CorrelationInspectionError::InvalidSelection(_) => {
+            (StatusCode::BAD_REQUEST, "invalid-correlation-selection")
+        }
         CorrelationInspectionError::IncludeTooBroad { .. } => {
             (StatusCode::BAD_REQUEST, "include-too-broad")
         }

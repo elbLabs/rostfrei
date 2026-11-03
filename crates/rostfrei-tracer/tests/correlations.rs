@@ -17,8 +17,9 @@ use rostfrei_core::{
     Aggregate, AggregateId, AggregateType, ContentFingerprint, CorrelationChain,
     CorrelationHistory, CorrelationRead, CorrelationRef, CorrelationSnapshot,
     CorrelationSourceKind, CorrelationSourceSnapshot, DomainEventRef, EventBatch, EventHistory,
-    EventStore, EventStoreError, EventStoreErrorKind, ExpectedVersion, InMemoryEventStore,
-    IntegrationEventRef, NewEvent, OperationId, RecordedEvent, StreamId, derive_commit_id,
+    EventStore, EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion,
+    FixtureEventStore, InMemoryEventStore, IntegrationEventRef, NewEvent, OperationId,
+    RecordedEvent, StreamId, StreamVersion, TransactionParticipant, derive_commit_id,
     derive_event_id,
 };
 use rostfrei_messaging_core::{CausationId, CorrelationId, MessageTimestamp};
@@ -105,7 +106,7 @@ impl CountingHistory {
             ))
         };
         self.store
-            .append(&stream, expected, batch)
+            .append_fixture(&stream, expected, batch)
             .await
             .unwrap()
             .into_events()
@@ -1002,7 +1003,7 @@ async fn an_anchor_id_without_a_stream_is_not_found_and_an_uncorrelated_stream_i
     scenario
         .ordering
         .store
-        .append(
+        .append_fixture(
             &uncorrelated,
             ExpectedVersion::NoStream,
             EventBatch::new(
@@ -1297,6 +1298,154 @@ async fn repeated_correlations_and_includes_load_each_stream_once_per_request() 
 }
 
 #[tokio::test]
+async fn explicit_selection_intersects_events_not_read_only_transaction_participants() {
+    let scenario = scenario().await;
+    let operation = OperationId::new("read-only-order").unwrap();
+    let shipment = stream("ordering/shipment", "S2");
+    let commit = derive_commit_id(&shipment, &operation);
+    let fingerprint = ContentFingerprint::digest("read-only-order");
+    let correlation = CorrelationId::new("R-read-only").unwrap();
+    let batch = EventBatch::new(
+        commit.clone(),
+        operation.clone(),
+        fingerprint,
+        vec![NewEvent::new(derive_event_id(&commit, 0), "changed", 1, b"{}".to_vec()).unwrap()],
+    )
+    .unwrap()
+    .with_correlation_id(correlation.clone());
+    scenario
+        .ordering
+        .store
+        .append_transaction(
+            EventTransaction::new(
+                operation,
+                fingerprint,
+                vec![
+                    TransactionParticipant::new(
+                        stream("ordering/order", "O1"),
+                        ExpectedVersion::Exact(StreamVersion::new(3)),
+                        None,
+                    ),
+                    TransactionParticipant::new(
+                        shipment.clone(),
+                        ExpectedVersion::NoStream,
+                        Some(batch),
+                    ),
+                ],
+            )
+            .with_bounded_context(
+                rostfrei_messaging_core::BoundedContextName::new("ordering").unwrap(),
+            )
+            .with_correlation_id(correlation),
+        )
+        .await
+        .unwrap();
+    let shipped = scenario
+        .ordering
+        .store
+        .load(&shipment)
+        .await
+        .unwrap()
+        .remove(0);
+    scenario
+        .history
+        .push("R-read-only", domain("ordering", &shipped, 10));
+    let app = router(tracer(&scenario, true));
+    let (status, body) = get(
+        &app,
+        &format!("{ORDER}?correlation=R2&correlation=R-read-only&correlation=missing&correlation=R2&include=context:ordering"),
+        Some(INSPECTION),
+    ).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(correlation_ids(&body), ["R2"]);
+    assert_eq!(scenario.history.calls(), [vec!["R2"]]);
+    assert_eq!(scenario.ordering.loads(), [stream("ordering/order", "O1")]);
+    assert_snapshot(&body);
+}
+
+#[tokio::test]
+async fn correlation_selection_validates_decoded_ids_and_counts_requested_duplicates() {
+    let scenario = scenario().await;
+    let app = router(tracer(&scenario, true));
+    for query in [
+        "correlation=".to_owned(),
+        "correlation=has+space".to_owned(),
+        "correlation=has%20space".to_owned(),
+        "correlation=%00".to_owned(),
+        "correlation=%FF".to_owned(),
+        format!("correlation={}", "x".repeat(257)),
+        vec!["correlation=R1"; 257].join("&"),
+    ] {
+        let (status, body) = get(&app, &format!("{ORDER}?{query}"), Some(INSPECTION)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {body}");
+        assert_eq!(body["code"], "invalid-correlation-selection");
+    }
+    assert!(scenario.history.calls().is_empty());
+    assert!(scenario.ordering.loads().is_empty());
+    let query = vec!["correlation=%52%31"; 256].join("&");
+    let (status, body) = get(&app, &format!("{ORDER}?{query}"), Some(INSPECTION)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(correlation_ids(&body), ["R1"]);
+    assert_eq!(scenario.history.calls(), [vec!["R1"]]);
+}
+
+#[tokio::test]
+async fn empty_selection_is_valid_and_selected_matches_still_obey_payload_policy() {
+    let scenario = scenario().await;
+    let service = tracer(&scenario, false);
+    let empty = service
+        .anchor_correlations_with_selection(
+            "ordering/order",
+            "O1",
+            &BTreeSet::new(),
+            &[],
+            Some(&[]),
+        )
+        .await
+        .unwrap();
+    assert!(empty.correlations.is_empty());
+    assert!(!empty.truncated);
+    assert_eq!(scenario.history.calls(), [Vec::<String>::new()]);
+    assert!(
+        service
+            .anchor_correlations_with_selection(
+                "ordering/order",
+                "O1",
+                &BTreeSet::new(),
+                &[],
+                Some(&vec![CorrelationId::new("R1").unwrap(); 257]),
+            )
+            .await
+            .is_err()
+    );
+    let app = router(service);
+    for query in [
+        "correlation=missing",
+        "correlation=R1&include=context:billing&match=billing/changed.amount=10",
+    ] {
+        let (status, body) = get(&app, &format!("{ORDER}?{query}"), Some(INSPECTION)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["correlations"], json!([]));
+        assert_snapshot(&body);
+    }
+    let (status, body) = get(
+        &app,
+        &format!("{ORDER}?correlation=R1&include=context:billing"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(correlation_ids(&body), ["R1"]);
+    assert!(
+        body["correlations"][0]["refs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|reference| reference.get("payload").is_none())
+    );
+}
+
+#[tokio::test]
 async fn anchor_selection_is_bounded_at_read_time_without_losing_older_direct_queries() {
     let scenario = scenario().await;
     for number in 0..257 {
@@ -1337,6 +1486,20 @@ async fn anchor_selection_is_bounded_at_read_time_without_losing_older_direct_qu
     assert_eq!(status, StatusCode::OK);
     assert_eq!(old["refs"].as_array().unwrap().len(), 1);
     assert_eq!(old["truncated"], false);
+
+    let (status, selected) = get(
+        &app,
+        "/aggregates/ordering%2Forder/O2/correlations?correlation=bounded-256&correlation=bounded-000",
+        Some(INSPECTION),
+    ).await;
+    assert_eq!(status, StatusCode::OK, "{selected}");
+    assert_eq!(correlation_ids(&selected), ["bounded-000", "bounded-256"]);
+    assert!(
+        selected.get("truncated").is_none(),
+        "selection precedes the recent-256 window"
+    );
+    assert_eq!(event_ids(&selected["correlations"][0]), event_ids(&old));
+    assert_snapshot(&selected);
 }
 
 #[tokio::test]
@@ -1375,6 +1538,23 @@ async fn a_payload_match_cannot_hide_truncation_of_an_excluded_chain() {
     assert_eq!(
         body["truncated"], true,
         "a match cannot establish absence beyond the returned subset of a truncated chain"
+    );
+    let (status, selected) = get(
+        &app,
+        &format!("{ORDER}?correlation=R1&match=ordering/changed.unretained=true"),
+        Some(INSPECTION),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(selected["correlations"], json!([]));
+    assert_eq!(selected["truncated"], true);
+    assert_snapshot(&selected);
+    let (status, selected) = get(&app, &format!("{ORDER}?correlation=R2"), Some(INSPECTION)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(correlation_ids(&selected), ["R2"]);
+    assert!(
+        selected.get("truncated").is_none(),
+        "an unrequested chain cannot truncate this read"
     );
 }
 

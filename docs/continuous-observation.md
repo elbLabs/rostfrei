@@ -182,18 +182,37 @@ domain store and the shared integration source. Additional domain sources or an
 inspection-only host use `TracerConfig::with_production_event_store`; no projector
 opt-in is needed. See [host registration](nats-application-host.md#retained-correlation-inspection).
 
-This reader requires the [fresh event-subject format](messaging/subjects.mdx#fresh-deployments).
-It uses native ordered ephemeral consumers with the official `async-nats` batching
-and recovery APIs. The pinned `async-nats` 0.50 client has no `batchDirectGet` API,
-although the server supports batch direct get, so the adapter uses those native
-consumers instead. Reads capture a finite cutoff per source, clean up their
-consumers, and never advance application durables. Reader credentials need scoped
-stream INFO, replay-consumer CREATE/INFO/MSG.NEXT/DELETE, and inbox permissions; no
-application publication permission is required.
+This reader requires the [fresh subject format](messaging/subjects.mdx#fresh-deployments).
+Native ordered ephemeral consumers discover permanent transaction receipts and
+Test fixture manifests at a finite cutoff. The reader validates their atomic
+coordinates and fetches the referenced domain events through leader-served raw
+message reads. Integration events are discovered directly on their own retained
+stream. Original event identities, timestamps, aggregate versions, and broker
+positions are preserved; receipts themselves are not graph events.
+
+Discovery uses the official `async-nats` batching and recovery APIs. Ordered
+consumers can run on lagging replicas: zero pending messages does not prove that
+they have reached the captured cutoff. The reader fetches a cutoff witness from
+the stream leader and includes its subject in replay, requiring traversal through
+that position. Witness reads and overfetch consume the examined-data budget.
+If retention removes the witness, only leader evidence that no records remain
+at or below the cutoff establishes an empty selection; otherwise the read fails.
+Direct Get responses can come from followers and cannot replace this proof.
+
+The reader cleans up ephemeral consumers and never advances application durables.
+Credentials need scoped stream INFO/raw-message GET,
+replay-consumer CREATE/INFO/MSG.NEXT/DELETE, and inbox permissions; no application
+publication permission is required. Historical receipt validation uses the journal's
+authority binding and does not require available result details.
+Domain journal identities are pinned when attaching the reader. Replacing a journal
+invalidates that handle, preventing old anchor payloads from joining new history.
 
 A request accepts at most **256 correlation IDs** across **32 sources**, including
 the shared integration stream. Defaults bound the entire request to **2048
 references** and **32 MiB of examined data**; `with_limits` can tighten these.
+Receipts, manifests, and fetched validation records consume examined-data budget
+even when they yield no events. Event-free acceptances and rejections establish
+decisions but add no event references or anchor membership.
 Reaching either bound marks every requested chain truncated, including unresolved
 empty chains. Each shared reader handle admits four active requests, each querying
 up to four sources concurrently. The overall deadline is 15 seconds, with
@@ -203,6 +222,9 @@ The examined-data budget excludes the client's native 500-message prefetch
 buffers: `async-nats` 0.50 exposes no ordered-consumer batch-byte tuning. Successful
 reads await consumer deletion. Cancellation schedules cleanup even when creation
 is still pending; native 30-second inactivity expiry provides a fallback.
+These limits do not bound all broker-side subject-index traversal: correlation
+selectors traverse lifetime operation branches. See the
+[storage tradeoff](adr/nats-storage.md#subject-addressed-inspection).
 
 ### Discovery and access
 
@@ -226,6 +248,18 @@ The existing Control/Dispatch `/correlations/{id}/events` SSE contract continues
 serve its operation captures. It does not grant retained production-history access.
 An inspection-only host can serve retained JSON reads without command execution.
 Responses use `Cache-Control: private, no-store`.
+
+An anchored request can combine aggregate type and ID with repeated
+`correlation=<id>` parameters (at most 256). The result contains only requested
+correlations recorded on that aggregate's own events, expanded to their retained
+cross-aggregate flows. Read-only receipt participation does not make an aggregate
+an anchor. Selection happens before the default recent-correlation window, so an
+explicitly requested older correlation remains selectable. No matching IDs yields
+an empty anchored result.
+
+```text
+GET /aggregates/ordering%2Forder/O1/correlations?correlation=checkout-1&correlation=refund-1
+```
 
 ### Payloads and matching
 
@@ -255,9 +289,10 @@ Tracer reloads that history once and applies the same payload policy, keeping
 the original references and source cutoffs. A referenced event still missing
 after reload fails the request.
 
-One anchored request selects at most **256 correlations**, retaining the most
-recently first-seen correlations in the anchor's history. It accepts at most **16
-included contexts**, **64 additional aggregate streams**, and **8 match parameters**.
+Without explicit correlation IDs, one anchored request selects at most **256
+correlations**, retaining the most recently first-seen correlations in the anchor's
+history. It accepts at most **16 included contexts**, **64 additional aggregate
+streams**, and **8 match parameters**.
 An over-broad expansion is rejected rather than silently returning some payloads.
 Anchor selection or any incomplete chain sets top-level `truncated`, even when
 payload matches remove that chain. Each correlation also reports whether its
@@ -307,6 +342,7 @@ captured cutoff.
 | Condition | HTTP status and code |
 | --- | --- |
 | Complete direct read has no retained references | `404 not-found` |
+| Invalid correlation ID or more than 256 selection parameters | `400 invalid-correlation-selection` |
 | A retained correlation source cannot be read or validated | `503 correlation-read-failed` |
 | Anchor or included aggregate history cannot be read | `503 history-read-failed` |
 | An anchor/include context has no configured history | `501 history-unavailable` |

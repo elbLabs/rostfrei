@@ -75,7 +75,7 @@ impl CommandHandler<Change> for Observe {
             let op = OperationId::new("competing-write").unwrap();
             let commit = derive_commit_id(&stream().unwrap(), &op);
             store
-                .append(
+                .append_fixture(
                     &stream().unwrap(),
                     ExpectedVersion::NoStream,
                     EventBatch::new(

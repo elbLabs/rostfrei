@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use bike_rental::{
-    demo::{demo_fixture, demo_stream},
+    demo::{demo_fixture, demo_stream, seed_demo},
     tracer,
 };
 use futures_util::{StreamExt as _, TryStreamExt as _};
@@ -212,7 +212,7 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
         )
         .await?,
     );
-    normal.apply_fixture(&demo_fixture()?).await?;
+    seed_demo(&normal.store()).await?;
     let feed = ObservationFeed::new(application.clone(), ObservationScope::Test);
     let tracer_config = TracerConfig::new(
         tokio::net::TcpListener::bind("127.0.0.1:0").await?,

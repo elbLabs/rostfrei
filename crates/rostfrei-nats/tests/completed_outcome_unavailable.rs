@@ -83,14 +83,6 @@ impl EventStore for RefuseDecision {
         }
         self.store.commit_outcome(transaction).await
     }
-    async fn append(
-        &self,
-        id: &StreamId,
-        version: ExpectedVersion,
-        batch: EventBatch,
-    ) -> Result<AppendOutcome, EventStoreError> {
-        self.store.append(id, version, batch).await
-    }
     async fn append_transaction(
         &self,
         transaction: EventTransaction,

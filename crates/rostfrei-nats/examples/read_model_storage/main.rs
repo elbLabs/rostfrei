@@ -10,8 +10,9 @@ use application::{
     MemberJoined, OrganizationEvent, rebuild,
 };
 use rostfrei_core::{
-    AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventStore, ExpectedVersion,
-    NewEvent, OperationId, StreamId, derive_commit_id, derive_event_id,
+    AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventStore,
+    EventTransaction, ExpectedVersion, NewEvent, OperationId, StreamId, TransactionParticipant,
+    derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{
     CallerMetadata, CorrelationId, EnvelopeContext, MessageId, MessageTimestamp, SchemaVersion,
@@ -33,6 +34,7 @@ async fn main() -> ExampleResult {
     .await?;
     let context = ApplicationName::new("read-model-example")?.bounded_context("access")?;
     let events = NatsEventStoreConfig::for_bounded_context(&context)?
+        .with_fresh_split_outcome_epoch("read-model-storage-example")?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     provision_event_store(connection.jetstream(), &events).await?;
     let history = NatsEventStore::connect(connection.jetstream().clone(), events).await?;
@@ -60,7 +62,7 @@ async fn main() -> ExampleResult {
     let commit = derive_commit_id(&stream, &operation);
     let batch = EventBatch::new(
         commit.clone(),
-        operation,
+        operation.clone(),
         ContentFingerprint::digest("example-source"),
         source_events
             .iter()
@@ -76,7 +78,18 @@ async fn main() -> ExampleResult {
             .collect::<ExampleResult<Vec<_>>>()?,
     )?;
     history
-        .append(&stream, ExpectedVersion::NoStream, batch)
+        .append_transaction(
+            EventTransaction::new(
+                operation,
+                batch.operation_fingerprint(),
+                vec![TransactionParticipant::new(
+                    stream.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(batch),
+                )],
+            )
+            .with_bounded_context(history.config().bounded_context().clone()),
+        )
         .await?;
     rebuild(&history, &stream, &dispatcher).await?;
     rebuild(&history, &stream, &dispatcher).await?;

@@ -28,6 +28,7 @@
 //! See the [getting-started guide](https://elblabs.github.io/rostfrei/docs/getting-started)
 //! and [bike-rental example](https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental).
 
+pub use rostfrei_core::FixtureEventStore;
 pub use rostfrei_runtime::*;
 
 /// Event sourcing, execution, and persistence contracts.

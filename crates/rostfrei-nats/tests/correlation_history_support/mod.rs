@@ -8,9 +8,9 @@ use async_nats::jetstream;
 use futures_util::TryStreamExt;
 use rostfrei_core::{
     AggregateId, AggregateType, ContentFingerprint, CorrelationChain, CorrelationRead,
-    CorrelationSourceKind, CorrelationSourceSnapshot, EventBatch, EventStore, ExpectedVersion,
-    NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion, derive_commit_id,
-    derive_event_id,
+    CorrelationSourceKind, CorrelationSourceSnapshot, EventBatch, EventStore, EventTransaction,
+    ExpectedVersion, FixtureEventStore, NewEvent, OperationId, RecordedEvent, StreamId,
+    StreamVersion, TransactionParticipant, derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{
     ApplicationName, CausationId, CorrelationId, EnvelopeContext, IntegrationEventEnvelope,
@@ -203,7 +203,7 @@ pub async fn append_domain(
         let remaining = count
             .checked_sub(recorded.len())
             .ok_or("event count overflow")?;
-        let events = (0..remaining.min(100))
+        let events = (0..remaining.min(rostfrei_core::MAX_TRANSACTION_ITEMS - 1))
             .map(|ordinal| {
                 Ok(NewEvent::new(
                     derive_event_id(&commit, u32::try_from(ordinal)?),
@@ -226,7 +226,34 @@ pub async fn append_domain(
         } else {
             ExpectedVersion::Exact(StreamVersion::new(u64::try_from(recorded.len())?))
         };
-        recorded.extend(store.append(&stream, version, batch).await?.into_events());
+        if store.config().traffic_scope() == TrafficScope::Test {
+            recorded.extend(
+                store
+                    .append_fixture(&stream, version, batch)
+                    .await?
+                    .into_events(),
+            );
+        } else {
+            let transaction = EventTransaction::new(
+                batch.operation_id().clone(),
+                batch.operation_fingerprint(),
+                vec![TransactionParticipant::new(
+                    stream.clone(),
+                    version,
+                    Some(batch),
+                )],
+            )
+            .with_bounded_context(store.config().bounded_context().clone())
+            .with_correlation_id(CorrelationId::new(correlation)?)
+            .with_causation_id(CausationId::new(causation)?);
+            recorded.extend(
+                store
+                    .append_transaction(transaction)
+                    .await?
+                    .receipt()
+                    .events(),
+            );
+        }
     }
     Ok(recorded)
 }

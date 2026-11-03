@@ -72,6 +72,8 @@ jobs:
         run: cargo test --locked -p rostfrei-nats --test connection_integration -- --include-ignored --test-threads=1
       - name: Test clustered history replay recovery
         run: cargo test --locked -p rostfrei-nats --test event_store_integration history_cluster -- --ignored --test-threads=1
+      - name: Test replicated receipt discovery
+        run: cargo test --locked -p rostfrei-nats --test receipt_cluster_integration -- --ignored --test-threads=1
 
   studio:
     name: Studio browser tests
