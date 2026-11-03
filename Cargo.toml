@@ -20,6 +20,9 @@ members = [
     "examples/bike-rental",
 ]
 
+[profile.dev]
+debug = 1
+
 [workspace.package]
 version = "0.1.3"
 edition = "2024"
