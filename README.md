@@ -160,4 +160,4 @@ dependency contract.
 
 Copyright (c) 2026 elbtech.dev.
 
-Licensed under the [European Union Public Licence 1.2](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE).

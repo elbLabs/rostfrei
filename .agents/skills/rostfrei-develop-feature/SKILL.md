@@ -1,6 +1,6 @@
 ---
 name: rostfrei-develop-feature
-license: EUPL-1.2
+license: Apache-2.0
 description: Develops Rostfrei application features with a human teammate through Given/When/Then and test-first implementation. Use when adding or changing application behavior; writes and explains behavior-suite tests executed against real NATS before implementing to green.
 compatibility: Requires the release-matched cargo-rostfrei Rust CLI and an isolated real NATS-backed application test runtime. Building the CLI requires Rust 1.98 or newer. Ordinary conversation works without host-specific tools; consumer installation and execution need no Python.
 ---

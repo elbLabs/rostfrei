@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- License the project under the Apache License 2.0.
+
 ## [0.1.3] - 2026-10-29
 
 ### Added
