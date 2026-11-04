@@ -368,11 +368,32 @@ fn aggregate_event_filter_matches_family(filter: &str, family_filter: &str) -> b
     };
     let tokens: Vec<_> = remainder.split('.').collect();
     let (context, identifiers) = match tokens.as_slice() {
-        [context, "aggregate", aggregate_type, aggregate_id] => {
+        [context, "aggregate", aggregate_type, aggregate_id]
+        | [context, "receipts", "v1", "aggregate", aggregate_type, aggregate_id] => {
             (context, [aggregate_type, aggregate_id])
         }
         [
             context,
+            "split",
+            epoch,
+            "aggregate",
+            aggregate_type,
+            aggregate_id,
+        ]
+        | [
+            context,
+            "split",
+            epoch,
+            "receipts",
+            "v1",
+            "aggregate",
+            aggregate_type,
+            aggregate_id,
+        ]
+        | [
+            context,
+            "receipts",
+            "v1",
             "split",
             epoch,
             "aggregate",
@@ -451,6 +472,51 @@ mod tests {
             "shop.domain.orders.aggregate.*.*.*.*",
         ] {
             assert!(!aggregate_event_filter_matches_family(invalid, family));
+        }
+    }
+
+    #[test]
+    fn receipt_profile_filters_preserve_scope_and_exclude_control_subjects() {
+        let application = ApplicationName::new("receipt-observer").expect("application");
+        let context = application
+            .test_bounded_context("counter")
+            .expect("context");
+        let base = crate::NatsEventStoreConfig::for_bounded_context(&context).expect("config");
+        let filter = family_filter(
+            &application,
+            TrafficScope::Test,
+            CorrelatedMessageFamily::DomainEvent,
+        );
+        let configs = [
+            base.clone()
+                .with_receipt_backed_history()
+                .expect("receipts"),
+            base.clone()
+                .with_receipt_backed_history()
+                .expect("receipts")
+                .with_fresh_split_outcome_epoch("test")
+                .expect("split"),
+            base.with_fresh_split_outcome_epoch("test")
+                .expect("split")
+                .with_receipt_backed_history()
+                .expect("receipts"),
+        ];
+        for config in configs {
+            let aggregate = config.aggregate_subject_filter();
+            assert!(aggregate_event_filter_matches_family(&aggregate, &filter));
+            for invalid in [
+                aggregate.replace(".test.", "."),
+                aggregate.replace("receipts.v1", "receipts.v2"),
+                aggregate.replace("receipts.v1", "receipts.*"),
+                aggregate.replace(".aggregate.", ".outcome."),
+                config.transaction_subject_filter(),
+                config.transaction_guard_subject("operation", 0),
+            ] {
+                assert!(
+                    !aggregate_event_filter_matches_family(&invalid, &filter),
+                    "{invalid}"
+                );
+            }
         }
     }
 
