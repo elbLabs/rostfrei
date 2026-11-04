@@ -1,55 +1,14 @@
 use super::*;
 use rostfrei_core::{HistoryCheckpoint, ReplayHistory};
 
-/// Bloom membership is only a negative proof. Positive matches reload authoritative
-/// history, including legacy operations whose receipts used a primary-derived subject.
+/// Native replay boundary. Operation identity belongs to permanent receipts,
+/// not the snapshot's derived state or checkpoint metadata.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Prefix {
     pub version: u64,
     pub sequence: u64,
     digest: String,
-    identities: String,
-    #[serde(skip)]
-    bits: Vec<u8>,
-}
-impl Prefix {
-    pub(super) fn contains(&self, operation: &OperationId) -> bool {
-        membership(&self.bits, operation)
-    }
-}
-
-fn positions(operation: &OperationId, bytes: usize) -> [usize; 16] {
-    let digest = ContentFingerprint::digest(operation.as_str().as_bytes());
-    let width = bytes.saturating_mul(8).max(1);
-    let mut words = digest
-        .as_bytes()
-        .as_chunks::<8>()
-        .0
-        .iter()
-        .map(|chunk| u64::from_be_bytes(*chunk));
-    let first = words.next().unwrap_or(0);
-    let step = words.next().unwrap_or(1) | 1;
-    let mut positions = [0; 16];
-    for (index, position) in positions.iter_mut().enumerate() {
-        let word = first.wrapping_add(step.wrapping_mul(u64::try_from(index).unwrap_or(0)));
-        *position =
-            usize::try_from(word.rem_euclid(u64::try_from(width).unwrap_or(u64::MAX))).unwrap_or(0);
-    }
-    positions
-}
-fn membership(bits: &[u8], operation: &OperationId) -> bool {
-    positions(operation, bits.len()).into_iter().all(|bit| {
-        bits.get(bit / 8)
-            .is_none_or(|byte| byte & (1 << bit.rem_euclid(8)) != 0)
-    })
-}
-fn add(bits: &mut [u8], operation: &OperationId) {
-    for bit in positions(operation, bits.len()) {
-        if let Some(byte) = bits.get_mut(bit / 8) {
-            *byte |= 1 << bit.rem_euclid(8);
-        }
-    }
 }
 
 impl History {
@@ -152,8 +111,6 @@ impl NatsEventStore {
                 version: participant.base_stream_version,
                 sequence: predecessor,
                 digest: String::new(),
-                identities: STANDARD.encode([0; 256]),
-                bits: vec![0; 256],
             }),
             ..History::default()
         };
@@ -202,6 +159,7 @@ impl NatsEventStore {
     ) -> Result<(History, ReplayHistory), EventStoreError> {
         self.verify_authority().await?;
         let (history, read) = if self.snapshotting
+            && self.config.receipt_backed_history()
             && !self.history_auditing
             && (after.is_some() || through.is_some())
         {
@@ -249,22 +207,6 @@ impl NatsEventStore {
         if history.version() == StreamVersion::ZERO {
             return Ok(None);
         }
-        let capacity = history
-            .commits
-            .len()
-            .saturating_mul(4)
-            .clamp(256, 524_288)
-            .next_power_of_two();
-        let mut bits = if let Some(prefix) = &history.prefix {
-            STANDARD
-                .decode(&prefix.identities)
-                .map_err(|_| corrupt("invalid checkpoint identity filter"))?
-        } else {
-            vec![0; capacity]
-        };
-        for commit in &history.commits {
-            add(&mut bits, commit.batch.operation_id());
-        }
         let subject = self.config.aggregate_subject(
             stream_id.aggregate_type().as_str(),
             stream_id.aggregate_id().as_str(),
@@ -285,8 +227,6 @@ impl NatsEventStore {
             version: history.version().value(),
             sequence: history.last_subject_stream_sequence,
             digest: ContentFingerprint::digest(&message.payload).to_hex(),
-            identities: STANDARD.encode(&bits),
-            bits,
         };
         Ok(Some(HistoryCheckpoint {
             authority: self.authority.as_str().to_owned(),
@@ -309,19 +249,11 @@ impl NatsEventStore {
                 "checkpoint authority was recreated",
             ));
         }
-        let mut prefix: Prefix =
+        let prefix: Prefix =
             serde_json::from_slice(&checkpoint.position).map_err(|e| invalid(e.to_string()))?;
-        let bits = STANDARD
-            .decode(&prefix.identities)
-            .map_err(|_| invalid("invalid checkpoint identity filter"))?;
-        if prefix.version != checkpoint.version
-            || prefix.sequence == 0
-            || bits.is_empty()
-            || bits.len() > 524_288
-        {
+        if prefix.version != checkpoint.version || prefix.sequence == 0 {
             return Err(invalid("invalid checkpoint boundary"));
         }
-        prefix.bits = bits;
         let subject = self.config.aggregate_subject(
             stream_id.aggregate_type().as_str(),
             stream_id.aggregate_id().as_str(),
@@ -356,6 +288,11 @@ impl NatsEventStore {
             || event.event_ordinal.checked_add(1) != Some(event.event_count)
         {
             return Err(invalid("checkpoint must end at a complete commit"));
+        }
+        if self.config.receipt_backed_history() && !event.is_transactional {
+            return Err(corrupt(
+                "receipt-backed checkpoint has no transaction provenance",
+            ));
         }
         Ok(prefix)
     }
@@ -442,14 +379,12 @@ impl NatsEventStore {
         let cleanup = reader.close().await;
         let result = result?;
         cleanup?;
-        if let Some(history) = result {
-            let read = history.events.len();
-            Ok((history, read))
-        } else {
-            let history = self.load_history(stream_id).await?;
-            let read = history.events.len();
-            Ok((truncate(&history, Some(target))?, read))
-        }
+        // Each receipt must bind this exact commit: payloads, participants, read
+        // guards, atomic batch and native positions, not just its operation ID.
+        self.validate_transaction_history(&result, &mut RawHistoryCache::default())
+            .await?;
+        let read = result.events.len();
+        Ok((result, read))
     }
 
     async fn read_checkpoint_tail(
@@ -460,7 +395,7 @@ impl NatsEventStore {
         previous: &History,
         target: StreamVersion,
         cutoff: u64,
-    ) -> Result<Option<History>, EventStoreError> {
+    ) -> Result<History, EventStoreError> {
         let mut builder = HistoryBuilder::from_history(previous);
         let mut last_commit = previous.last_subject_stream_sequence;
         let mut last_seen = last_commit;
@@ -486,14 +421,10 @@ impl NatsEventStore {
                 message.headers.as_ref().unwrap_or(&empty_headers),
                 &message.payload,
             )?;
-            if event.event_ordinal == 0
-                && previous
-                    .prefix
-                    .as_ref()
-                    .is_some_and(|prefix| prefix.contains(&event.operation_id))
-            {
-                // Confirm possible cross-boundary identity collisions against original history.
-                return Ok(None);
+            if !event.is_transactional {
+                return Err(corrupt(
+                    "receipt-backed history contains a receipt-free commit",
+                ));
             }
             if event.event_ordinal.checked_add(1) == Some(event.event_count) {
                 last_commit = sequence;
@@ -506,7 +437,7 @@ impl NatsEventStore {
                 "snapshot/replay target must be the last event of a complete commit",
             ));
         }
-        builder.finish(last_seen).map(Some)
+        builder.finish(last_seen)
     }
 }
 

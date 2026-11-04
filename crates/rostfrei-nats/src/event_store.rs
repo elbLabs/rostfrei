@@ -181,6 +181,18 @@ impl AppendSession for NatsAppendSession<'_> {
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
         self.store.require_mutable_namespace().await?;
+        if self.store.config.receipt_backed_history() {
+            self.validate_incarnation().await?;
+            return self
+                .store
+                .append_receipt_backed(
+                    stream_id,
+                    expected_version,
+                    batch,
+                    self.histories.into_inner(),
+                )
+                .await;
+        }
         let mut history = self
             .store
             .load_session_history(stream_id, self.histories.get_mut())
@@ -242,7 +254,8 @@ struct ReadBarrierHook {
 }
 
 impl NatsEventStore {
-    /// Opt in to checked-prefix replay and bounded operation evidence. Strict audits remain full.
+    /// Opt in to checked-prefix replay for a receipt-backed history profile.
+    /// Unqualified histories and strict audits retain full-history validation.
     #[must_use]
     pub const fn with_snapshotting(mut self, enabled: bool) -> Self {
         self.snapshotting = enabled;
@@ -358,6 +371,9 @@ impl NatsEventStore {
 
     async fn require_mutable_namespace(&self) -> Result<(), EventStoreError> {
         self.require_writable_handle()?;
+        if self.config.receipt_backed_history() {
+            return self.verify_authority().await.map(|_| ());
+        }
         // Configured authority cannot be downgraded by clearing broker metadata.
         // Split writers must verify their captured pair even on compatibility routes.
         if self.config.completed_outcome_epoch().is_some() {
@@ -848,6 +864,24 @@ impl NatsEventStore {
         commit: &'a StoredCommit,
         provenance: &StoredTransactionProvenance,
     ) -> Result<(&'a StoredCommit, LocatedTransactionReceipt), EventStoreError> {
+        if self.config.receipt_backed_history() {
+            let decoded = self
+                .read_transaction_receipt(
+                    stream,
+                    commit.batch.operation_id(),
+                    true,
+                    TransactionSubjectLayout::Operation,
+                )
+                .await?
+                .ok_or_else(|| corrupt("transaction receipt is absent from committed history"))?;
+            return Ok((
+                commit,
+                LocatedTransactionReceipt {
+                    decoded,
+                    legacy_primary: None,
+                },
+            ));
+        }
         let batch_start_stream_sequence = transaction_batch_start_sequence(commit, provenance)?;
         let primary_stream_id = if provenance.event_ordinals.start == 0 {
             // This commit already contains the transaction's first event. Its envelope,
@@ -1324,6 +1358,7 @@ impl NatsEventStore {
             }
             let base_version = StreamVersion::new(participant.base_stream_version);
             let history = if self.snapshotting
+                && self.config.receipt_backed_history()
                 && !self.history_auditing
                 && raw_histories.maximum_stream_sequence.is_none()
             {
@@ -1724,6 +1759,16 @@ impl EventStore for NatsEventStore {
         batch: EventBatch,
     ) -> Result<AppendOutcome, EventStoreError> {
         self.require_mutable_namespace().await?;
+        if self.config.receipt_backed_history() {
+            return self
+                .append_receipt_backed(
+                    stream_id,
+                    expected_version,
+                    batch,
+                    LoadedHistories::default(),
+                )
+                .await;
+        }
         let history = self.load_history(stream_id).await?;
         self.append_with_history(stream_id, expected_version, batch, history)
             .await
@@ -1765,6 +1810,43 @@ impl EventStore for NatsEventStore {
 }
 
 impl NatsEventStore {
+    async fn append_receipt_backed(
+        &self,
+        stream_id: &StreamId,
+        expected_version: ExpectedVersion,
+        batch: EventBatch,
+        histories: LoadedHistories,
+    ) -> Result<AppendOutcome, EventStoreError> {
+        let mut transaction = EventTransaction::new(
+            batch.operation_id().clone(),
+            batch.operation_fingerprint(),
+            vec![TransactionParticipant::new(
+                stream_id.clone(),
+                expected_version,
+                Some(batch.clone()),
+            )],
+        )
+        .with_bounded_context(self.config.bounded_context().clone());
+        if let Some(actor) = batch.actor() {
+            transaction = transaction.with_actor(actor.clone());
+        }
+        if let Some(correlation) = batch.correlation_id() {
+            transaction = transaction.with_correlation_id(correlation.clone());
+        }
+        if let Some(causation) = batch.causation_id() {
+            transaction = transaction.with_causation_id(causation.clone());
+        }
+        let outcome = self
+            .append_transaction_with_histories(transaction, histories)
+            .await?;
+        let events = outcome.receipt().events();
+        Ok(if outcome.is_exact_replay() {
+            AppendOutcome::ExactReplay(events)
+        } else {
+            AppendOutcome::Appended(events)
+        })
+    }
+
     #[allow(clippy::too_many_lines)]
     async fn append_with_history(
         &self,
@@ -1923,20 +2005,9 @@ impl NatsEventStore {
 
         let mut staged = Vec::with_capacity(transaction.participants().len());
         for participant in transaction.participants() {
-            let mut history = self
+            let history = self
                 .load_session_history(participant.stream_id(), &mut histories)
                 .await?;
-            if participant.batch().is_some_and(|batch| {
-                history
-                    .prefix
-                    .as_ref()
-                    .is_some_and(|prefix| prefix.contains(batch.operation_id()))
-            }) {
-                history = self.load_history(participant.stream_id()).await?;
-                histories
-                    .by_stream
-                    .insert(participant.stream_id().clone(), Arc::clone(&history));
-            }
             if Self::transaction_participant_has_conflicting_identity(&history, participant)? {
                 let receipt = self
                     .load_transaction_receipt_inner(transaction.operation_id())
@@ -2268,11 +2339,12 @@ pub async fn update_event_store(
     for key in [
         "rostfrei.completed-outcomes.epoch",
         "rostfrei.completed-outcomes.version",
+        crate::event_store_config::RECEIPT_HISTORY_POLICY,
     ] {
         if actual.metadata.get(key) != expected.metadata.get(key) {
             return Err(EventStoreError::new(
                 EventStoreErrorKind::ConfigurationMismatch,
-                "policy update cannot activate/change a completed outcome epoch; use a fresh fenced namespace",
+                "policy update cannot change outcome/history authority; use a fresh fenced namespace",
             ));
         }
     }

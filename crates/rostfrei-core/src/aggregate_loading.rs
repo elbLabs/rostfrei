@@ -211,13 +211,10 @@ async fn load_inner<A: Aggregate + 'static>(
     let replay = match replay_result {
         Ok(replay) => replay,
         Err(error)
-            if snapshot.is_some()
-                && matches!(
-                    error.kind(),
-                    crate::EventStoreErrorKind::InvalidRequest
-                        | crate::EventStoreErrorKind::CorruptHistory
-                ) =>
+            if snapshot.is_some() && error.kind() == crate::EventStoreErrorKind::InvalidRequest =>
         {
+            // Only unusable cache boundaries may retry. Authoritative history or
+            // receipt corruption must not be hidden by a less strict full reader.
             snapshot = None;
             report.snapshot_status = SnapshotStatus::InvalidAnchor;
             history.load_replay(stream, None, through).await?

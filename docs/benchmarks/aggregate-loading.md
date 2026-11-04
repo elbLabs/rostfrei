@@ -46,6 +46,9 @@ target/release/rostfrei-benchmarks aggregate-loading -- \
 `--snapshot-at VERSION` creates a NATS KV checkpoint before timed phases and enables
 snapshot-plus-tail rehydration and commands. The target must end a complete commit;
 capture time/state size are reported separately. Original events remain retained.
+Add `--receipt-backed-history` to qualify the fresh namespace for bounded fetching
+and exact tail-receipt validation; without it, snapshots still fetch full histories.
+Low-level `direct` writes in that profile also publish atomic operation receipts.
 
 The `rostfrei-benchmarks` package owns the suite and Rust broker runner.
 Actual broker measurements reject debug builds. The default artifact is the checkout's
@@ -174,6 +177,7 @@ not a reliable production p95/p99 under load.
 | `--warmups` | `1` | Untimed warmups per read phase; writes warm a separate aggregate |
 | `--audit-reads` | off | Audit historical receipts/participants during read phases |
 | `--snapshot-at` | absent | Capture an exact positive complete-commit version and enable snapshots |
+| `--receipt-backed-history` | off | Fresh receipt-only namespace, including low-level writes; enables bounded snapshot fetching |
 | `--note-bytes` | `128` | JSON note length, up to 65,536 bytes |
 | `--workers` | `2` | Explicit Tokio worker count |
 | `--case-timeout-seconds` | `1800` | Whole-case bound, including fixture generation |
