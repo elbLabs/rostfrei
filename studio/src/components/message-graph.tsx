@@ -50,7 +50,10 @@ import { useMediaQuery } from "@/lib/use-media-query"
 import { cn } from "@/lib/utils"
 
 interface MessageGraphProps {
+  onInspectCorrelation?: (id: string) => void
   nodes: MessageGraphNode[]
+  /** Reserve the loaded timeline's complete layout while projecting visible evidence. */
+  layoutNodes?: MessageGraphNode[]
   view: FlowView
   layoutMode: StudioLayout
   emptyMessage?: string
@@ -83,10 +86,12 @@ const kindIcons = {
 
 export function MessageGraph({
   nodes,
+  layoutNodes,
   view,
   layoutMode,
   emptyMessage,
   capture,
+  onInspectCorrelation,
 }: MessageGraphProps) {
   const { resolvedTheme } = useTheme()
   const compact = useMediaQuery("(max-width: 1100px)")
@@ -104,7 +109,15 @@ export function MessageGraph({
     MessageFlowNode,
     MessageFlowEdge
   > | null>(null)
-  const layout = useMemo(() => layoutMessageGraph(nodes), [nodes])
+  const layout = useMemo(
+    () => layoutMessageGraph(layoutNodes ?? nodes),
+    [layoutNodes, nodes]
+  )
+  const visible = useMemo(
+    () => new Map(nodes.map((node) => [node.id, node])),
+    [nodes]
+  )
+  const visibleLayout = useMemo(() => layoutMessageGraph(nodes), [nodes])
   const selected =
     nodes.find((node) => node.id === selectedId) ??
     nodes.find((node) => node.subject === true) ??
@@ -130,6 +143,7 @@ export function MessageGraph({
     () =>
       layout.nodes.map((node) => ({
         id: node.id,
+        hidden: !visible.has(node.id),
         type: "message",
         position: { x: node.x, y: node.y },
         width: node.context ? FIXTURE_WIDTH : MESSAGE_WIDTH,
@@ -139,7 +153,7 @@ export function MessageGraph({
           height: MESSAGE_HEIGHT,
         },
         data: {
-          message: node,
+          message: visible.get(node.id) ?? node,
           view,
           selected: node.id === highlightedId,
           onSelect: select,
@@ -148,11 +162,11 @@ export function MessageGraph({
         selectable: false,
         focusable: false,
       })),
-    [layout.nodes, view, highlightedId, select]
+    [layout.nodes, visible, view, highlightedId, select]
   )
   const flowEdges = useMemo<MessageFlowEdge[]>(
     () =>
-      layout.edges.map((edge) => ({
+      visibleLayout.edges.map((edge) => ({
         id: edge.id,
         type: "message",
         source: edge.source.id,
@@ -161,9 +175,10 @@ export function MessageGraph({
         focusable: false,
         selectable: false,
       })),
-    [layout.edges]
+    [visibleLayout.edges]
   )
-  const nodeIds = nodes.map((node) => node.id).join("\u0000")
+  const nodeIds = (layoutNodes ?? nodes).map((node) => node.id).join("\u0000")
+  const stableLayout = Boolean(layoutNodes)
   const fit = useCallback(() => {
     if (view !== "running")
       void flow?.fitView({
@@ -171,8 +186,9 @@ export function MessageGraph({
         minZoom: 0.2,
         maxZoom: 1,
         duration: 0,
+        includeHiddenNodes: stableLayout,
       })
-  }, [flow, view])
+  }, [flow, view, stableLayout])
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(fit)
@@ -215,7 +231,9 @@ export function MessageGraph({
           ? "Incomplete execution"
           : view === "predicted"
             ? "Historical simulation (uncommitted)"
-            : "Observed flow"
+            : view === "historical"
+              ? "Historical records"
+              : "Observed flow"
   const dismissInspector = () => {
     setDetailsOpen(false)
     setCanvasInspectorOpen(false)
@@ -226,6 +244,7 @@ export function MessageGraph({
     <div
       className={cn(
         "graph-workspace",
+        stableLayout && "timeline-graph",
         !compact && !inspectorVisible && "inspector-collapsed",
         compact && detailsOpen && "mobile-inspecting"
       )}
@@ -238,8 +257,14 @@ export function MessageGraph({
           </div>
           <span>
             {nodes.length - fixtureCount}{" "}
-            {nodes.length - fixtureCount === 1 ? "message" : "messages"} ·{" "}
-            {fixtureCount} fixture {fixtureCount === 1 ? "event" : "events"}
+            {nodes.length - fixtureCount === 1 ? "message" : "messages"}
+            {view !== "historical" && (
+              <>
+                {" "}
+                · {fixtureCount} fixture{" "}
+                {fixtureCount === 1 ? "event" : "events"}
+              </>
+            )}
           </span>
           {canvas && !compact && (
             <Button
@@ -266,8 +291,13 @@ export function MessageGraph({
           )}
         </header>
         <div className="message-graph" ref={viewportRef}>
-          {nodes.length === 0 ? (
-            <div className="graph-empty">
+          {nodes.length === 0 && (
+            <div
+              className="graph-empty"
+              style={
+                stableLayout ? { pointerEvents: "none", zIndex: 1 } : undefined
+              }
+            >
               <Workflow />
               <h3>No flow to display</h3>
               <p>
@@ -275,64 +305,73 @@ export function MessageGraph({
                   "Select a test to explore its expected messages."}
               </p>
             </div>
-          ) : compact ? (
-            <ol className="message-list" aria-label="Messages in this flow">
-              {nodes.map((node) => {
-                const parent = nodes.find(
-                  (candidate) => candidate.id === node.parentId
-                )
-                return (
-                  <li key={node.id}>
-                    <p className="list-relationship">
-                      {node.context
-                        ? "Given · fixture state"
-                        : node.edgeRelationship === "context"
-                          ? "When · root command"
-                          : node.subject === true
-                            ? "Root command"
-                            : parent && node.edgeFidelity === "exact"
-                              ? `${view === "expected" ? "Expected after" : "Caused by"} ${parent.name}`
-                              : "Associated message · no resolved cause"}
-                    </p>
-                    <MessageCard
-                      node={node}
-                      view={view}
-                      selected={highlightedId === node.id}
-                      onSelect={select}
-                    />
-                  </li>
-                )
-              })}
-            </ol>
-          ) : (
-            <ReactFlow<MessageFlowNode, MessageFlowEdge>
-              className="message-flow"
-              colorMode={resolvedTheme}
-              nodes={flowNodes}
-              edges={flowEdges}
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              minZoom={0.2}
-              maxZoom={1.5}
-              fitView
-              fitViewOptions={{ padding: 0.04, maxZoom: 1 }}
-              onInit={setFlow}
-              nodesDraggable={false}
-              nodesConnectable={false}
-              nodesFocusable={false}
-              edgesFocusable={false}
-              elementsSelectable={false}
-              autoPanOnNodeFocus={false}
-              panOnDrag
-              zoomOnScroll
-              zoomOnPinch
-              zoomOnDoubleClick={false}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background color="var(--border)" gap={24} size={1} />
-              <GraphControls container={controlsRoot} />
-            </ReactFlow>
           )}
+          {(nodes.length > 0 || (layoutNodes?.length ?? 0) > 0) &&
+            (compact ? (
+              <ol className="message-list" aria-label="Messages in this flow">
+                {nodes.map((node) => {
+                  const parent = nodes.find(
+                    (candidate) => candidate.id === node.parentId
+                  )
+                  return (
+                    <li key={node.id}>
+                      <p className="list-relationship">
+                        {node.context
+                          ? "Given · fixture state"
+                          : node.edgeRelationship === "context"
+                            ? "When · root command"
+                            : node.subject === true
+                              ? "Root command"
+                              : parent &&
+                                  node.edgeRelationship === "stream-order"
+                                ? `Stream order after ${parent.name}`
+                                : parent && node.edgeFidelity === "exact"
+                                  ? `${view === "expected" ? "Expected after" : "Caused by"} ${parent.name}`
+                                  : "Associated message · no resolved cause"}
+                      </p>
+                      <MessageCard
+                        node={node}
+                        view={view}
+                        selected={highlightedId === node.id}
+                        onSelect={select}
+                      />
+                    </li>
+                  )
+                })}
+              </ol>
+            ) : (
+              <ReactFlow<MessageFlowNode, MessageFlowEdge>
+                className="message-flow"
+                colorMode={resolvedTheme}
+                nodes={flowNodes}
+                edges={flowEdges}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                minZoom={0.2}
+                maxZoom={1.5}
+                fitView
+                fitViewOptions={{
+                  padding: 0.04,
+                  maxZoom: 1,
+                  includeHiddenNodes: stableLayout,
+                }}
+                onInit={setFlow}
+                nodesDraggable={false}
+                nodesConnectable={false}
+                nodesFocusable={false}
+                edgesFocusable={false}
+                elementsSelectable={false}
+                autoPanOnNodeFocus={false}
+                panOnDrag
+                zoomOnScroll
+                zoomOnPinch
+                zoomOnDoubleClick={false}
+                proOptions={{ hideAttribution: true }}
+              >
+                <Background color="var(--border)" gap={24} size={1} />
+                <GraphControls container={controlsRoot} />
+              </ReactFlow>
+            ))}
         </div>
         <footer className="flow-legend">
           <span>
@@ -345,7 +384,9 @@ export function MessageGraph({
           </span>
           <span>
             <i />
-            Fixture / stream context
+            {view === "historical"
+              ? "Aggregate stream order"
+              : "Fixture / stream context"}
           </span>
           {uncertain && (
             <span className="uncertain-note">
@@ -366,6 +407,7 @@ export function MessageGraph({
         </footer>
       </section>
       <MessageInspector
+        onInspectCorrelation={onInspectCorrelation}
         hidden={!inspectorVisible}
         closable={canvas || compact}
         node={selected}
@@ -448,6 +490,7 @@ function MessageCard({
         ))}
       </span>
       <span
+        key={node.status ?? "no-outcome"}
         className="message-card-footer"
         data-status={view === "expected" || node.context ? "idle" : node.status}
       >

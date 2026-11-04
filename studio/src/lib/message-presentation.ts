@@ -39,6 +39,9 @@ export function messageFacts(node: MessageGraphNode): Array<[string, string]> {
 }
 
 export function messageState(node: MessageGraphNode, view: FlowView): string {
+  if (view === "historical" && node.kind !== "command") return "Persisted"
+  if (view === "historical" && node.evidence === "command" && !node.response)
+    return "Request recorded"
   if (node.context) return "Given state"
   if (view === "expected") {
     if (node.expectedOutcome)

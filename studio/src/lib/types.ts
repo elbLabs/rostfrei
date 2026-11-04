@@ -1,7 +1,81 @@
 export type MessageKind = "command" | "domain-event" | "integration-event"
+export interface HistoricalCapability {
+  application: string
+  scope: "test" | "production"
+  messagesHref: string
+  timelineHref?: string
+  aggregateTypes: string[]
+  snapshotAggregateTypes?: string[]
+  aggregateHref?: string
+  snapshotFixtureHref?: string
+}
+
+export interface HistoricalMessage {
+  id: string
+  kind: MessageKind
+  evidence:
+    "command" | "command-response" | "domain-event" | "integration-event"
+  messageId: string
+  correlationId?: string
+  causationId?: string
+  name: string
+  schemaVersion?: number
+  context: string
+  aggregateType?: string
+  aggregateId?: string
+  streamVersion?: string
+  storedAt: string
+  storedAtUnixNanos?: string
+  payload?: unknown
+  response?: {
+    status: "accepted" | "rejected" | "indeterminate"
+    [key: string]: unknown
+  }
+}
+
+export interface HistoricalPage {
+  application: string
+  scope: HistoricalCapability["scope"]
+  generation?: string
+  order?: "source" | "time"
+  items: HistoricalMessage[]
+  scannedMessages: number
+  skippedMessages: number
+  nextHref?: string
+  partial: boolean
+}
+
+export interface HistoricalSnapshot {
+  streamVersion: string
+  replayRevision: string
+  schemaVersion: number
+  stateBytes: number
+  valid: boolean
+  state?: unknown
+}
+
+export interface HistoricalAggregate {
+  application: string
+  scope: HistoricalCapability["scope"]
+  generation: string
+  aggregateType: string
+  aggregateId: string
+  version: string
+  snapshotVersion: string
+  snapshotStatus: string
+  eventsRead: number
+  eventsApplied: number
+  state?: unknown
+  snapshots: HistoricalSnapshot[]
+}
 export type StudioLayout = "canvas" | "workbench"
 export type FlowView =
-  "expected" | "running" | "observed" | "predicted" | "unavailable"
+  | "expected"
+  | "running"
+  | "observed"
+  | "predicted"
+  | "unavailable"
+  | "historical"
 
 export type MessageStatus =
   "idle" | "running" | "accepted" | "rejected" | "failed" | "indeterminate"
@@ -19,7 +93,7 @@ export interface MessageGraphNode {
   subject?: boolean
   kind: MessageKind
   name: string
-  schemaVersion: number
+  schemaVersion?: number
   payload?: unknown
   response?: unknown
   messageId?: string
@@ -27,7 +101,11 @@ export interface MessageGraphNode {
   boundedContext?: string
   aggregateType?: string
   aggregateId?: string
-  streamVersion?: number
+  streamVersion?: number | string
+  correlationId?: string
+  storedAt?: string
+  responseStoredAt?: string
+  evidence?: string
   status?: MessageStatus
   expectedOutcome?: ExpectedOutcome
 }
@@ -38,6 +116,7 @@ export interface AggregateReference {
 }
 
 export interface TracerCatalog {
+  historical?: HistoricalCapability[]
   catalogVersion: number
   contexts: CatalogContext[]
   testRepository?: { definitionsHref: string }

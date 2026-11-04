@@ -51,6 +51,15 @@ definition. See the [shared host API and measured reduction](../../docs/nats-app
 
 Use [Tracer Studio](../../studio/README.md) to inspect and run behavioral tests.
 
+Add `--snapshots` beside `--tracer` to provision separate Normal/Test snapshot KV
+buckets and version-2 checkpoints for populated fixtures, retaining original events.
+For bounded fetching, also select `--receipt-backed-history`: this creates a separate
+receipt-backed event namespace, including fixture/low-level writes. Existing demo
+histories remain in their original namespace; `--snapshots` alone uses full-history
+validation and skips only prefix decoding/application.
+In Studio, inspect Historical → Aggregates → `bike-rental/rental-fleet` / `city-fleet`
+to replay history, toggle snapshot-assisted reconstruction or download a fixture.
+
 ## Domain model
 
 | Concept | Example |

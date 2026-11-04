@@ -1,4 +1,5 @@
 use rostfrei::{Entity, EntityDefinition};
+use serde::{Deserialize, Serialize};
 
 use super::{BicycleCondition, BicycleId, BicycleStatus};
 use crate::domain::rental_fleet::RentalFleetAggregate;
@@ -7,7 +8,7 @@ use crate::domain::rental_fleet::RentalFleetAggregate;
     clippy::struct_field_names,
     reason = "bicycle_id is the canonical domain identity name"
 )]
-#[derive(Entity, Debug)]
+#[derive(Entity, Debug, Deserialize, Serialize)]
 #[domain(id = "bicycle", label = "Bicycle")]
 pub struct Bicycle {
     pub(super) bicycle_id: BicycleId,

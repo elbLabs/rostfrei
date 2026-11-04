@@ -5,6 +5,7 @@
 //! independent host. The reset gate coordinates this runtime's submissions only.
 
 mod backend;
+mod historical;
 mod observation;
 pub use backend::NatsExecutionProfile;
 use backend::{Backend, CurrentBackend};
@@ -94,6 +95,12 @@ pub struct NatsRuntimeConfig {
 }
 
 impl NatsRuntimeConfig {
+    /// Select a fresh receipt-backed event namespace for bounded snapshot replay.
+    pub fn with_receipt_backed_history(mut self) -> Result<Self, NatsHostError> {
+        self.event_store = self.event_store.with_receipt_backed_history()?;
+        Ok(self)
+    }
+
     /// Explicitly select a new writable split authority. This never migrates an
     /// existing history or excludes old writers on the operator's behalf.
     pub fn with_fresh_completed_outcome_epoch(
@@ -360,13 +367,20 @@ impl NatsRuntime {
         self.backend.snapshot().store.clone()
     }
     /// Compose a Tracer whose history and directory follow this runtime's current
-    /// Test backend across resets, while diagnostics remain history-only.
+    /// Test backend across resets. Each diagnostic pins one history incarnation,
+    /// including its checkpoint authority and snapshot-aware replay implementation.
     pub fn tracer_builder(&self) -> crate::TracerBuilder {
         let current = Arc::new(self.backend.clone());
+        let backend = self.backend.clone();
         self.bindings
             .tracer_builder(current.clone())
             .with_test_event_store(current.clone())
             .with_stream_directory(current)
+            .with_history_provider(move || Arc::new(backend.snapshot().store.clone()))
+            .with_historical_reader(self.historical_reader())
+    }
+    pub fn historical_reader(&self) -> Arc<dyn crate::HistoricalReader> {
+        Arc::new(historical::NatsHistoricalReader::new(self))
     }
     pub fn transport(&self) -> Arc<dyn CommandTransport> {
         self.transport.clone()
@@ -775,6 +789,12 @@ pub struct NatsApplicationBuilder {
     tracer: Option<TracerConfig>,
 }
 impl NatsApplicationBuilder {
+    /// Select a fresh receipt-backed event namespace; existing histories stay separate.
+    pub fn with_receipt_backed_history(mut self) -> Result<Self, NatsHostError> {
+        self.config = self.config.with_receipt_backed_history()?;
+        Ok(self)
+    }
+
     pub fn with_fresh_completed_outcome_epoch(
         mut self,
         epoch: &str,
@@ -878,6 +898,7 @@ impl NatsApplicationBuilder {
                     }
                     builder = builder
                         .with_dispatch_transport(dispatch.transport())
+                        .with_historical_reader(dispatch.historical_reader())
                         .with_production_quarantine_reader(dispatch.quarantine_reader());
                 }
                 let tracer = builder.build()?;
