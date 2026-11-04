@@ -40,14 +40,7 @@ async fn seed(store: &NatsEventStore, id: &StreamId, count: u64) -> TestResult {
 #[tokio::test]
 async fn selected_version_restores_only_the_tail_and_commands_preserve_history() -> TestResult {
     let fixture = Fixture::new("snapshots").await?;
-    let store = Arc::new(
-        fixture
-            .split_event_store()
-            .await?
-            .as_ref()
-            .clone()
-            .with_snapshotting(true),
-    );
+    let store = snapshot_store(&fixture, true).await?;
     let id = stream("large")?;
     seed(&store, &id, 200).await?;
     let config = NatsReadModelConfig::new(&fixture.context, "aggregate-snapshots")?
@@ -138,15 +131,39 @@ async fn setup(
     Arc<AggregateCodecs>,
     Arc<RebuildDiagnostics>,
 )> {
-    let fixture = Fixture::new(label).await?;
-    let store = Arc::new(
-        fixture
-            .split_event_store()
+    setup_profile(label, policy, true).await
+}
+
+async fn snapshot_store(
+    fixture: &Fixture,
+    receipt_backed: bool,
+) -> TestResult<Arc<NatsEventStore>> {
+    let mut config = NatsEventStoreConfig::for_bounded_context(&fixture.context)?
+        .with_fresh_split_outcome_epoch("private-split-contract-fixture")?
+        .with_storage_limits(32 * 1024 * 1024, 524_288)?;
+    if receipt_backed {
+        config = config.with_receipt_backed_history()?;
+    }
+    provision_event_store(&fixture.js, &config).await?;
+    Ok(Arc::new(
+        NatsEventStore::connect(fixture.js.clone(), config)
             .await?
-            .as_ref()
-            .clone()
             .with_snapshotting(true),
-    );
+    ))
+}
+
+async fn setup_profile(
+    label: &str,
+    policy: SnapshotPolicy,
+    receipt_backed: bool,
+) -> TestResult<(
+    Fixture,
+    Arc<NatsEventStore>,
+    Arc<AggregateCodecs>,
+    Arc<RebuildDiagnostics>,
+)> {
+    let fixture = Fixture::new(label).await?;
+    let store = snapshot_store(&fixture, receipt_backed).await?;
     let config = NatsReadModelConfig::new(&fixture.context, "snapshots")?;
     provision_read_model(&fixture.js, &config).await?;
     let snapshots = Arc::new(NatsSnapshotStore::connect(fixture.js.clone(), config).await?);
@@ -156,6 +173,64 @@ async fn setup(
         .with_rebuild_diagnostics(reports.clone());
     codecs.register_json_snapshot::<Target>("v1", 1, policy)?;
     Ok((fixture, store, Arc::new(codecs), reports))
+}
+
+#[tokio::test]
+async fn unqualified_history_replays_full_prefix_for_real_commands() -> TestResult {
+    let (fixture, store, codecs, reports) =
+        setup_profile("snapshot-unqualified", SnapshotPolicy::Manual, false).await?;
+    let id = stream("one")?;
+    seed(&store, &id, 8).await?;
+    CommandExecutor::with_codecs(store.clone(), codecs.clone())
+        .create_snapshot::<Target>(&id, StreamVersion::new(6))
+        .await?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut processor = CommandProcessor::new(fixture.context.name().clone(), store.clone())
+        .with_event_codecs(codecs);
+    processor.register::<Act, _>(Handler(calls.clone()), map_rejection)?;
+    let _worker = fixture.command_worker(Arc::new(processor)).await?;
+    let bus = CommandBus::new(fixture.context.clone(), fixture.adapter.clone());
+    let command = request("unqualified-command", "one", "add")?;
+    assert_eq!(
+        bus.dispatch(command.clone()).await?.response().outcome(),
+        &CommandResponseOutcome::Accepted
+    );
+    assert_eq!(
+        bus.dispatch(command).await?.response().outcome(),
+        &CommandResponseOutcome::Accepted
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(store.load(&id).await?.len(), 9);
+    let report = reports
+        .recent()
+        .into_iter()
+        .find(|report| report.operation_id.as_deref() == Some("unqualified-command"))
+        .ok_or("command rebuild report")?;
+    assert_eq!(report.snapshot_version, 6);
+    assert_eq!(report.events_applied, 2);
+    assert_eq!(
+        report.events_read, 8,
+        "unqualified histories must validate the whole prefix, even for a normal command"
+    );
+    // The preceding command has now made this a mixed direct/transaction history.
+    bus.dispatch(request("mixed-command", "one", "add")?)
+        .await?;
+    let mixed = reports
+        .recent()
+        .into_iter()
+        .find(|report| report.operation_id.as_deref() == Some("mixed-command"))
+        .ok_or("mixed history report")?;
+    assert_eq!(
+        (
+            mixed.snapshot_version,
+            mixed.events_read,
+            mixed.events_applied
+        ),
+        (6, 9, 3)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(store.load(&id).await?.len(), 10);
+    Ok(())
 }
 
 #[tokio::test]
@@ -648,7 +723,7 @@ async fn seed_many(store: &NatsEventStore, id: &StreamId, count: u64, boundary: 
     let mut version = 0_u64;
     while version < count {
         let end = version
-            .saturating_add(u64::try_from(MAX_EVENTS_PER_BATCH)?)
+            .saturating_add(u64::try_from(MAX_TRANSACTION_ITEMS.saturating_sub(1))?)
             .min(count)
             .min(if version < boundary { boundary } else { count });
         let operation = OperationId::new(format!("bulk-{version}"))?;
@@ -757,7 +832,7 @@ async fn whole_command_and_exact_replay_transfer_a_bounded_tail() -> TestResult 
 #[tokio::test]
 async fn skipped_direct_operation_identities_still_fence_command_writes() -> TestResult {
     let (_fixture, store, codecs, _) =
-        setup("snapshot-old-identity", SnapshotPolicy::Manual).await?;
+        setup_profile("snapshot-old-identity", SnapshotPolicy::Manual, false).await?;
     let id = stream("one")?;
     seed(&store, &id, 8).await?;
     let executor = CommandExecutor::with_codecs(store.clone(), codecs);
@@ -814,14 +889,7 @@ async fn storage_recreation_fences_old_checkpoints_and_old_handles() -> TestResu
         .js
         .delete_stream(store.config().outcome_state_stream_name())
         .await?;
-    let recreated = Arc::new(
-        fixture
-            .split_event_store()
-            .await?
-            .as_ref()
-            .clone()
-            .with_snapshotting(true),
-    );
+    let recreated = snapshot_store(&fixture, true).await?;
     seed(&recreated, &id, 3).await?;
     assert!(executor.rehydrate::<Target>(&id).await.is_err());
     assert!(

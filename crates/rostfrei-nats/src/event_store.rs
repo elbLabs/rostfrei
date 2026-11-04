@@ -233,7 +233,8 @@ struct ReadBarrierHook {
 }
 
 impl NatsEventStore {
-    /// Opt in to checked-prefix replay and bounded operation evidence. Strict audits remain full.
+    /// Opt in to checked-prefix replay for a receipt-backed history profile.
+    /// Unqualified histories and strict audits retain full-history validation.
     #[must_use]
     pub const fn with_snapshotting(mut self, enabled: bool) -> Self {
         self.snapshotting = enabled;
@@ -345,6 +346,9 @@ impl NatsEventStore {
 
     async fn require_mutable_namespace(&self) -> Result<(), EventStoreError> {
         self.require_writable_handle()?;
+        if self.config.receipt_backed_history() {
+            return self.verify_authority().await.map(|_| ());
+        }
         // Configured authority cannot be downgraded by clearing broker metadata.
         // Split writers must verify their captured pair even on compatibility routes.
         if self.config.split_outcomes() || self.config.completed_outcome_epoch().is_some() {
@@ -1296,6 +1300,7 @@ impl NatsEventStore {
             }
             let base_version = StreamVersion::new(participant.base_stream_version);
             let history = if self.snapshotting
+                && self.config.receipt_backed_history()
                 && !self.history_auditing
                 && raw_histories.maximum_stream_sequence.is_none()
             {
@@ -1954,20 +1959,9 @@ impl NatsEventStore {
 
         let mut staged = Vec::with_capacity(transaction.participants().len());
         for participant in transaction.participants() {
-            let mut history = self
+            let history = self
                 .load_session_history(participant.stream_id(), &mut histories)
                 .await?;
-            if participant.batch().is_some_and(|batch| {
-                history
-                    .prefix
-                    .as_ref()
-                    .is_some_and(|prefix| prefix.contains(batch.operation_id()))
-            }) {
-                history = self.load_history(participant.stream_id()).await?;
-                histories
-                    .by_stream
-                    .insert(participant.stream_id().clone(), Arc::clone(&history));
-            }
             if Self::transaction_participant_has_conflicting_identity(&history, participant)? {
                 let receipt = self
                     .load_transaction_receipt_inner(transaction.operation_id())
@@ -2311,11 +2305,12 @@ pub async fn update_event_store(
         "rostfrei.completed-outcomes.version",
         outcomes::JOURNAL_BINDING,
         outcomes::STATE_BINDING,
+        crate::event_store_config::RECEIPT_HISTORY_POLICY,
     ] {
         if actual.metadata.get(key) != expected.metadata.get(key) {
             return Err(EventStoreError::new(
                 EventStoreErrorKind::ConfigurationMismatch,
-                "policy update cannot activate/change a completed outcome authority; use a fresh fenced namespace",
+                "policy update cannot change outcome/history authority; use a fresh fenced namespace",
             ));
         }
     }

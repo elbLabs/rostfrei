@@ -379,6 +379,19 @@ async fn measure_command(
     })
 }
 
+fn event_store_config(
+    context: &rostfrei_messaging_core::BoundedContext,
+    options: &Options,
+) -> BenchResult<NatsEventStoreConfig> {
+    let mut config = NatsEventStoreConfig::for_bounded_context(context)?
+        .with_fresh_split_outcome_epoch("isolated-aggregate-benchmark")?
+        .with_storage_limits(options.stream_bytes, 512 * 1024)?;
+    if options.receipt_backed_history {
+        config = config.with_receipt_backed_history()?;
+    }
+    Ok(config)
+}
+
 pub async fn run(options: Options) -> BenchResult {
     if cfg!(debug_assertions) {
         return Err("build rostfrei-benchmarks with --release".into());
@@ -397,9 +410,7 @@ pub async fn run(options: Options) -> BenchResult {
     let unique = started.as_nanos();
     let application = ApplicationName::new(format!("bench-{}-{unique}", std::process::id()))?;
     let context = application.test_bounded_context(model::CONTEXT)?;
-    let config = NatsEventStoreConfig::for_bounded_context(&context)?
-        .with_fresh_split_outcome_epoch("isolated-aggregate-benchmark")?
-        .with_storage_limits(options.stream_bytes, 512 * 1024)?;
+    let config = event_store_config(&context, &options)?;
     let snapshot_config = NatsReadModelConfig::new(&context, "aggregate-snapshots")?
         .with_storage_limits(64 * 1024 * 1024, 1024 * 1024)?;
     let measured: BenchResult<Vec<CaseReport>> = async {

@@ -1,6 +1,8 @@
 //! Process-isolated large-history measurements; see `scripts/benchmark_snapshots.py`.
 //! Only fixture import bypasses admission. All timed reads, captures and commands
 //! use production APIs and validate the complete inventory result.
+//! Raw imported histories are unqualified: snapshots skip prefix application,
+//! while reads retain full-history fetching and validation.
 #![allow(
     clippy::too_many_lines,
     reason = "standalone benchmark operation dispatch"
