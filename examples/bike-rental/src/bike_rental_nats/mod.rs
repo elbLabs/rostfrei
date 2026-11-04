@@ -23,9 +23,6 @@ use rostfrei_tracer::{
 use serde::{Deserialize, Serialize};
 use std::{env, sync::Arc, time::Duration};
 
-#[cfg(test)]
-mod tests;
-
 pub const BOUNDED_CONTEXT_NAME: &str = "bike-rental";
 pub const APPLICATION_NAME: &str = "bike-rental";
 pub const BICYCLE_RENTAL_STARTED_EVENT_NAME: &str = "bicycle-rental-started";
@@ -490,35 +487,4 @@ impl TestScenarioReset for BikeRentalNatsRuntime {
     async fn reset(&self, fixture: &Fixture) -> Result<(), TestScenarioResetError> {
         self.inner.reset(fixture).await
     }
-}
-
-#[cfg(test)]
-fn integration_event_observation(
-    subject: &str,
-    message_id: Option<&rostfrei::MessageId>,
-    correlation_id: &rostfrei::CorrelationId,
-    payload: &[u8],
-) -> Result<rostfrei_tracer::IntegrationEventObservation, String> {
-    let address = subject
-        .parse::<IntegrationEventAddress>()
-        .map_err(|e| e.to_string())?;
-    let message_id = message_id.cloned().ok_or("missing identity")?;
-    let message = EncodedIntegrationMessage::from_delivery(
-        address,
-        message_id,
-        payload.to_vec(),
-        Some(correlation_id.clone()),
-    )
-    .map_err(|e| e.to_string())?;
-    let envelope = message
-        .decode::<BicycleRentalStarted>()
-        .map_err(|e| e.to_string())?;
-    Ok(rostfrei_tracer::IntegrationEventObservation::new(
-        envelope.message_id().as_str(),
-        BicycleRentalStarted::EVENT_NAME,
-        envelope.schema_version().get(),
-        subject,
-    )
-    .with_causation_id(envelope.causation_id().ok_or("missing causation")?.as_str())
-    .with_payload(serde_json::to_value(envelope.payload()).map_err(|e| e.to_string())?))
 }

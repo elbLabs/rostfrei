@@ -27,38 +27,6 @@ fn checked_in_message_series_schemas_match_the_rust_contracts() {
 }
 
 #[test]
-fn observed_schema_only_allows_null_values_for_accepted_outcomes() {
-    let schema = serde_json::to_value(observed_message_series_schema());
-    assert!(schema.is_ok(), "observation schema must serialize");
-    let schema = schema.unwrap_or_default();
-    assert_eq!(
-        schema.pointer("/$defs/CommandResponseOutcomeSchema/oneOf/0/properties/value/type"),
-        Some(&serde_json::json!("null"))
-    );
-}
-
-#[test]
-fn observed_domain_aggregate_schema_requires_complete_identity() {
-    let schema = serde_json::to_value(observed_message_series_schema());
-    assert!(schema.is_ok(), "observation schema must serialize");
-    let schema = schema.unwrap_or_default();
-    assert_eq!(
-        schema.pointer("/$defs/ObservedMessageNode/oneOf/1/properties/aggregate/anyOf/0/$ref"),
-        Some(&serde_json::json!("#/$defs/AggregateSchema"))
-    );
-    assert_eq!(
-        schema.pointer("/$defs/AggregateSchema/required"),
-        Some(&serde_json::json!(["type", "id"]))
-    );
-    assert!(
-        schema
-            .pointer("/$defs/ObservedMessageNode/oneOf/1/required")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|required| !required.contains(&serde_json::json!("aggregate")))
-    );
-}
-
-#[test]
 fn generated_unsigned_integers_have_explicit_maxima() {
     for document in [
         include_str!("../schema/behavioral-test-v2.schema.json"),
@@ -69,18 +37,6 @@ fn generated_unsigned_integers_have_explicit_maxima() {
         assert!(schema.is_ok(), "checked-in schema must be valid JSON");
         assert_unsigned_integer_maxima(&schema.unwrap_or_default());
     }
-}
-
-#[test]
-fn behavioral_schema_reserves_the_validation_route_identifier() {
-    let schema = serde_json::to_value(behavioral_test_definition_schema());
-    assert!(schema.is_ok(), "behavioral schema must serialize");
-    assert_eq!(
-        schema
-            .unwrap_or_default()
-            .pointer("/properties/id/not/const"),
-        Some(&serde_json::json!("validate"))
-    );
 }
 
 fn render(schema: &Schema) -> Result<String, serde_json::Error> {

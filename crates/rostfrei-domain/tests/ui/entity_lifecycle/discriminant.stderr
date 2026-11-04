@@ -1,5 +1,0 @@
-error: EntityLifecycle state variants cannot have explicit discriminants
- --> tests/ui/entity_lifecycle/discriminant.rs:8:13
-  |
-8 |     Draft = 1,
-  |             ^

@@ -1,5 +1,19 @@
 //! NATS adapters for rostfrei event sourcing and messaging.
 
+#[cfg(test)]
+extern crate self as rostfrei_nats;
+
+#[cfg(test)]
+rostfrei::install_macro_support!();
+
+#[cfg(test)]
+#[path = "../tests/event_store/mod.rs"]
+mod event_store_integration;
+
+#[cfg(test)]
+#[path = "../tests/response_publication/compat.rs"]
+mod response_publication_compat;
+
 mod command_response;
 mod connection;
 mod consumer;

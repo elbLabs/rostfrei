@@ -11,6 +11,7 @@
 - [Release changes](../CHANGELOG.md)
 - [Migrating to 0.1](migration-0.1.md)
 - [Development and releases](development.md)
+- [Framework testing policy](testing/strategy.md)
 
 ## Runtime and operations
 

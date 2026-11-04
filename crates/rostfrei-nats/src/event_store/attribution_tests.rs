@@ -206,3 +206,60 @@ fn event_discriminators_reject_actor_in_legacy_and_absence_in_new_even_with_new_
         assert!(serde_json::from_value::<StoredEventWire>(null).is_err());
     }
 }
+
+#[test]
+fn receipt_attribution_rejects_rechecksummed_downgrades_and_duplicate_claims() {
+    let (config, _, _) = fixture();
+    let mut headers = headers(&config, 0);
+    headers.insert(NATS_BATCH_COMMIT, NATS_BATCH_COMMIT_FINAL);
+    let template = TransactionReceiptContentWire {
+        event_store_stream: config.stream_name().to_owned(),
+        application: config.application().as_str().to_owned(),
+        bounded_context: config.bounded_context().as_str().to_owned(),
+        operation_id: "receipt-attribution".to_owned(),
+        operation_fingerprint: ContentFingerprint::digest("receipt-attribution").to_hex(),
+        correlation_id: None,
+        causation_id: None,
+        security_scope: None,
+        actor: Some(actor("alice")),
+        completion: None,
+        manifest: None,
+        participants: vec![],
+    };
+    let valid = encode_transaction_receipt(&template).unwrap();
+    decode_transaction_receipt(&config, 1, &headers, &valid).unwrap();
+    for (schema_version, present, accepted) in [
+        (2, false, true),
+        (5, true, true),
+        (2, true, false),
+        (5, false, false),
+    ] {
+        let mut receipt = template.clone();
+        receipt.actor = present.then(|| actor("alice"));
+        let wire = StoredTransactionReceiptWire {
+            checksum: transaction_receipt_checksum(schema_version, &receipt).unwrap(),
+            schema_version,
+            receipt,
+        };
+        let result =
+            decode_transaction_receipt(&config, 1, &headers, &serde_json::to_vec(&wire).unwrap());
+        assert_eq!(
+            result.is_ok(),
+            accepted,
+            "schema={schema_version}, actor={present}"
+        );
+    }
+    let valid = String::from_utf8(valid).unwrap();
+    let duplicate = valid.replace(
+        r#""actor":{"namespace":"people","id":"alice"}"#,
+        r#""actor":null,"actor":{"namespace":"people","id":"alice"}"#,
+    );
+    assert_ne!(duplicate, valid);
+    assert_eq!(
+        decode_transaction_receipt(&config, 1, &headers, duplicate.as_bytes())
+            .err()
+            .unwrap()
+            .kind(),
+        EventStoreErrorKind::CorruptHistory,
+    );
+}

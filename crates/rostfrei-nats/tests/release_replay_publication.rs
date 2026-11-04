@@ -370,6 +370,10 @@ async fn opt_in_replay_admits_live_winner_after_response_ttl_inside_command_dedu
         assert!(!original.publication_duplicate());
         assert_eq!(rejected(original.response().outcome()), action == "add");
         replay.wait_acknowledged().await?;
+        // Delivery may retry before the original work is acknowledged. The TTL
+        // replay must add no delivery once that work has settled.
+        let settled_deliveries = replay.resolver.0.load(Ordering::SeqCst);
+        assert!(settled_deliveries > 0);
         assert_eq!(&replay.raw_response().await?, original.response());
 
         let before = replay
@@ -429,7 +433,7 @@ async fn opt_in_replay_admits_live_winner_after_response_ttl_inside_command_dedu
         assert_eq!(replay.commands().await?.info().await?.state.messages, 0);
         assert_eq!(responses.info().await?.state.messages, 0);
         assert_eq!(replay.calls.load(Ordering::SeqCst), 1);
-        assert_eq!(replay.resolver.0.load(Ordering::SeqCst), 1);
+        assert_eq!(replay.resolver.0.load(Ordering::SeqCst), settled_deliveries);
         assert_eq!(replay.store.load(&stream("target")?).await?, history);
         assert_eq!(
             replay

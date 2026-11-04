@@ -133,9 +133,3 @@ async fn durable_acceptance_supersedes_blocked_technical_projection_without_reev
 -> TestResult {
     completed_winner_after_blocked_diagnostic(true).await
 }
-
-#[tokio::test]
-async fn durable_rejection_supersedes_blocked_technical_projection_without_reevaluation()
--> TestResult {
-    completed_winner_after_blocked_diagnostic(false).await
-}

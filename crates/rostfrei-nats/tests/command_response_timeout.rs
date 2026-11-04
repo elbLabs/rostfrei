@@ -10,7 +10,7 @@ use rostfrei::{
 };
 use tokio::{
     sync::Notify,
-    time::{Instant, sleep, timeout},
+    time::{sleep, timeout},
 };
 rostfrei::install_macro_support!();
 
@@ -58,40 +58,53 @@ async fn acknowledged(f: &Fixture) -> TestResult {
     .await?
 }
 
+struct RefuseContext;
+
 #[tokio::test]
-async fn default_wait_is_thirty_seconds_without_a_command_worker() -> TestResult {
-    let f = Fixture::new("default-response-timeout").await?;
-    // Deliberately use the public constructor without a timeout override.
-    let bus = CommandBus::new(f.context.clone(), Arc::new(adapter(&f)));
-    let command = bus.encode(request("no-worker", "target", "create")?)?;
-    let start = Instant::now();
-    let result = timeout(
-        Duration::from_secs(45),
-        bus.dispatch_encoded(command.clone()),
-    )
-    .await?;
-    let Err(error) = result else {
-        return Err("missing worker unexpectedly completed the command".into());
-    };
-    assert_eq!(error.kind(), CommandBusErrorKind::Timeout);
-    assert!(error.execution_failure().is_none());
-    assert!(start.elapsed() >= Duration::from_secs(30));
+async fn rejection_survives_response_ttl_and_command_dedup_expiry() -> TestResult {
+    let f = Fixture::new("expired-response-replay").await?;
+    let store = f.split_event_store().await?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let initial = processor(&f.context, store.clone(), calls.clone(), None)?;
+    let mut responses =
+        f.js.get_stream(f.messaging.topology().command_response_stream().as_str())
+            .await?;
+    let mut config = responses.info().await?.config.clone();
+    config.max_age = Duration::from_millis(150);
+    config.duplicate_window = Duration::from_millis(100);
+    f.js.update_stream(config).await?;
     let commands =
         f.js.get_stream(f.messaging.topology().command_stream().as_str())
             .await?;
-    assert_eq!(commands.cached_info().state.messages, 1);
-    let stored = commands.get_raw_message(1).await?;
-    assert_eq!(stored.payload.as_ref(), command.payload());
-    assert_eq!(
-        f.messages(f.messaging.topology().command_response_stream().as_str())
-            .await?,
-        0
-    );
-    assert!(f.quarantine().await?.is_empty());
+    let mut config = commands.cached_info().config.clone();
+    config.duplicate_window = Duration::from_millis(100);
+    f.js.update_stream(config).await?;
+    let first_worker = f.command_worker(initial.clone()).await?;
+    let remote = CommandBus::new(f.context.clone(), f.adapter.clone());
+    let command = remote.encode(request("permanent-rejection", "target", "add")?)?;
+    let original = remote.dispatch_encoded(command.clone()).await?;
+    assert!(rejected(original.response().outcome()));
+    timeout(WAIT, async {
+        while responses.info().await?.state.messages != 0 {
+            sleep(Duration::from_millis(20)).await;
+        }
+        TestResult::Ok(())
+    })
+    .await??;
+    drop(first_worker);
+    local_bus(&f.context, initial)
+        .dispatch(request("repair", "target", "create")?)
+        .await?;
+    let recreated = processor(&f.context, store.clone(), calls.clone(), None)?;
+    let _worker = f.command_worker(recreated).await?;
+    let replay = remote.dispatch_encoded(command).await?;
+    assert!(!replay.publication_duplicate());
+    assert_eq!(replay.response(), original.response());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(store.load(&stream("target")?).await?.len(), 1);
     Ok(())
 }
 
-struct RefuseContext;
 #[async_trait]
 impl TrustedCommandContextResolver for RefuseContext {
     async fn resolve(
