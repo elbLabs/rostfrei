@@ -34,13 +34,20 @@ events remain authoritative and retained. Configure `AggregateCodecs` with a
 `SnapshotStore` and `register_json_snapshot::<A>(replay_revision, schema, policy)`,
 then share that registry with the executor/processor. For NATS, provision a scoped
 KV bucket, connect `NatsSnapshotStore`, and enable `store.with_snapshotting(true)`.
+For bounded fetching, explicitly provision `config.with_receipt_backed_history()?`
+from creation. It selects a disjoint namespace and routes low-level appends through
+atomic event transactions with permanent receipts. Policy updates cannot adopt an
+existing namespace. As with outcome epochs, exclude unsupported/raw writers through
+broker permissions. Each tail transaction is checked against its receipt's exact
+events, guards, atomic batch and native positions. Older/mixed histories still fetch
+and validate the full history; snapshots only skip decoding/applying their prefix.
 Change the replay revision when initialization, event decoding or application changes.
 
 `CommandExecutor::create_snapshot` captures an exact version; `rehydrate_at` restores
 a selected version and `verify_snapshot` compares against original-event replay.
-Compatible snapshots skip the prefix; invalid/incompatible caches fall back to
-original history. `RebuildDiagnostics` reports replay work, and applications drain
-policy requests with `run_snapshot_jobs`. Fixture-v1 `snapshots` entries retain all
+Invalid/incompatible caches fall back to original history; authoritative history or
+receipt corruption fails the read. `RebuildDiagnostics` reports replay work, and
+applications drain policy requests with `run_snapshot_jobs`. Fixture-v1 `snapshots` entries retain all
 backing events: omit `state` to capture during installation, or supply verified state
 that is rebound to the destination history authority.
 

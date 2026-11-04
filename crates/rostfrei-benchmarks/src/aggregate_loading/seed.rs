@@ -1,7 +1,7 @@
 use rostfrei_core::{
     AppendOutcome, CommandExecutor, CommandOutcome, CommandReceipt, ContentFingerprint, Event,
-    EventBatch, EventStore, ExpectedVersion, MAX_BATCH_PAYLOAD_LEN, MAX_EVENTS_PER_BATCH, NewEvent,
-    OperationId, StreamVersion, derive_commit_id, derive_event_id,
+    EventBatch, EventStore, ExpectedVersion, MAX_BATCH_PAYLOAD_LEN, MAX_EVENTS_PER_BATCH,
+    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, StreamVersion, derive_commit_id, derive_event_id,
 };
 
 use super::{BenchResult, config::HistoryKind, model};
@@ -129,7 +129,9 @@ async fn direct<S: EventStore>(store: &S, id: &str, count: u32, note_bytes: u32)
         let commit = derive_commit_id(&stream, &operation);
         let mut events = Vec::new();
         let mut bytes = 0_usize;
-        while position < count && events.len() < MAX_EVENTS_PER_BATCH {
+        while position < count
+            && events.len() < MAX_EVENTS_PER_BATCH.min(MAX_TRANSACTION_ITEMS.saturating_sub(1))
+        {
             let event = model::StockReceived::at(u64::from(position), note_bytes)?;
             let payload = event.encode_json()?;
             let next_bytes = bytes

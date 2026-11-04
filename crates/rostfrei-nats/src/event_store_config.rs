@@ -15,6 +15,13 @@ pub const DEFAULT_EVENT_STORE_MAX_STREAM_BYTES: i64 = 10 * 1024 * 1024 * 1024;
 pub const DEFAULT_EVENT_STORE_MAX_EVENT_BYTES: usize = 512 * 1024;
 pub const DEFAULT_EVENT_STORE_REPLICAS: usize = 1;
 pub const DEFAULT_EVENT_STORE_PUBACK_TIMEOUT: Duration = Duration::from_secs(5);
+pub const RECEIPT_HISTORY_POLICY: &str = "rostfrei.history.receipts";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HistoryProfile {
+    Unqualified,
+    ReceiptBacked,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct EventByteLimit {
@@ -58,6 +65,7 @@ impl EventByteLimit {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NatsEventStoreConfig {
+    history_profile: HistoryProfile,
     completed_outcome_epoch: Option<String>,
     split_outcomes: bool,
     explicit_detail_expiry: bool,
@@ -91,6 +99,7 @@ impl NatsEventStoreConfig {
             context.name().as_str()
         );
         let config = Self {
+            history_profile: HistoryProfile::Unqualified,
             completed_outcome_epoch: None,
             split_outcomes: false,
             explicit_detail_expiry: false,
@@ -151,6 +160,30 @@ impl NatsEventStoreConfig {
 
     pub fn stream_name(&self) -> &str {
         &self.stream_name
+    }
+
+    /// Select a fresh, disjoint namespace whose event writes all publish operation
+    /// receipts. Low-level appends use `EventTransaction` without invoking handlers.
+    /// Provision this profile from creation; existing/mixed histories are not upgraded.
+    pub fn with_receipt_backed_history(mut self) -> Result<Self, EventStoreError> {
+        if self.receipt_backed_history() {
+            return Err(invalid("receipt-backed history already selected"));
+        }
+        self.history_profile = HistoryProfile::ReceiptBacked;
+        self.stream_name.push_str("__RECEIPTS_V1");
+        self.subject_prefix.push_str(".receipts.v1");
+        if self.split_outcomes {
+            self.outcome_state_stream_name = format!("{}_STATE", self.stream_name);
+            if !valid_stream_name(&self.outcome_state_stream_name) {
+                return Err(invalid("state stream name is too long"));
+            }
+        }
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub const fn receipt_backed_history(&self) -> bool {
+        matches!(self.history_profile, HistoryProfile::ReceiptBacked)
     }
 
     /// Operator assertion: this is a NEW isolated authority namespace, with old writers
@@ -338,7 +371,7 @@ impl NatsEventStoreConfig {
     }
 
     pub fn stream_config(&self) -> Config {
-        Config {
+        let mut config = Config {
             name: self.stream_name.clone(),
             subjects: vec![
                 self.aggregate_subject_filter(),
@@ -377,7 +410,13 @@ impl NatsEventStoreConfig {
                 })
                 .unwrap_or_default(),
             ..Default::default()
+        };
+        if self.receipt_backed_history() {
+            config
+                .metadata
+                .insert(RECEIPT_HISTORY_POLICY.to_owned(), "1".to_owned());
         }
+        config
     }
 
     fn validate(&self) -> Result<(), EventStoreError> {
