@@ -7,15 +7,12 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use rostfrei::core::{
-    AggregateId, AggregateType, CodecRegistrationError, EventStore, JsonEventCodec,
-    derive_commit_id, derive_event_id,
-};
+use rostfrei::core::{AggregateId, AggregateType, EventStore, derive_commit_id, derive_event_id};
 use rostfrei::{
     Aggregate, AggregateCodecs, BoundedContextName, CommandDecision, CommandExecution,
     CommandExecutionMetadata, CommandHandler, CommandHandlingResult, ContentFingerprint,
-    EventBatch, EventCodec, EventCodecError, EventCodecErrorKind, EventId, ExpectedVersion,
-    NewEvent, OperationId, RecordedEvent, StreamId,
+    EventBatch, EventCodecError, EventCodecErrorKind, EventId, ExpectedVersion, NewEvent,
+    OperationId, RecordedEvent, StreamId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -92,13 +89,19 @@ impl Aggregate for Inventory {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, rostfrei::DomainEvent)]
+#[domain(
+    id = "bicycle-registered",
+    label = "Bicycle registered",
+    schema_version = 1
+)]
 struct BicycleRegisteredV1 {
     bicycle_id: String,
     needs_repair: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, rostfrei::DomainEvent)]
+#[domain(id = "bicycle-retired", label = "Bicycle retired", schema_version = 1)]
 struct BicycleRetiredV1 {
     bicycle_id: String,
 }
@@ -106,57 +109,96 @@ struct BicycleRetiredV1 {
 /// Writes the generated current format and reads every supported historical one.
 pub struct InventoryCodec;
 
-impl EventCodec<Inventory> for InventoryCodec {
-    fn encode(&self, event: &InventoryEvent, id: EventId) -> Result<NewEvent, EventCodecError> {
-        <JsonEventCodec as EventCodec<Inventory>>::encode(&JsonEventCodec, event, id)
+#[rostfrei::event_codec(aggregate = Inventory)]
+impl InventoryCodec {
+    #[upcast]
+    fn registered_v1(old: BicycleRegisteredV1) -> BicycleRegistered {
+        BicycleRegistered {
+            bicycle_id: old.bicycle_id,
+            condition: if old.needs_repair {
+                Condition::MaintenanceRequired
+            } else {
+                Condition::Serviceable
+            },
+        }
     }
 
-    fn decode(&self, event: &RecordedEvent) -> Result<InventoryEvent, EventCodecError> {
-        match (event.event_type(), event.schema_version()) {
-            ("bicycle-registered", 1) => {
-                let v1: BicycleRegisteredV1 = historical(event)?;
-                Ok(InventoryEvent::BicycleRegistered(BicycleRegistered {
-                    bicycle_id: v1.bicycle_id,
-                    condition: if v1.needs_repair {
-                        Condition::MaintenanceRequired
-                    } else {
-                        Condition::Serviceable
-                    },
-                }))
-            }
-            ("bicycle-retired", 1) => {
-                let v1: BicycleRetiredV1 = historical(event)?;
-                Ok(InventoryEvent::BicycleRetired(BicycleRetired {
-                    bicycle_id: v1.bicycle_id,
-                    reason: RetirementReason::Unrecorded,
-                }))
-            }
-            // Current schemas and unsupported versions: generated strict decoder.
-            _ => <JsonEventCodec as EventCodec<Inventory>>::decode(&JsonEventCodec, event),
+    #[upcast]
+    fn retired_v1(old: BicycleRetiredV1) -> BicycleRetired {
+        BicycleRetired {
+            bicycle_id: old.bicycle_id,
+            reason: RetirementReason::Unrecorded,
         }
     }
 }
 
-fn historical<T: serde::de::DeserializeOwned>(event: &RecordedEvent) -> Result<T, EventCodecError> {
-    serde_json::from_slice(event.payload()).map_err(|error| {
-        EventCodecError::new(EventCodecErrorKind::MalformedPayload, error.to_string())
-    })
+/// The one registry shared by execution, fixtures, dispatch and read models.
+pub fn codecs() -> ExampleResult<AggregateCodecs> {
+    let mut codecs = AggregateCodecs::default();
+    codecs.register::<Inventory, _>(InventoryCodec::builder().build()?)?;
+    Ok(codecs)
 }
 
-/// The one registry shared by execution, fixtures, dispatch and read models.
-pub fn codecs() -> Result<AggregateCodecs, CodecRegistrationError> {
+/// First rollout: dual readers, but the original v1 writer until all readers upgrade.
+pub fn compatibility_codecs() -> ExampleResult<AggregateCodecs> {
     let mut codecs = AggregateCodecs::default();
-    codecs.register::<Inventory, _>(InventoryCodec)?;
+    codecs.register::<Inventory, _>(InventoryCodec::builder().with_encoder(encode_v1).build()?)?;
     Ok(codecs)
+}
+
+/// Application-owned encoding: never silently discard information to fit v1.
+fn encode_v1(event: &InventoryEvent, id: EventId) -> Result<NewEvent, EventCodecError> {
+    match event {
+        InventoryEvent::BicycleRegistered(event) => old_json(
+            &BicycleRegisteredV1 {
+                bicycle_id: event.bicycle_id.clone(),
+                needs_repair: match event.condition {
+                    Condition::Serviceable => false,
+                    Condition::MaintenanceRequired => true,
+                },
+            },
+            id,
+        ),
+        InventoryEvent::BicycleRetired(event) if event.reason == RetirementReason::Unrecorded => {
+            old_json(
+                &BicycleRetiredV1 {
+                    bicycle_id: event.bicycle_id.clone(),
+                },
+                id,
+            )
+        }
+        InventoryEvent::BicycleRetired(_) => Err(EventCodecError::new(
+            EventCodecErrorKind::EncodingFailed,
+            "bicycle-retired v1 cannot preserve a retirement reason; upgrade readers before enabling v2 writes",
+        )),
+    }
+}
+
+fn old_json<E: rostfrei::DomainEvent + Serialize>(
+    event: &E,
+    id: EventId,
+) -> Result<NewEvent, EventCodecError> {
+    let payload = serde_json::to_vec(event).map_err(|error| {
+        EventCodecError::new(EventCodecErrorKind::EncodingFailed, error.to_string())
+    })?;
+    NewEvent::new(id, E::LOCAL_ID, E::SCHEMA_VERSION, payload).map_err(|error| {
+        EventCodecError::new(EventCodecErrorKind::EncodingFailed, error.to_string())
+    })
 }
 
 pub const INVENTORY_ID: &str = "depot";
 
 /// A current command: it only sees typed, normalized state and raises v2 events.
+#[derive(rostfrei::Command, Clone, Debug, Eq, PartialEq)]
+#[domain(id = "retire-bicycle", label = "Retire bicycle", context = FleetEvolution)]
 pub struct RetireBicycle {
     pub bicycle_id: String,
     pub reason: RetirementReason,
 }
+
+#[derive(rostfrei::BoundedContext)]
+#[domain(id = "fleet-evolution", label = "Fleet evolution")]
+pub struct FleetEvolution;
 
 #[derive(rostfrei::DomainError)]
 #[domain(

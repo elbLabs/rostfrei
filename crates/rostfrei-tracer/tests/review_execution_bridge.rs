@@ -52,6 +52,7 @@ async fn bridge_preserves_all_technical_sources_and_does_not_turn_blocked_failur
         ExecutionFailure::Codec(CodecFailureKind::UnknownEventType),
         ExecutionFailure::Codec(CodecFailureKind::UnsupportedSchemaVersion),
         ExecutionFailure::Codec(CodecFailureKind::MalformedPayload),
+        ExecutionFailure::Codec(CodecFailureKind::ConversionFailed),
         ExecutionFailure::Codec(CodecFailureKind::InvalidEnvelope),
         ExecutionFailure::Codec(CodecFailureKind::EncodingFailed),
         ExecutionFailure::Processor(ProcessorFailureKind::InvalidConfiguration),

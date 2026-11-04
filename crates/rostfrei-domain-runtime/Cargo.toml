@@ -14,10 +14,10 @@ readme.workspace = true
 rostfrei-core.workspace = true
 rostfrei-domain.workspace = true
 rostfrei-registry.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
-serde.workspace = true
 
 [lints]
 workspace = true

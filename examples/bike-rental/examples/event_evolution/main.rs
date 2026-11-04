@@ -1,4 +1,4 @@
-//! Reconstructs genuine v1 history with evolved v2 code, then writes v2 events.
+//! Rolls out a dual reader/v1 writer before enabling v2 writes, then reloads history.
 //!
 //! Run with `cargo run -p bike-rental --example event_evolution`.
 
@@ -18,6 +18,20 @@ rostfrei::install_macro_support!();
 async fn main() -> ExampleResult {
     let store = InMemoryEventStore::new();
     seed_v1_history(&store).await?;
+    let compatibility =
+        CommandExecutor::with_codecs(store.clone(), Arc::new(inventory::compatibility_codecs()?));
+    compatibility
+        .execute(
+            &RetireBicycleHandler,
+            metadata("compatibility-retire-bike-1")?,
+            &RetireBicycle {
+                bicycle_id: "bike-1".to_owned(),
+                reason: RetirementReason::Unrecorded,
+            },
+        )
+        .await?;
+    println!("compatibility release still writes v1");
+    // Deploy this writer only after every affected reader understands v2.
     let executor = CommandExecutor::with_codecs(store.clone(), Arc::new(inventory::codecs()?));
     let before = executor.rehydrate::<Inventory>(&stream()?).await?;
     println!("reconstructed from v1: {:?}", before.state());
@@ -41,5 +55,9 @@ async fn main() -> ExampleResult {
     }
     let after = executor.rehydrate::<Inventory>(&stream()?).await?;
     println!("reloaded mixed history: {:?}", after.state());
+    let rollback = compatibility.rehydrate::<Inventory>(&stream()?).await?;
+    if rollback.state() != after.state() {
+        return Err("compatibility reader must reconstruct the same mixed history".into());
+    }
     Ok(())
 }

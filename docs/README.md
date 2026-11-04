@@ -59,7 +59,7 @@ they need. See [dependency setup and imports](getting-started.mdx#one-framework-
 | [`rostfrei-fixtures`](../crates/rostfrei-fixtures) | MessageSeries fixture validation and deterministic event-store replay. |
 | [`rostfrei-structure`](../crates/rostfrei-structure) | Filesystem checks, project scaffolding, and the `cargo-rostfrei` CLI. |
 | [`rostfrei-registry`](../crates/rostfrei-registry) | Command and query metadata and runtime registration. |
-| [`rostfrei-macros`](../crates/rostfrei-macros) | `QueryDefinition` and `ReadModel` derives for application queries and read models. |
+| [`rostfrei-macros`](../crates/rostfrei-macros) | Query/read-model derives and typed event-codec declarations. |
 | [`rostfrei-messaging-core`](../crates/rostfrei-messaging-core) | Transport-neutral messages, envelopes, and delivery contracts. |
 | [`rostfrei-nats`](../crates/rostfrei-nats) | NATS messaging adapters, JetStream event storage, and KV-backed read models. |
 | [`rostfrei-testing`](../crates/rostfrei-testing) | Reusable event-store contracts and aggregate scenarios. |

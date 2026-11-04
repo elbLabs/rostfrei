@@ -23,12 +23,242 @@ use rostfrei::core::{
 };
 use rostfrei::fixtures::{Fixture, MessageSeriesEngine};
 use rostfrei::nats::{NatsEventStore, NatsEventStoreConfig, provision_event_store};
-use rostfrei::tracer::{ApplicationBindingError, ApplicationBindings};
+use rostfrei::tracer::{
+    ApplicationBindingError, ApplicationBindings, ExposeTracePayloadsForLocalDevelopment,
+    NatsRuntime, NatsRuntimeConfig, OperationMode, TestDefinition, TestReportStatus,
+};
 use rostfrei::{Aggregate, ApplicationName, CommandExecutor, ExpectedVersion, InMemoryEventStore};
 use serde_json::json;
 
 rostfrei::install_macro_support!();
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// An original release reads only v1 and its original field shapes.
+fn original_reader(history: &[rostfrei::RecordedEvent]) -> ExampleResult<InventoryState> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Registered {
+        bicycle_id: String,
+        needs_repair: bool,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Retired {
+        bicycle_id: String,
+    }
+    let mut state = InventoryState::default();
+    for event in history {
+        if event.schema_version() != 1 {
+            return Err("original release cannot read this schema".into());
+        }
+        match event.event_type() {
+            "bicycle-registered" => {
+                let old: Registered = serde_json::from_slice(event.payload())?;
+                state.active.insert(
+                    old.bicycle_id,
+                    if old.needs_repair {
+                        Condition::MaintenanceRequired
+                    } else {
+                        Condition::Serviceable
+                    },
+                );
+            }
+            "bicycle-retired" => {
+                let old: Retired = serde_json::from_slice(event.payload())?;
+                state.active.remove(&old.bicycle_id);
+                state
+                    .retired
+                    .insert(old.bicycle_id, RetirementReason::Unrecorded);
+            }
+            _ => return Err("unknown original event".into()),
+        }
+    }
+    Ok(state)
+}
+
+async fn rolling_release<S>(store: S) -> ExampleResult
+where
+    S: EventStore + EventHistory + ExecutionStore + Clone,
+{
+    let original = seed_v1_history(&store).await?;
+    let compatibility =
+        CommandExecutor::with_codecs(store.clone(), Arc::new(inventory::compatibility_codecs()?));
+    let lossy = compatibility
+        .execute(
+            &RetireBicycleHandler,
+            metadata("lossy-v1-write")?,
+            &RetireBicycle {
+                bicycle_id: "bike-2".into(),
+                reason: RetirementReason::Damaged,
+            },
+        )
+        .await
+        .err()
+        .ok_or("v1 must reject a reason it cannot preserve")?;
+    assert!(lossy.to_string().contains("EncodingFailed"), "{lossy}");
+    assert_eq!(
+        store.load(&stream()?).await?,
+        original,
+        "lossy writes commit nothing"
+    );
+    assert!(
+        store
+            .load_completed_outcome_in_context(
+                &rostfrei::BoundedContextName::new(Inventory::BOUNDED_CONTEXT)?,
+                &OperationId::new("lossy-v1-write")?,
+            )
+            .await?
+            .is_none(),
+        "encoding failure cannot leave a successful outcome"
+    );
+    compatibility
+        .execute(
+            &RetireBicycleHandler,
+            metadata("compatibility-retirement")?,
+            &RetireBicycle {
+                bicycle_id: "bike-1".into(),
+                reason: RetirementReason::Unrecorded,
+            },
+        )
+        .await?;
+    let compatible_history = store.load(&stream()?).await?;
+    assert_eq!(
+        original_reader(&compatible_history)?,
+        *compatibility
+            .rehydrate::<Inventory>(&stream()?)
+            .await?
+            .state()
+    );
+
+    // All affected readers now understand v2; deploy the new writer.
+    let current = CommandExecutor::with_codecs(store.clone(), Arc::new(inventory::codecs()?));
+    current
+        .execute(
+            &RetireBicycleHandler,
+            metadata("new-writer-retirement")?,
+            &RetireBicycle {
+                bicycle_id: "bike-2".into(),
+                reason: RetirementReason::Damaged,
+            },
+        )
+        .await?;
+    let mixed = store.load(&stream()?).await?;
+    assert_eq!(
+        mixed.get(..compatible_history.len()),
+        Some(compatible_history.as_slice())
+    );
+    assert_eq!(mixed.last().ok_or("new write")?.schema_version(), 2);
+    assert!(
+        original_reader(&mixed).is_err(),
+        "rollback to original is no longer safe"
+    );
+    let expected = state(
+        &[],
+        &[
+            ("bike-1", RetirementReason::Unrecorded),
+            ("bike-2", RetirementReason::Damaged),
+            ("bike-3", RetirementReason::Unrecorded),
+        ],
+    );
+    assert_eq!(
+        current.rehydrate::<Inventory>(&stream()?).await?.state(),
+        &expected
+    );
+    assert_eq!(
+        compatibility
+            .rehydrate::<Inventory>(&stream()?)
+            .await?
+            .state(),
+        &expected,
+        "rollback to the dual reader remains safe"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn rolling_release_preserves_meaning_and_supports_dual_reader_rollback() -> ExampleResult {
+    rolling_release(InMemoryEventStore::new()).await
+}
+
+/// Real Test publication through NATS workers, with an owned Test namespace.
+#[tokio::test]
+async fn compatibility_release_behavior_on_nats() -> ExampleResult {
+    let connection = rostfrei::nats::connect(&rostfrei::nats::NatsConnectionConfig::new(
+        "compatibility-release",
+        rostfrei::testing::integration::nats_url()?,
+    ))
+    .await?;
+    let context = ApplicationName::new(format!(
+        "compatibility-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ))?
+    .test_bounded_context(Inventory::BOUNDED_CONTEXT)?;
+    let mut bindings =
+        ApplicationBindings::new().with_event_codecs(Arc::new(inventory::compatibility_codecs()?));
+    bindings.register_aggregate::<Inventory>()?;
+    bindings.register_command::<RetireBicycle, _>(
+        RetireBicycleHandler,
+        rostfrei::JsonDomainRejectionMapper::new(
+            rostfrei::CommandRejectionClassification::Conflict,
+        ),
+    )?;
+    let config = NatsRuntimeConfig::new(context, &bindings, 1)?
+        .with_fresh_completed_outcome_epoch("compatibility-release")?;
+    let runtime =
+        Arc::new(NatsRuntime::provision(connection.clone(), config, Arc::new(bindings)).await?);
+    let fixture: Fixture = serde_json::from_value(json!({
+        "schemaVersion": 1, "id": "v1-inventory", "revision": "1",
+        "messages": [{
+            "kind": "domain-event", "messageId": "old-bike-1", "correlationId": "fixture:v1-inventory",
+            "name": "bicycle-registered", "schemaVersion": 1,
+            "aggregate": {"type": Inventory::AGGREGATE_TYPE, "id": inventory::INVENTORY_ID},
+            "streamVersion": 1, "payload": {"bicycle_id": "bike-1", "needs_repair": false}
+        }]
+    }))?;
+    let tracer = runtime
+        .tracer_builder()
+        .with_test_transport(runtime.transport())
+        .with_test_scenario_reset(runtime.clone())
+        .with_default_test_fixture(fixture)
+        .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment))
+        .build()?;
+    runtime
+        .attach_observer(tracer.correlation_observer(OperationMode::Test))
+        .await?;
+    assert_eq!(
+        tracer
+            .catalog()
+            .behavioral_test
+            .as_ref()
+            .ok_or("behavior capability")?
+            .schema_href,
+        "/schemas/behavioral-test-v2"
+    );
+    let definition = TestDefinition::from_json_value(serde_json::from_str(include_str!(
+        "../examples/event_evolution/compatibility-release.json"
+    ))?)?;
+    let report = tracer.run_inline_test(definition).await;
+    runtime.stop_workers().await;
+    let report = report?;
+    println!(
+        "compatibility release evidence: {}",
+        serde_json::to_string_pretty(&report)?
+    );
+    assert_eq!(
+        report.status,
+        TestReportStatus::Passed,
+        "{}",
+        serde_json::to_string_pretty(&report)?
+    );
+    let history = runtime.store().load(&stream()?).await?;
+    assert_eq!(
+        original_reader(&history)?,
+        state(&[], &[("bike-1", RetirementReason::Unrecorded)])
+    );
+    connection.drain().await?;
+    Ok(())
+}
 
 fn state(active: &[(&str, Condition)], retired: &[(&str, RetirementReason)]) -> InventoryState {
     let owned = |id: &str| id.to_owned();
@@ -144,11 +374,36 @@ async fn evolved_code_reconstructs_v1_history_and_reloads_mixed_history_on_nats(
         .with_fresh_split_outcome_epoch("event-evolution")?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     provision_event_store(&js, &config).await?;
-    let result = evolve(Arc::new(
+    let store = Arc::new(NatsEventStore::connect(js.clone(), config.clone()).await?);
+    let result = evolve(store).await;
+    js.delete_stream(config.stream_name()).await?;
+    result
+}
+
+#[tokio::test]
+async fn rolling_release_preserves_meaning_on_nats() -> ExampleResult {
+    let connection = rostfrei::nats::connect(&rostfrei::nats::NatsConnectionConfig::new(
+        "rolling-evolution",
+        rostfrei::testing::integration::nats_url()?,
+    ))
+    .await?;
+    let js = connection.jetstream();
+    let context = ApplicationName::new(format!(
+        "rolling-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ))?
+    .test_bounded_context(Inventory::BOUNDED_CONTEXT)?;
+    let config = NatsEventStoreConfig::for_bounded_context(&context)?
+        .with_fresh_split_outcome_epoch("rolling-release")?
+        .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
+    provision_event_store(js, &config).await?;
+    let result = rolling_release(Arc::new(
         NatsEventStore::connect(js.clone(), config.clone()).await?,
     ))
     .await;
     js.delete_stream(config.stream_name()).await?;
+    connection.drain().await?;
     result
 }
 
