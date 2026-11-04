@@ -295,6 +295,7 @@ async fn snapshot_fixtures_and_inspection_preserve_full_replay() -> TestResult {
     };
     let host = NatsApplication::builder(context, connection.clone(), bindings(codecs.clone())?)?
         .with_fresh_completed_outcome_epoch("fixture-snapshots")?
+        .with_receipt_backed_history()?
         .with_default_test_fixture(fixture("six-units", 1)?)
         .with_tracer(Some(
             TracerConfig::new(
@@ -416,6 +417,7 @@ async fn snapshot_fixtures_and_inspection_preserve_full_replay() -> TestResult {
         bindings(codecs.clone())?,
     )?
     .with_fresh_completed_outcome_epoch("fixture-copy")?
+    .with_receipt_backed_history()?
     .with_default_test_fixture(imported)
     .with_test_fixture(serde_json::from_value(cached)?)
     .with_tracer(Some(
@@ -587,7 +589,8 @@ async fn fixture_boundaries(
         &bindings,
         1,
     )?
-    .with_fresh_completed_outcome_epoch("snapshot-production")?;
+    .with_fresh_completed_outcome_epoch("snapshot-production")?
+    .with_receipt_backed_history()?;
     let normal =
         rostfrei_tracer::NatsRuntime::provision(connection.clone(), config, bindings).await?;
     let stream = StreamId::new(
@@ -763,6 +766,7 @@ async fn tracer_snapshot_hits_preserve_commands_observation_and_reset_isolation(
     };
     let host = NatsApplication::builder(context, connection.clone(), bindings(codecs.clone())?)?
         .with_fresh_completed_outcome_epoch("tracer-snapshot-regression")?
+        .with_receipt_backed_history()?
         .with_default_test_fixture(fixture("six-units", 1)?)
         .with_test_fixture(fixture("six-tens", 10)?)
         .with_tracer(Some(

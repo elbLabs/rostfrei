@@ -95,6 +95,12 @@ pub struct NatsRuntimeConfig {
 }
 
 impl NatsRuntimeConfig {
+    /// Select a fresh receipt-backed event namespace for bounded snapshot replay.
+    pub fn with_receipt_backed_history(mut self) -> Result<Self, NatsHostError> {
+        self.event_store = self.event_store.with_receipt_backed_history()?;
+        Ok(self)
+    }
+
     /// Explicitly select a new writable split authority. This never migrates an
     /// existing history or excludes old writers on the operator's behalf.
     pub fn with_fresh_completed_outcome_epoch(
@@ -783,6 +789,12 @@ pub struct NatsApplicationBuilder {
     tracer: Option<TracerConfig>,
 }
 impl NatsApplicationBuilder {
+    /// Select a fresh receipt-backed event namespace; existing histories stay separate.
+    pub fn with_receipt_backed_history(mut self) -> Result<Self, NatsHostError> {
+        self.config = self.config.with_receipt_backed_history()?;
+        Ok(self)
+    }
+
     pub fn with_fresh_completed_outcome_epoch(
         mut self,
         epoch: &str,

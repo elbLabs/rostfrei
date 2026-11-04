@@ -137,6 +137,9 @@ When that registry contains snapshot storage and registered snapshot codecs, the
 host enables native snapshot-plus-tail reads for commands and handler simulation.
 Each simulation pins the current history after reset admission; old checkpoints
 remain fenced after reset. See [snapshot configuration](runtime.md#aggregate-snapshots).
+For a fresh receipt-backed namespace, explicitly select
+`NatsApplicationBuilder::with_receipt_backed_history()` (or the runtime-config method).
+Snapshot-enabled bindings alone do not qualify existing/mixed histories for bounded fetching.
 
 `NatsRuntimeConfig.execution_profile` defaults explicitly to
 `NatsExecutionProfile::TrustedCompatibility`: durable decisions, without configured

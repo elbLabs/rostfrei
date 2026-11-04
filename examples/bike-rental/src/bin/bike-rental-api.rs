@@ -37,6 +37,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(epoch) = &epoch {
         normal = normal.with_fresh_completed_outcome_epoch(epoch)?;
     }
+    let receipt_backed = env::args().any(|argument| argument == "--receipt-backed-history");
+    if receipt_backed {
+        normal = normal.with_receipt_backed_history()?;
+    }
     let host = if enabled {
         let test_bindings = snapshots::bindings(&connection, &application, true, snapshots).await?;
         let mut test = BikeRentalNatsConfig::for_bindings(
@@ -47,6 +51,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )?;
         if let Some(epoch) = &epoch {
             test = test.with_fresh_completed_outcome_epoch(epoch)?;
+        }
+        if receipt_backed {
+            test = test.with_receipt_backed_history()?;
         }
         let dispatch = Arc::new(
             NatsRuntime::provision(

@@ -173,6 +173,11 @@ pub struct BikeRentalNatsConfig {
     integration_event_route: BikeRentalIntegrationEventRoute,
 }
 impl BikeRentalNatsConfig {
+    pub fn with_receipt_backed_history(mut self) -> Result<Self, BikeRentalNatsError> {
+        self.runtime = self.runtime.with_receipt_backed_history()?;
+        Ok(self)
+    }
+
     pub fn with_fresh_completed_outcome_epoch(
         mut self,
         epoch: &str,

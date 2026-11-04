@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parent.parent
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--studio", action="store_true")
+    parser.add_argument("--snapshots", action="store_true")
+    parser.add_argument("--receipt-backed-history", action="store_true")
     args = parser.parse_args()
     if not os.environ.get("ROSTFREI_NATS_URL"):
         raise RuntimeError("Use scripts/test_nats.py to supply a disposable broker")
@@ -67,7 +69,12 @@ def main():
             time.sleep(0.05)
 
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))
-    process = subprocess.Popen([str(target / "debug/bike-rental-api"), "--tracer"], cwd=ROOT, env=environment)
+    command = [str(target / "debug/bike-rental-api"), "--tracer"]
+    if args.snapshots:
+        command.append("--snapshots")
+    if args.receipt_backed_history:
+        command.append("--receipt-backed-history")
+    process = subprocess.Popen(command, cwd=ROOT, env=environment)
     try:
         deadline = time.monotonic() + 45
         while True:
