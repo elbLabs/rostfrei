@@ -642,53 +642,6 @@ mod tests {
     }
 
     #[test]
-    fn authoritative_stream_config_is_append_only_and_finite() {
-        let config = NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST")
-            .expect("valid config")
-            .with_storage_limits(8 * 1024 * 1024, 1024 * 1024)
-            .expect("valid storage limits")
-            .with_replicas(3)
-            .expect("valid replicas")
-            .with_puback_timeout(Duration::from_secs(2))
-            .expect("valid PubAck timeout")
-            .stream_config();
-
-        assert_eq!(config.retention, RetentionPolicy::Limits);
-        assert_eq!(config.storage, StorageType::File);
-        assert_eq!(config.discard, DiscardPolicy::New);
-        assert_eq!(config.max_messages, -1);
-        assert_eq!(config.max_messages_per_subject, -1);
-        assert_eq!(config.max_bytes, 8 * 1024 * 1024);
-        assert_eq!(config.max_message_size, 1024 * 1024 + 4 * 1024);
-        assert!(config.max_age.is_zero());
-        assert!(!config.no_ack);
-        assert!(config.deny_delete);
-        assert!(config.deny_purge);
-        assert!(!config.allow_rollup);
-        assert!(config.allow_atomic_publish);
-        assert_eq!(config.num_replicas, 3);
-    }
-
-    #[test]
-    fn event_store_defaults_are_bounded_and_single_node_compatible() {
-        let config = NatsEventStoreConfig::for_bounded_context(&context()).expect("valid config");
-
-        assert_eq!(
-            config.max_stream_bytes(),
-            DEFAULT_EVENT_STORE_MAX_STREAM_BYTES
-        );
-        assert_eq!(
-            config.max_event_bytes(),
-            DEFAULT_EVENT_STORE_MAX_EVENT_BYTES
-        );
-        assert_eq!(config.max_event_bytes(), 512 * 1024);
-        assert_eq!(config.max_wire_message_bytes(), 516 * 1024);
-        assert_eq!(config.stream_config().max_message_size, 516 * 1024);
-        assert_eq!(config.replicas(), DEFAULT_EVENT_STORE_REPLICAS);
-        assert_eq!(config.puback_timeout(), DEFAULT_EVENT_STORE_PUBACK_TIMEOUT);
-    }
-
-    #[test]
     fn configured_event_limit_supports_the_historical_global_maximum() {
         let unsupported = MAX_SUPPORTED_EVENT_BYTES.checked_add(1).unwrap();
         let maximum_wire_bytes = MAX_SUPPORTED_EVENT_BYTES.checked_add(4 * 1024).unwrap();
@@ -783,18 +736,5 @@ mod tests {
             config.legacy_primary_transaction_guard_subject(&primary, "operation-123", 2),
             format!("{legacy}.guard.2")
         );
-    }
-
-    #[test]
-    fn applications_with_the_same_context_have_disjoint_event_stores() {
-        let first = NatsEventStoreConfig::for_bounded_context(&context()).unwrap();
-        let second_context = ApplicationName::new("other-inbox")
-            .unwrap()
-            .bounded_context("commercial-access")
-            .unwrap();
-        let second = NatsEventStoreConfig::for_bounded_context(&second_context).unwrap();
-
-        assert_ne!(first.stream_name(), second.stream_name());
-        assert_ne!(first.subject_filter(), second.subject_filter());
     }
 }

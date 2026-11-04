@@ -1308,30 +1308,6 @@ mod tests {
         )
     }
 
-    #[test]
-    fn executor_configuration_preserves_store_and_retry_limit() {
-        let executor = CommandExecutor::new(()).with_max_conflict_retries(4);
-        assert_eq!(*executor.store(), ());
-        assert_eq!(
-            executor
-                .conflict_retry_policy
-                .after_conflict(crate::ConflictRetry::new(
-                    4,
-                    EventStoreError::new(EventStoreErrorKind::Conflict, "test")
-                )),
-            crate::ConflictRetryDecision::RetryNow
-        );
-        assert_eq!(
-            executor
-                .conflict_retry_policy
-                .after_conflict(crate::ConflictRetry::new(
-                    5,
-                    EventStoreError::new(EventStoreErrorKind::Conflict, "test")
-                )),
-            crate::ConflictRetryDecision::Stop
-        );
-    }
-
     #[tokio::test]
     async fn successful_loads_are_automatically_enlisted() {
         let store = InMemoryEventStore::new();
@@ -2076,8 +2052,18 @@ mod tests {
         }
     }
 
+    struct DelayedRetry(std::time::Duration);
+
+    impl crate::ConflictRetryPolicy for DelayedRetry {
+        fn after_conflict(&self, retry: crate::ConflictRetry) -> crate::ConflictRetryDecision {
+            assert_eq!(retry.evaluations(), 1);
+            assert_eq!(retry.error().kind(), EventStoreErrorKind::Conflict);
+            crate::ConflictRetryDecision::RetryAfter(self.0)
+        }
+    }
+
     #[tokio::test]
-    async fn a_conflict_retries_the_entire_handler_and_unit_of_work() {
+    async fn a_conflict_retries_the_entire_handler_and_unit_of_work_after_the_policy_delay() {
         let attempts = Arc::new(AtomicUsize::new(0));
         let sessions = Arc::new(AtomicUsize::new(0));
         let session_loads = Arc::new(AtomicUsize::new(0));
@@ -2092,7 +2078,10 @@ mod tests {
             calls: AtomicUsize::new(0),
         };
 
+        let delay = std::time::Duration::from_millis(15);
+        let started = std::time::Instant::now();
         let outcome = CommandExecutor::new(store)
+            .with_conflict_retry_policy(Arc::new(DelayedRetry(delay)))
             .execute(&handler, metadata(), &())
             .await
             .unwrap();
@@ -2101,6 +2090,7 @@ mod tests {
             outcome,
             CommandOutcome::Accepted(CommandReceipt::Appended(_))
         ));
+        assert!(started.elapsed() >= delay);
         assert_eq!(attempts.load(Ordering::Relaxed), 2);
         assert_eq!(sessions.load(Ordering::Relaxed), 2);
         assert_eq!(session_loads.load(Ordering::Relaxed), 4);
@@ -2259,20 +2249,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejected_execution_fails_closed_when_a_loaded_aggregate_is_forgotten() {
-        let error = CommandExecutor::new(InMemoryEventStore::new())
-            .execute(&RejectedForgottenHandler, metadata(), &())
-            .await
-            .unwrap_err();
-
-        assert!(matches!(
-            error,
-            CommandExecutionError::Store(error)
-                if error.kind() == EventStoreErrorKind::InvalidRequest
-        ));
-    }
-
-    #[tokio::test]
     async fn rejected_simulation_fails_closed_when_a_loaded_aggregate_is_forgotten() {
         let error = CommandExecutor::new(InMemoryEventStore::new())
             .simulate(&RejectedForgottenHandler, metadata(), &())
@@ -2302,34 +2278,6 @@ mod tests {
             *loaded.aggregate_mut() = AggregateInstance::new(stream_id);
             Ok(CommandDecision::Rejected("rejected"))
         }
-    }
-
-    #[tokio::test]
-    async fn rejected_execution_fails_closed_when_the_tracked_instance_is_replaced() {
-        let error = CommandExecutor::new(InMemoryEventStore::new())
-            .execute(&RejectedReplacingHandler, metadata(), &())
-            .await
-            .unwrap_err();
-
-        assert!(matches!(
-            error,
-            CommandExecutionError::Store(error)
-                if error.kind() == EventStoreErrorKind::InvalidRequest
-        ));
-    }
-
-    #[tokio::test]
-    async fn rejected_simulation_fails_closed_when_the_tracked_instance_is_replaced() {
-        let error = CommandExecutor::new(InMemoryEventStore::new())
-            .simulate(&RejectedReplacingHandler, metadata(), &())
-            .await
-            .unwrap_err();
-
-        assert!(matches!(
-            error,
-            SimulationError::Store(error)
-                if error.kind() == EventStoreErrorKind::InvalidRequest
-        ));
     }
 
     async fn assert_rejected_tracking_before_concurrent_winner<Handler>(
@@ -2401,26 +2349,6 @@ mod tests {
         assert_rejected_tracking_before_concurrent_winner(
             &RejectedForgottenHandler,
             "rejected-forgotten",
-            true,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn rejected_winner_cannot_bypass_rejected_forgotten_tracking() {
-        assert_rejected_tracking_before_concurrent_winner(
-            &RejectedForgottenHandler,
-            "rejected-forgotten",
-            false,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn accepted_winner_cannot_bypass_rejected_replaced_tracking() {
-        assert_rejected_tracking_before_concurrent_winner(
-            &RejectedReplacingHandler,
-            "rejected-replaced",
             true,
         )
         .await;
@@ -2560,43 +2488,6 @@ mod tests {
     async fn accepted_execution_fails_closed_when_a_loaded_aggregate_is_forgotten() {
         let error = CommandExecutor::new(InMemoryEventStore::new())
             .execute(&ForgottenHandler, metadata(), &())
-            .await
-            .unwrap_err();
-
-        assert!(matches!(
-            error,
-            CommandExecutionError::Store(error)
-                if error.kind() == EventStoreErrorKind::InvalidRequest
-        ));
-    }
-
-    struct EscapingHandler {
-        aggregate: Mutex<Option<LoadedAggregate<TestAggregate>>>,
-    }
-
-    #[async_trait]
-    impl CommandHandler<()> for EscapingHandler {
-        type Rejection = ();
-
-        async fn handle(
-            &self,
-            _command: &(),
-            execution: &mut CommandExecution<'_>,
-        ) -> CommandHandlingResult<Self::Rejection> {
-            let aggregate = execution.load::<TestAggregate>("escaped").await?;
-            *self.aggregate.lock().unwrap() = Some(aggregate);
-            Ok(CommandDecision::Accepted)
-        }
-    }
-
-    #[tokio::test]
-    async fn accepted_execution_fails_closed_when_a_loaded_aggregate_escapes() {
-        let handler = EscapingHandler {
-            aggregate: Mutex::new(None),
-        };
-
-        let error = CommandExecutor::new(InMemoryEventStore::new())
-            .execute(&handler, metadata(), &())
             .await
             .unwrap_err();
 

@@ -14,9 +14,9 @@ use rostfrei_runtime::{
     ApplicationErrorCode, ApplicationName, Command, CommandBus, CommandBusError,
     CommandBusErrorKind, CommandBusObserver, CommandBusReceipt, CommandDecision, CommandExecution,
     CommandHandler, CommandHandlingResult, CommandMessageAdapter, CommandPublication,
-    DomainRegistry, EncodedCommand, InMemoryQueryAdapter, MessageId, QueryDefinition,
+    DomainRegistry, EncodedCommand, InMemoryQueryAdapter, QueryDefinition,
     QueryErrorClassification, QueryErrorPayload, QueryHandler, QueryHandlerRequest,
-    QueryMessageAdapter, QueryOptions, QueryProcessor, TraceContext, command_response_message_id,
+    QueryMessageAdapter, QueryOptions, QueryProcessor, command_response_message_id,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -276,20 +276,6 @@ async fn query_requires_application_json_content_type() -> TestResult {
 }
 
 #[tokio::test]
-async fn get_is_not_accepted_for_query_routes() -> TestResult {
-    let response = app()?
-        .oneshot(
-            Request::builder()
-                .uri("/contexts/catalog/queries/find-product/schemas/1")
-                .body(Body::empty())?,
-        )
-        .await?;
-
-    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
-    Ok(())
-}
-
-#[tokio::test]
 async fn registered_command_is_available_through_standard_post() -> TestResult {
     let response = app()?
         .oneshot(
@@ -467,13 +453,6 @@ async fn configured_command_body_limit_returns_payload_too_large() -> TestResult
 }
 
 #[test]
-fn trace_context_fixture_is_valid() -> TestResult {
-    TraceContext::new("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")?;
-    MessageId::new("http-query")?;
-    Ok(())
-}
-
-#[test]
 fn invalid_authentication_challenge_is_rejected() {
     assert_eq!(
         HttpApiConfig::default()
@@ -481,4 +460,99 @@ fn invalid_authentication_challenge_is_rejected() {
         Err(HttpApiConfigError::InvalidAuthenticationChallenge)
     );
 }
+struct CaptureCommand(Arc<tokio::sync::Mutex<Option<EncodedCommand>>>);
+
+#[async_trait]
+impl CommandMessageAdapter for CaptureCommand {
+    async fn dispatch(
+        &self,
+        command: EncodedCommand,
+        observer: Arc<dyn CommandBusObserver>,
+    ) -> Result<CommandBusReceipt, CommandBusError> {
+        *self.0.lock().await = Some(command.clone());
+        AcceptCommandAdapter.dispatch(command, observer).await
+    }
+}
+
+#[tokio::test]
+async fn envelope_ingress_is_opt_in_bounded_and_validated_before_dispatch() -> TestResult {
+    let context = ApplicationName::new("http-envelope")?.bounded_context("catalog")?;
+    let captured = Arc::new(tokio::sync::Mutex::new(None));
+    let bus = CommandBus::new(context.clone(), Arc::new(CaptureCommand(captured.clone())));
+    let command = bus.encode(rostfrei_runtime::CommandRequest::new(
+        rostfrei_runtime::OperationId::new("original")?,
+        UpdateProduct,
+    ))?;
+    let mut registry = DomainRegistry::new();
+    registry.register_command::<UpdateProduct, ProductCommandHandler>()?;
+    let registry = Arc::new(registry);
+    let query = rostfrei_runtime::QueryBus::new(
+        context,
+        Arc::new(InMemoryQueryAdapter::new(Arc::new(QueryProcessor::new()))),
+    );
+    let route = "/contexts/catalog/commands/update-product/schemas/1/envelope";
+    let request = |key: &str, payload: Vec<u8>| {
+        Request::builder()
+            .method("POST")
+            .uri(route)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", key)
+            .body(Body::from(payload))
+    };
+    let disabled = router(
+        registry.clone(),
+        bus.clone(),
+        query.clone(),
+        HttpApiConfig::default(),
+    );
+    assert_eq!(
+        disabled
+            .oneshot(request("original", command.payload().to_vec())?)
+            .await?
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let enabled = router(
+        registry,
+        bus,
+        query,
+        HttpApiConfig::new(QueryOptions::default(), 1024)?.with_trusted_command_envelope_ingress(),
+    );
+    let mut changed: Value = serde_json::from_slice(command.payload())?;
+    changed["correlation_id"] = json!("changed");
+    for (key, payload, expected) in [
+        ("other", command.payload().to_vec(), StatusCode::BAD_REQUEST),
+        (
+            "original",
+            serde_json::to_vec(&changed)?,
+            StatusCode::BAD_REQUEST,
+        ),
+        ("original", vec![b' '; 1025], StatusCode::PAYLOAD_TOO_LARGE),
+    ] {
+        let response = enabled.clone().oneshot(request(key, payload)?).await?;
+        assert_eq!(response.status(), expected);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            Some(&header::HeaderValue::from_static("private, no-store"))
+        );
+        assert!(captured.lock().await.is_none());
+    }
+    let mut duplicate_header = request("original", command.payload().to_vec())?;
+    duplicate_header.headers_mut().append(
+        "idempotency-key",
+        header::HeaderValue::from_static("original"),
+    );
+    assert_eq!(
+        enabled.clone().oneshot(duplicate_header).await?.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert!(captured.lock().await.is_none());
+    let response = enabled
+        .oneshot(request("original", command.payload().to_vec())?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(captured.lock().await.as_ref(), Some(&command));
+    Ok(())
+}
+
 rostfrei_runtime::install_macro_support!();

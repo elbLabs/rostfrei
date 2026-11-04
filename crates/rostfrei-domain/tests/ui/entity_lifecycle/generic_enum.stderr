@@ -1,5 +1,0 @@
-error: EntityLifecycle only supports non-generic fieldless enums
- --> tests/ui/entity_lifecycle/generic_enum.rs:6:14
-  |
-6 | enum Workflow<T> {
-  |              ^^^

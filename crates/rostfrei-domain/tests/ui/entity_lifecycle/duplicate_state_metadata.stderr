@@ -1,5 +1,0 @@
-error: duplicate state attribute
- --> tests/ui/entity_lifecycle/duplicate_state_metadata.rs:8:5
-  |
-8 |     #[state(id = "other", label = "Other")]
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

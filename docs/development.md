@@ -15,14 +15,19 @@ CARGO_PROFILE_TEST_DEBUG=2 cargo test
 
 ## Tests
 
-With Python 3.11+ and a running Docker engine, run the Rust workspace suite:
+Follow the [framework testing policy](testing/strategy.md) when choosing or
+adding tests. Repository coding-agent guidance lives in [`AGENTS.md`](../AGENTS.md).
+
+With Python 3.11+, a running Docker engine, and native NATS 2.12.15 on PATH (or
+configured through `ROSTFREI_NATS_SERVER`), run the Rust workspace suite:
 
 ```sh
 python3 scripts/test_nats.py
 ```
 
 The runner fetches separately locked dependencies for offline macro tests,
-starts a disposable NATS 2.12.15 container, waits for JetStream readiness, and
+starts an authenticated disposable NATS 2.12.15 container, prepares native
+restart fixtures, waits for JetStream readiness, and
 runs `cargo test --locked --workspace --all-features -- --test-threads=1`.
 It uses fresh storage, random loopback ports, and bounded bike-rental stream
 limits. It replaces any inherited `ROSTFREI_NATS_URL`, removes its resources on
@@ -31,8 +36,13 @@ exit, and prints broker logs on failure.
 To run a narrower suite:
 
 ```sh
-python3 scripts/test_nats.py -- cargo test --locked -p rostfrei-nats -p bike-rental -- --test-threads=1
+python3 scripts/test_nats.py --contracts -- cargo test --locked -p rostfrei-nats -p bike-rental -- --test-threads=1
 ```
+
+For selections containing authenticated fault or native restart contracts, add
+`--contracts` before `--`; this requires the native NATS binary as above. An
+ordinary target such as `--test messaging_integration` only needs Docker. The
+default workspace command enables contract setup automatically.
 
 Shared-broker tests are non-ignored. Direct Cargo runs that include them require
 an explicit, nonempty `ROSTFREI_NATS_URL`; missing configuration is an error.
@@ -116,9 +126,11 @@ See [website development](../website/README.md) and
 in `packages/ui/gallery`, which shows shared components and their interactive states. The **Tests**
 workflow runs Rust checks, the standalone starter acceptance check, shared UI
 lint/typechecking, website lint, a deployment-base build and browser checks, and Studio
-lint/build, mocked-API browser tests, and visual inspection. Screenshots, layout
-state, and browser diagnostics are uploaded as artifacts. Browser fixtures do
-not exercise a live Tracer backend. Both browser checks use Chrome; set
+lint/build, mocked-API browser tests, a live application-linked host/Studio
+journey against real NATS, and visual inspection. Screenshots, layout
+state, and browser diagnostics are uploaded as artifacts. The mocked browser
+fixtures exercise presentation and interactions; the separate host journey
+exercises live backend wiring. Both browser checks use Chrome; set
 `CHROME_BIN` if it is not installed in a standard location. Website captures go
 to `artifacts/website/`. Set `VITE_BASE_PATH` to the same value for the website
 build and its browser check when verifying a non-root deployment.

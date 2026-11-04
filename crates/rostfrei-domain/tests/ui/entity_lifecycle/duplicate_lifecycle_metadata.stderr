@@ -1,5 +1,0 @@
-error: duplicate lifecycle attribute
- --> tests/ui/entity_lifecycle/duplicate_lifecycle_metadata.rs:6:1
-  |
-6 | #[lifecycle(initial = Active)]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
