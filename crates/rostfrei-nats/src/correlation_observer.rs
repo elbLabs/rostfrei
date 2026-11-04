@@ -368,10 +368,28 @@ fn aggregate_event_filter_matches_family(filter: &str, family_filter: &str) -> b
     };
     let tokens: Vec<_> = remainder.split('.').collect();
     let (context, identity) = match tokens.as_slice() {
-        [context, "aggregate", identity] => (context, identity),
+        [context, "aggregate", identity] | [context, "receipts", "v1", "aggregate", identity] => {
+            (context, identity)
+        }
         [context, "split", epoch, "aggregate", identity]
-            if epoch.len() == 64 && epoch.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
-        {
+        | [
+            context,
+            "split",
+            epoch,
+            "receipts",
+            "v1",
+            "aggregate",
+            identity,
+        ]
+        | [
+            context,
+            "receipts",
+            "v1",
+            "split",
+            epoch,
+            "aggregate",
+            identity,
+        ] if epoch.len() == 64 && epoch.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
             (context, identity)
         }
         _ => return false,
@@ -418,6 +436,51 @@ fn one_header<'a>(headers: &'a async_nats::HeaderMap, name: &str) -> Option<&'a 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receipt_profile_filters_preserve_scope_and_exclude_control_subjects() {
+        let application = ApplicationName::new("receipt-observer").expect("application");
+        let context = application
+            .test_bounded_context("counter")
+            .expect("context");
+        let base = crate::NatsEventStoreConfig::for_bounded_context(&context).expect("config");
+        let filter = family_filter(
+            &application,
+            TrafficScope::Test,
+            CorrelatedMessageFamily::DomainEvent,
+        );
+        let configs = [
+            base.clone()
+                .with_receipt_backed_history()
+                .expect("receipts"),
+            base.clone()
+                .with_receipt_backed_history()
+                .expect("receipts")
+                .with_fresh_split_outcome_epoch("test")
+                .expect("split"),
+            base.with_fresh_split_outcome_epoch("test")
+                .expect("split")
+                .with_receipt_backed_history()
+                .expect("receipts"),
+        ];
+        for config in configs {
+            let aggregate = config.aggregate_subject_filter();
+            assert!(aggregate_event_filter_matches_family(&aggregate, &filter));
+            for invalid in [
+                aggregate.replace(".test.", "."),
+                aggregate.replace("receipts.v1", "receipts.v2"),
+                aggregate.replace("receipts.v1", "receipts.*"),
+                aggregate.replace(".aggregate.", ".outcome."),
+                config.transaction_subject_filter(),
+                config.transaction_guard_subject("operation", 0),
+            ] {
+                assert!(
+                    !aggregate_event_filter_matches_family(&invalid, &filter),
+                    "{invalid}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn family_filtering_remains_application_and_traffic_scoped() {
