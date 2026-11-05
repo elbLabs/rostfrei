@@ -50,7 +50,7 @@ def main():
             "name": "studio-synthetic-config-probe",
             "version": "0.0.1",
             "description": "Synthetic fixture for plugin configuration validation only",
-            "author": {"name": "Rostfrei adapter experiment"},
+            "author": {"name": "rostfrei adapter experiment"},
         }) + "\n")
         skill = plugin / "skills/inspect-fixture"
         skill.mkdir(parents=True)

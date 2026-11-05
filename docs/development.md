@@ -94,6 +94,7 @@ pnpm build
 pnpm test:docs
 pnpm test:website
 pnpm test:studio
+pnpm test:presentation
 ```
 
 See [website development](../website/README.md) and
@@ -107,6 +108,16 @@ not exercise a live Tracer backend. Both browser checks use Chrome; set
 `CHROME_BIN` if it is not installed in a standard location. Website captures go
 to `artifacts/website/`. Set `VITE_BASE_PATH` to the same value for the website
 build and its browser check when verifying a non-root deployment.
+
+The private [presentation package](../packages/tracer-presentation/README.md)
+has offline contract tests and a separate TypeScript check:
+`pnpm --filter @rostfrei/tracer-presentation typecheck`. Its `test:package` script
+qualifies a built tarball in an unrelated consumer directory. The shared canonical
+corpus also runs through Rust with
+`cargo test --locked -p rostfrei-tracer --no-default-features --test presentation_contract`.
+Host-specific [adapter probes](../experiments/studio-adapters/README.md) are opt-in;
+their interaction checks are separate from reader tests and real-NATS behavior
+verification.
 
 ## Benchmarks
 

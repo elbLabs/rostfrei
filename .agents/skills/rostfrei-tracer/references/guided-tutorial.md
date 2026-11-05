@@ -165,7 +165,7 @@ which of these presentation capabilities it really supports:
 | --- | --- |
 | Show operation | Display an existing report/operation and its finite `messageSeries`, retaining scope, outcome and capture limitations. |
 | Inspect message | Inspect an existing `messageId` within the selected operation's canonical series, respecting redaction and missing payloads. |
-| Selected message | Return the user's selected operation identity and `messageId`; resolve them against that same evidence before explaining. |
+| Selected message | Return the user's selected saved-capture binding, operation identity and `messageId`; resolve them against that same evidence before explaining. |
 
 These are capability descriptions, not executable commands or a new wire
 schema. Pass the existing JSON evidence, report, operation or MessageSeries
@@ -173,6 +173,9 @@ resource as supported; use its existing identities for selection. The adapter
 does not publish, reset or modify evidence. Do not give it capability tokens.
 If selection is unsupported, let the learner name a message in conversation.
 If the selected live resource expired, use its saved capture or report the gap.
+Operation IDs can repeat across runtimes; follow the shared
+[saved-evidence selection contract](https://elblabs.github.io/rostfrei/docs/source/agent-tutorial.md#optional-saved-evidence-readers)
+when restoring a selection or switching displays.
 
 Switching adapters renders the same saved evidence and preserves the selection;
 it never reruns a test. Fall back to text on unavailable/failed rendering. If a

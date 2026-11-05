@@ -13,6 +13,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  presentation:
+    name: Read-only evidence presentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @rostfrei/tracer-presentation typecheck
+      - run: pnpm test:presentation
+      - run: pnpm --filter @rostfrei/tracer-presentation test:package
+      - run: mkdir -p artifacts/claude-process-ci
+      - name: Check owned native-probe process cleanup
+        working-directory: artifacts/claude-process-ci
+        run: python3 "$GITHUB_WORKSPACE/experiments/studio-adapters/claude-code/supervise.test.py" "$(command -v node)"
+      - name: Check OpenCode adapter boundaries without a host
+        run: |
+          python3 -B -m unittest discover -s experiments/studio-adapters/opencode -p 'test_probe_support.py'
+          node --experimental-vm-modules --test experiments/studio-adapters/opencode/boundary.test.mjs
+          python3 experiments/studio-adapters/opencode/test_adapter.py --node "$(command -v node)"
+      - name: Prepare retained canonical captures for protocol tests
+        run: |
+          mkdir -p artifacts/presentation-ci
+          cp packages/tracer-presentation/test/canonical/accepted.json artifacts/presentation-ci/rent-available-bicycle.json
+          cp packages/tracer-presentation/test/canonical/rejected.json artifacts/presentation-ci/reject-unavailable-bicycle.json
+      - run: npm ci --ignore-scripts
+        working-directory: experiments/studio-adapters/mcp-apps
+      - run: npm run check
+        working-directory: experiments/studio-adapters/mcp-apps
+      - run: npm run build
+        working-directory: experiments/studio-adapters/mcp-apps
+      - run: npm test
+        working-directory: experiments/studio-adapters/mcp-apps
+        env:
+          EVIDENCE_DIR: ${{ github.workspace }}/artifacts/presentation-ci
+
   scaffold:
     name: External generated project
     runs-on: ubuntu-latest
