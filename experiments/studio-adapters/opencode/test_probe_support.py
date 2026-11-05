@@ -17,7 +17,9 @@ from package_install import stage_core
 
 class OutputBoundaryTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="opencode-boundary-", dir=probe.REPO / "artifacts/tmp")
+        scratch = probe.REPO / "artifacts/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(prefix="opencode-boundary-", dir=scratch)
         self.root = Path(self.temp.name)
         self.artifacts = self.root / "research"
         self.artifacts.mkdir()
