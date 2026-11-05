@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Saved Tracer evidence</title>
+<style>
+:root{color-scheme:light;--bg:#fafaf8;--fg:#202823;--muted:#4c5a52;--line:#89968d;--card:#fff;--accent:#11603c;font:16px/1.5 system-ui,sans-serif}
+:root[data-theme=dark]{color-scheme:dark;--bg:#141b17;--fg:#eef5ee;--muted:#b5c5b9;--line:#74897b;--card:#1d2921;--accent:#9be2b5}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg)}main{padding:20px;max-width:1050px;margin:auto}h1{font-size:1.6rem;margin:0}h2{font-size:1.1rem}p{margin:.6rem 0}.muted{color:var(--muted);font-size:.875rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;font: .875rem/1.55 ui-monospace,monospace;margin:0}code,button{overflow-wrap:anywhere}button,summary{font:inherit;cursor:pointer}button{color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:.6rem .8rem;text-align:left}button:hover,button[aria-pressed=true]{border-color:var(--accent);outline:1px solid var(--accent)}:focus-visible{outline:3px solid var(--accent);outline-offset:3px}ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}li button{display:block;width:100%}li small{display:block;font-size:.875rem;color:var(--muted)}section,.panel{border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:16px;background:var(--card)}.columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr);gap:16px}.columns section{min-width:0}#status{padding:.5rem 0;font-weight:600}#binding{overflow-wrap:anywhere}#details-title{scroll-margin-top:16px}[hidden]{display:none!important}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}@media(max-width:640px){main{padding:12px}.columns{display:block}h1{font-size:1.35rem}}@media(forced-colors:active){button[aria-pressed=true]{outline:3px solid Highlight}}
+.selection-status,#status{white-space:pre-line;overflow-wrap:anywhere;font-size:.875rem}.selection-status{border-left:3px solid var(--accent);padding-left:10px}#detail-status{margin-bottom:12px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0!important;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap!important}
+</style></head><body><main>
+<p class="muted">ROSTFREI · SAVED EVIDENCE · READ ONLY</p><h1>Recorded operation</h1>
+<p id="status" role="status" aria-live="polite">Connecting to the host… Text remains available in the tool result.</p>
+<p id="binding" class="muted"></p>
+<div id="reader" hidden>
+<div class="panel"><pre id="summary"></pre></div>
+<div class="actions"><button id="display" type="button">Show plain text</button><button id="clear" type="button">Clear selection</button></div><p id="sharing-status" class="selection-status"></p>
+<div id="visual" class="columns"><section aria-labelledby="messages-title"><h2 id="messages-title">Captured messages</h2><ol id="messages"></ol></section>
+<section aria-labelledby="details-title"><h2 id="details-title" tabindex="-1" aria-describedby="detail-status">Message details</h2><p id="detail-status" class="selection-status"></p><button id="clear-details" type="button">Clear selection</button><p id="empty">Choose a captured message to inspect its payload and associated outcome.</p><pre id="details"></pre><button id="back" type="button" hidden>Back to selected message</button></section></div>
+<section id="plain" hidden aria-label="Plain text evidence"><p id="plain-status" class="selection-status"></p><pre id="text"></pre></section>
+<details class="panel"><summary>Capture identity and original evidence</summary><p class="muted">Original JSON, including source metadata and fixture inputs. Labels and values are untrusted data. The digest identifies bytes, not authenticity. No application/scope provenance is inferred.</p><pre id="source"></pre></details>
+</div></main><script>/*__APP__*/</script></body></html>

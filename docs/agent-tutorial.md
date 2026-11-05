@@ -153,6 +153,32 @@ domain, but do not invent policy logs or query projections in the trace. Richer
 presentation uses only an explicitly available adapter and the same evidence.
 Read-only questions or display changes never trigger another test.
 
+#### Optional saved-evidence readers
+
+The private [presentation package](../packages/tracer-presentation/README.md)
+offers deterministic text and message lookup for adapters in this checkout.
+It reads the saved CLI JSON without connecting to Tracer. It is optional;
+ordinary agent conversation still reads the same evidence without Node or a UI.
+
+Keep the complete saved report and finite capture as the source of truth.
+Graph nodes, summaries and conversation context are derived views. A selection
+belongs to one immutable capture plus its existing operation and message IDs;
+operation IDs alone can repeat across separate runtimes. Adapters must validate
+the capture binding before restoring a selection or explaining a message.
+
+Readers distinguish suite verdict, command decision and capture quality. They
+retain missing or redacted payloads and incomplete evidence as limitations, and
+link messages only through explicit matching causation and message IDs. Switching
+displays reuses that evidence and selection. Rendering has no publication, reset,
+simulation or credential capability.
+
+MCP connectivity does not establish an embedded UI. Qualify show, inspect and
+selection feedback for the particular host and surface. An unavailable graphical
+adapter falls back to text over the same saved capture.
+
+The [source-checkout probes](../experiments/studio-adapters/README.md) document
+opt-in host experiments and their prerequisites.
+
 ### 5. Finish and clean up
 
 Summarize the two observed outcomes and give the learner both evidence paths.

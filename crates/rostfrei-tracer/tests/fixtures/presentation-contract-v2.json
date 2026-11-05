@@ -1,0 +1,150 @@
+{
+  "formatVersion": 1,
+  "contract": "observed-message-series-v2",
+  "bases": {
+    "accepted": {
+      "messages": [
+        {"kind":"command","messageId":"c","correlationId":"flow","observationOrder":0,"name":"rent-bicycle","schemaVersion":2,"context":"bike-rental","payload":{"bicycle_id":"bike-42","fleet_id":"city-fleet"}}
+      ],
+      "commandOutcomes": [
+        {"commandMessageId":"c","responseMessageId":"r","correlationId":"flow","observationOrder":1,"outcome":{"status":"accepted"}}
+      ]
+    },
+    "rejected": {
+      "messages": [
+        {"kind":"command","messageId":"c","correlationId":"flow","observationOrder":0,"name":"rent-bicycle","schemaVersion":2,"context":"bike-rental","payload":{"bicycle_id":"bike-99","fleet_id":"city-fleet"}}
+      ],
+      "commandOutcomes": [
+        {"commandMessageId":"c","responseMessageId":"r","correlationId":"flow","observationOrder":1,"outcome":{"status":"rejected","value":{"classification":"conflict","code":"BICYCLE_UNAVAILABLE","message":"The requested bicycle cannot currently be rented.","details":{"bicycle_id":"bike-99","code":"BICYCLE_UNAVAILABLE","message":"The requested bicycle cannot currently be rented."}}}}
+      ]
+    },
+    "chain": {
+      "messages": [
+        {"kind":"command","messageId":"c","correlationId":"flow","observationOrder":0,"name":"rent-bicycle","schemaVersion":2,"context":"bike-rental"},
+        {"kind":"domain-event","messageId":"e","correlationId":"flow","causationId":"c","observationOrder":1,"name":"bicycle-rented","schemaVersion":1,"aggregate":{"type":"bike-rental/rental-fleet","id":"city-fleet"}},
+        {"kind":"integration-event","messageId":"i","correlationId":"flow","causationId":"e","observationOrder":2,"name":"bicycle-rental-started","schemaVersion":1}
+      ],
+      "commandOutcomes": [
+        {"commandMessageId":"c","responseMessageId":"r","correlationId":"flow","observationOrder":3,"outcome":{"status":"accepted"}}
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name":"accepted-omitted-value", "base":"accepted",
+      "expect":{"structurallyValid":true,"causationMatches":[],"outcomeAssociations":[["c","r"]],"topologyIssues":[],"outcomeIssues":[]}
+    },
+    {
+      "name":"accepted-null-value", "base":"accepted", "set":{"/commandOutcomes/0/outcome/value":null},
+      "expect":{"structurallyValid":true,"causationMatches":[],"outcomeAssociations":[["c","r"]],"topologyIssues":[],"outcomeIssues":[]}
+    },
+    {
+      "name":"real-shaped-rejection", "base":"rejected",
+      "expect":{"structurallyValid":true,"causationMatches":[],"outcomeAssociations":[["c","r"]],"topologyIssues":[],"outcomeIssues":[]}
+    },
+    {
+      "name":"rejection-space-is-nonempty", "base":"rejected", "set":{"/commandOutcomes/0/outcome/value/message":" "},
+      "expect":{"structurallyValid":true,"causationMatches":[],"outcomeAssociations":[["c","r"]],"topologyIssues":[],"outcomeIssues":[]}
+    },
+    {
+      "name":"explicit-three-kind-chain", "base":"chain",
+      "expect":{"structurallyValid":true,"causationMatches":[["c","e"],["e","i"]],"outcomeAssociations":[["c","r"]],"topologyIssues":[],"outcomeIssues":[]}
+    },
+    {
+      "name":"correlation-alone-is-not-causation", "base":"chain", "remove":["/messages/1/causationId","/messages/2/causationId"],
+      "expect":{"structurallyValid":true,"causationMatches":[],"outcomeAssociations":[["c","r"]],"topologyIssues":[],"outcomeIssues":[]}
+    },
+    {
+      "name":"child-before-parent", "base":"chain",
+      "set":{"/messages":[
+        {"kind":"domain-event","messageId":"e","correlationId":"flow","causationId":"c","observationOrder":0,"name":"bicycle-rented","schemaVersion":1},
+        {"kind":"command","messageId":"c","correlationId":"flow","observationOrder":1,"name":"rent-bicycle","schemaVersion":2,"context":"bike-rental"}
+      ],"/commandOutcomes/0/observationOrder":2},
+      "expect":{"structurallyValid":true,"causationMatches":[["c","e"]],"outcomeAssociations":[["c","r"]],"topologyIssues":[],"outcomeIssues":[]}
+    },
+    {
+      "name":"outcome-before-command", "base":"accepted", "set":{"/messages/0/observationOrder":1,"/commandOutcomes/0/observationOrder":0},
+      "expect":{"structurallyValid":true,"causationMatches":[],"outcomeAssociations":[["c","r"]],"topologyIssues":[],"outcomeIssues":[]}
+    },
+    {
+      "name":"missing-parent", "base":"chain", "set":{"/messages/1/causationId":"missing"},
+      "expect":{"structurallyValid":true,"causationMatches":[["e","i"]],"outcomeAssociations":[["c","r"]],"topologyIssues":[{"kind":"missingParent","child":"e","parent":"missing"}],"outcomeIssues":[]}
+    },
+    {
+      "name":"self-cycle", "base":"accepted", "set":{"/messages/0/causationId":"c"},
+      "expect":{"structurallyValid":true,"causationMatches":[["c","c"]],"outcomeAssociations":[["c","r"]],"topologyIssues":[{"kind":"cycle","messages":["c"]}],"outcomeIssues":[]}
+    },
+    {
+      "name":"two-node-cycle-with-tail", "base":"chain", "set":{"/messages/0/causationId":"e"},
+      "expect":{"structurallyValid":true,"causationMatches":[["e","c"],["c","e"],["e","i"]],"outcomeAssociations":[["c","r"]],"topologyIssues":[{"kind":"cycle","messages":["c","e"]}],"outcomeIssues":[]}
+    },
+    {
+      "name":"cross-correlation-edge", "base":"chain", "set":{"/messages/2/correlationId":"other"},
+      "expect":{"structurallyValid":true,"causationMatches":[["c","e"],["e","i"]],"outcomeAssociations":[["c","r"]],"topologyIssues":[{"kind":"crossCorrelation","child":"i","parent":"e"}],"outcomeIssues":[]}
+    },
+    {
+      "name":"cross-correlation-outcome", "base":"accepted", "set":{"/commandOutcomes/0/correlationId":"other"},
+      "expect":{"structurallyValid":true,"causationMatches":[],"outcomeAssociations":[],"topologyIssues":[],"outcomeIssues":[{"kind":"crossCorrelation","command":"c","response":"r"}]}
+    },
+    {
+      "name":"missing-command-outcome", "base":"accepted", "set":{"/commandOutcomes/0/commandMessageId":"missing"},
+      "expect":{"structurallyValid":true,"causationMatches":[],"outcomeAssociations":[],"topologyIssues":[],"outcomeIssues":[{"kind":"missingCommand","command":"missing","response":"r"}]}
+    },
+    {
+      "name":"non-command-outcome", "base":"chain", "set":{"/commandOutcomes/0/commandMessageId":"e"},
+      "expect":{"structurallyValid":true,"causationMatches":[["c","e"],["e","i"]],"outcomeAssociations":[],"topologyIssues":[],"outcomeIssues":[{"kind":"notACommand","command":"e","response":"r"}]}
+    },
+    {"name":"accepted-non-null-value", "base":"accepted", "set":{"/commandOutcomes/0/outcome/value":false}, "expect":{"structurallyValid":false}},
+    {"name":"rejected-missing-value", "base":"rejected", "remove":["/commandOutcomes/0/outcome/value"], "expect":{"structurallyValid":false}},
+    {"name":"rejection-invalid-classification", "base":"rejected", "set":{"/commandOutcomes/0/outcome/value/classification":"unknown"}, "expect":{"structurallyValid":false}},
+    {"name":"rejection-invalid-code", "base":"rejected", "set":{"/commandOutcomes/0/outcome/value/code":"not a code"}, "expect":{"structurallyValid":false}},
+    {"name":"rejection-empty-message", "base":"rejected", "set":{"/commandOutcomes/0/outcome/value/message":""}, "expect":{"structurallyValid":false}},
+    {"name":"rejection-control-message", "base":"rejected", "set":{"/commandOutcomes/0/outcome/value/message":"bad\u0001message"}, "expect":{"structurallyValid":false}},
+    {"name":"command-unknown-aggregate", "base":"chain", "set":{"/messages/0/aggregate":{"type":"fleet","id":"one"}}, "expect":{"structurallyValid":false}},
+    {"name":"domain-event-unknown-context", "base":"chain", "set":{"/messages/1/context":"bike-rental"}, "expect":{"structurallyValid":false}},
+    {"name":"integration-event-unknown-aggregate", "base":"chain", "set":{"/messages/2/aggregate":{"type":"fleet","id":"one"}}, "expect":{"structurallyValid":false}},
+    {"name":"series-unknown-schema-version", "base":"accepted", "set":{"/schemaVersion":2}, "expect":{"structurallyValid":false}},
+    {"name":"outcome-unknown-causation", "base":"accepted", "set":{"/commandOutcomes/0/causationId":"c"}, "expect":{"structurallyValid":false}},
+    {"name":"command-missing-context", "base":"accepted", "remove":["/messages/0/context"], "expect":{"structurallyValid":false}},
+    {"name":"message-zero-schema-version", "base":"accepted", "set":{"/messages/0/schemaVersion":0}, "expect":{"structurallyValid":false}},
+    {"name":"message-invalid-identifier", "base":"accepted", "set":{"/messages/0/messageId":"has space"}, "expect":{"structurallyValid":false}},
+    {"name":"ordinal-negative", "base":"accepted", "set":{"/messages/0/observationOrder":-1}, "expect":{"structurallyValid":false}},
+    {"name":"ordinal-gap", "base":"accepted", "set":{"/commandOutcomes/0/observationOrder":2}, "expect":{"structurallyValid":false}},
+    {"name":"ordinal-duplicate-across-arrays", "base":"accepted", "set":{"/commandOutcomes/0/observationOrder":0}, "expect":{"structurallyValid":false}},
+    {"name":"message-ordinals-not-increasing", "base":"chain", "set":{"/messages/0/observationOrder":1,"/messages/1/observationOrder":0}, "expect":{"structurallyValid":false}},
+    {"name":"duplicate-message-id", "base":"chain", "set":{"/messages/2/messageId":"e"}, "expect":{"structurallyValid":false}},
+    {
+      "name":"duplicate-command-outcome", "base":"accepted",
+      "set":{"/commandOutcomes":[
+        {"commandMessageId":"c","responseMessageId":"r","correlationId":"flow","observationOrder":1,"outcome":{"status":"accepted"}},
+        {"commandMessageId":"c","responseMessageId":"r","correlationId":"flow","observationOrder":2,"outcome":{"status":"accepted"}}
+      ]}, "expect":{"structurallyValid":false}
+    },
+    {
+      "name":"duplicate-response-id", "base":"accepted",
+      "set":{"/commandOutcomes":[
+        {"commandMessageId":"c","responseMessageId":"r","correlationId":"flow","observationOrder":1,"outcome":{"status":"accepted"}},
+        {"commandMessageId":"other","responseMessageId":"r","correlationId":"flow","observationOrder":2,"outcome":{"status":"accepted"}}
+      ]}, "expect":{"structurallyValid":false}
+    },
+    {
+      "name":"outcome-ordinals-not-increasing", "base":"accepted",
+      "set":{"/commandOutcomes":[
+        {"commandMessageId":"c","responseMessageId":"r","correlationId":"flow","observationOrder":2,"outcome":{"status":"accepted"}},
+        {"commandMessageId":"other","responseMessageId":"s","correlationId":"flow","observationOrder":1,"outcome":{"status":"accepted"}}
+      ]}, "expect":{"structurallyValid":false}
+    }
+  ],
+  "limits": [
+    {"name":"messages-at-limit", "base":"accepted", "kind":"array", "field":"messages", "count":4096, "structurallyValid":true},
+    {"name":"messages-over-limit", "base":"accepted", "kind":"array", "field":"messages", "count":4097, "structurallyValid":false},
+    {"name":"outcomes-at-limit", "base":"accepted", "kind":"array", "field":"commandOutcomes", "count":4096, "structurallyValid":true},
+    {"name":"outcomes-over-limit", "base":"accepted", "kind":"array", "field":"commandOutcomes", "count":4097, "structurallyValid":false},
+    {"name":"identifier-at-byte-limit", "base":"accepted", "kind":"string", "path":"/messages/0/messageId", "unit":"a", "count":256, "structurallyValid":true},
+    {"name":"identifier-over-byte-limit", "base":"accepted", "kind":"string", "path":"/messages/0/messageId", "unit":"a", "count":257, "structurallyValid":false},
+    {"name":"rejection-code-at-byte-limit", "base":"rejected", "kind":"string", "path":"/commandOutcomes/0/outcome/value/code", "unit":"A", "count":128, "structurallyValid":true},
+    {"name":"rejection-code-over-byte-limit", "base":"rejected", "kind":"string", "path":"/commandOutcomes/0/outcome/value/code", "unit":"A", "count":129, "structurallyValid":false},
+    {"name":"rejection-message-at-utf8-limit", "base":"rejected", "kind":"string", "path":"/commandOutcomes/0/outcome/value/message", "unit":"é", "count":512, "structurallyValid":true},
+    {"name":"rejection-message-over-utf8-limit", "base":"rejected", "kind":"string", "path":"/commandOutcomes/0/outcome/value/message", "unit":"é", "count":513, "structurallyValid":false}
+  ]
+}

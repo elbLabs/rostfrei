@@ -1,0 +1,20 @@
+{
+  "name": "@rostfrei/tracer-presentation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=22.16.0" },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit --target es2023 --module nodenext --moduleResolution nodenext --resolveJsonModule --allowImportingTsExtensions --strict src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm build",
+    "test:package": "node test/package-probe.mjs"
+  },
+  "dependencies": { "ajv": "^8.20.0" },
+  "devDependencies": {
+    "typescript": "^6.0.2"
+  }
+}
