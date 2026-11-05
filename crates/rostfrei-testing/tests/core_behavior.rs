@@ -762,9 +762,12 @@ async fn in_memory_store_satisfies_reusable_contracts() {
     event_store_contract::run_atomic_multi_stream_transactions(InMemoryEventStore::new).await;
 }
 
-#[tokio::test]
-async fn fixture_only_store_satisfies_reusable_base_contract() {
-    event_store_contract::run(|| FixtureOnlyStore(InMemoryEventStore::new())).await;
+#[test]
+fn reusable_base_contract_accepts_fixture_only_stores() {
+    // Instantiating the future checks the runner's bounds without rerunning memory conformance.
+    drop(event_store_contract::run(|| {
+        FixtureOnlyStore(InMemoryEventStore::new())
+    }));
 }
 
 #[tokio::test]

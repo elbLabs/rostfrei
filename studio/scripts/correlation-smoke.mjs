@@ -25,6 +25,7 @@ const INSPECTION = "Bearer correlation-inspection"
 
 function correlationBackend() {
   const requests = []
+  const unexpectedRequests = []
   let snapshot = correlationSnapshot()
   let anchorResult
   const directResults = new Map()
@@ -32,9 +33,11 @@ function correlationBackend() {
   const pending = new Set()
   return {
     requests,
+    unexpectedRequests,
     reset() {
       for (const release of pending) release()
       requests.length = 0
+      unexpectedRequests.length = 0
       snapshot = correlationSnapshot()
       anchorResult = undefined
       directResults.clear()
@@ -97,9 +100,8 @@ function correlationBackend() {
             message: "Correlation views require inspection",
           })
         if (url === anchorPath) {
-          const { status, body } =
-            anchorResult ?? anchorResponse(query, snapshot)
-          return json(status, body)
+          const result = anchorResult ?? anchorResponse(query, snapshot)
+          if (result) return json(result.status, result.body)
         }
         if (url === missingAnchorPath)
           return json(404, correlationErrors.unknownAnchorStream)
@@ -108,19 +110,20 @@ function correlationBackend() {
           "/aggregates/bike-rental%2Frental-fleet/empty-fleet/correlations"
         )
           return json(200, { ...anchorView(snapshot), correlations: [] })
-        if (url.startsWith("/aggregates/billing%2Fnot-an-anchor/"))
+        if (
+          url === "/aggregates/billing%2Fnot-an-anchor/invoice-42/correlations"
+        )
           return json(400, correlationErrors.unknownAnchor)
-        if (url === "/correlations/visual-not-retained/events")
-          return json(404, correlationErrors.notFound)
         const chain = /^\/correlations\/([^/]+)\/events$/.exec(url)
         if (chain) {
           const id = decodeURIComponent(chain[1])
           const result = directResults.get(id)
           if (result) return json(result.status, result.body)
           const body = chainView(id, snapshot)
-          return body ? json(200, body) : json(404, correlationErrors.notFound)
+          if (body) return json(200, body)
         }
-        json(501, { message: `Unexpected correlation fixture: ${url}` })
+        unexpectedRequests.push(requests.at(-1))
+        json(501, { message: `Unexpected correlation fixture: ${request.url}` })
       })
     },
   }
@@ -191,6 +194,7 @@ export async function checkCorrelations() {
         await page.waitForSelector('.connection-status[data-source="live"]')
         await check(page, backend)
         assert.deepEqual(diagnostics.pageErrors, [])
+        assert.deepEqual(backend.unexpectedRequests, [])
         results.push({ name, status: "passed" })
         console.log(`Correlations: ${name} passed`)
       } catch (error) {
@@ -335,17 +339,17 @@ async function checkAnchorInteractions(page, backend) {
   )
   assert.equal(await page.$("[data-correlation-id]"), null)
 
-  await page.type('[aria-label="Correlation ID"]', "visual-not-retained")
-  await page.click('[aria-label="Open a correlation by ID"] button')
-  await page.waitForSelector('[data-correlation-failure="not-found"]')
-  assert.match(
-    await text(page, '[data-correlation-failure="not-found"]'),
-    /No retained events.*404/s
+  await page.select('[aria-label="Anchor aggregate type"]', "")
+  await setValue(
+    page,
+    '[aria-label="Other anchor aggregate type"]',
+    "billing/not-an-anchor"
   )
-  assert.equal(
-    await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
-    0,
-    "a failed lookup never shows demo or stale messages"
+  await loadAnchor(page, "invoice-42")
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#studio-correlation-panel [role='alert']")
+      ?.textContent.includes("Not an anchor aggregate")
   )
 
   const correlationRequests = backend.requests.filter(
@@ -581,19 +585,6 @@ async function checkReadFailures(page, backend, testedStatus) {
     assert.ok(actual.includes(String(status)))
     assert.doesNotMatch(actual, /No correlations for|index|projector/i)
   }
-  backend.setAnchorResult(undefined)
-  await page.select('[aria-label="Anchor aggregate type"]', "")
-  await setValue(
-    page,
-    '[aria-label="Other anchor aggregate type"]',
-    "billing/not-an-anchor"
-  )
-  await loadAnchor(page, "invoice-42")
-  await page.waitForFunction(() =>
-    document
-      .querySelector("#studio-correlation-panel [role='alert']")
-      ?.textContent.includes("Not an anchor aggregate")
-  )
 }
 
 async function checkReadingRetainedEvents(page, backend) {

@@ -81,6 +81,14 @@ ROSTFREI_NATS_SERVER=/path/to/nats-server \
   cargo test --locked -p rostfrei-nats --test receipt_cluster_integration -- --ignored --test-threads=1
 ```
 
+Native event-store contracts share the library test target so private wire checks
+and test-only fault hooks compile once. To run its clustered replay checks:
+
+```sh
+ROSTFREI_NATS_SERVER=/path/to/nats-server \
+  cargo test --locked -p rostfrei-nats --lib event_store_integration::history_cluster -- --ignored --test-threads=1
+```
+
 Run the [domain-event worker pool](domain-event-workers.md) checks with:
 
 ```sh

@@ -31,27 +31,58 @@ pub struct Fixture {
     pub connection: NatsConnection,
     pub topology: MessagingTopology,
     pub sales: NatsEventStore,
-    pub shipping: NatsEventStore,
+    shipping: Option<NatsEventStore>,
 }
 
 impl Fixture {
     pub async fn new() -> TestResult<Self> {
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        let sequence = NEXT_APPLICATION.fetch_add(1, Ordering::Relaxed);
-        let application = ApplicationName::new(format!(
-            "history-{:x}-{nanos:x}-{sequence:x}",
-            std::process::id()
-        ))?;
-        Self::in_scope(application, TrafficScope::Normal).await
+        Self::in_scope(unique_application()?, TrafficScope::Normal).await
     }
 
     pub async fn in_scope(application: ApplicationName, scope: TrafficScope) -> TestResult<Self> {
+        Self::configured(application, scope, true, Ok).await
+    }
+
+    pub async fn with_authority(scope: TrafficScope, split: bool) -> TestResult<Self> {
+        Self::configured(unique_application()?, scope, false, |config| {
+            Ok(if split {
+                config
+                    .with_fresh_split_outcome_epoch("receipt-history-fixture")?
+                    .with_explicit_detail_expiry(true)?
+            } else {
+                config.with_fresh_completed_outcome_epoch("receipt-history-fixture")?
+            })
+        })
+        .await
+    }
+
+    async fn configured(
+        application: ApplicationName,
+        scope: TrafficScope,
+        with_shipping: bool,
+        configure: impl FnOnce(NatsEventStoreConfig) -> TestResult<NatsEventStoreConfig>,
+    ) -> TestResult<Self> {
         let connection = new_connection().await?;
         let messaging = ApplicationMessagingConfig::new_in_scope(&application, scope)?
             .with_max_bytes(32 * 1024 * 1024)?;
         provision_stream(connection.jetstream(), messaging.integration_events()).await?;
-        let sales = domain_store(&connection, &application, scope, "sales").await?;
-        let shipping = domain_store(&connection, &application, scope, "shipping").await?;
+        let config = NatsEventStoreConfig::for_bounded_context(
+            &application.bounded_context_in_scope(scope, "sales")?,
+        )?;
+        let sales = domain_store(&connection, configure(config)?).await?;
+        let shipping = if with_shipping {
+            Some(
+                domain_store(
+                    &connection,
+                    NatsEventStoreConfig::for_bounded_context(
+                        &application.bounded_context_in_scope(scope, "shipping")?,
+                    )?,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
         Ok(Self {
             connection,
             topology: messaging.topology().clone(),
@@ -65,7 +96,23 @@ impl Fixture {
     }
 
     pub fn configs(&self) -> Vec<NatsEventStoreConfig> {
-        vec![self.sales.config().clone(), self.shipping.config().clone()]
+        std::iter::once(&self.sales)
+            .chain(self.shipping.iter())
+            .map(|store| store.config().clone())
+            .collect()
+    }
+
+    pub fn shipping(&self) -> TestResult<&NatsEventStore> {
+        self.shipping
+            .as_ref()
+            .ok_or_else(|| "fixture has no shipping source".into())
+    }
+
+    pub async fn journal(&self) -> TestResult<jetstream::stream::Stream> {
+        Ok(self
+            .js()
+            .get_stream(self.sales.config().stream_name())
+            .await?)
     }
 
     pub async fn reader(&self) -> TestResult<NatsCorrelationHistory> {
@@ -75,12 +122,26 @@ impl Fixture {
         )
     }
 
-    pub fn source_names(&self) -> [&str; 3] {
-        [
-            self.sales.config().stream_name(),
-            self.shipping.config().stream_name(),
-            self.topology.integration_event_stream().as_str(),
-        ]
+    pub fn source_names(&self) -> Vec<&str> {
+        std::iter::once(&self.sales)
+            .chain(self.shipping.iter())
+            .map(|store| store.config().stream_name())
+            .chain(std::iter::once(
+                self.topology.integration_event_stream().as_str(),
+            ))
+            .collect()
+    }
+
+    pub async fn assert_no_consumers(&self) -> TestResult {
+        for name in self.source_names() {
+            let stream = self.js().get_stream(name).await?;
+            assert_eq!(
+                stream.cached_info().state.consumer_count,
+                0,
+                "inspection leaked a consumer on {name}"
+            );
+        }
+        Ok(())
     }
 
     pub async fn snapshot(&self) -> TestResult<Vec<CorrelationSourceSnapshot>> {
@@ -154,7 +215,12 @@ impl Fixture {
 
     pub async fn cleanup(self) -> TestResult {
         let existing = stream_names(self.js()).await?;
-        for name in self.source_names() {
+        let configs = self.configs();
+        for name in self.source_names().into_iter().chain(
+            configs
+                .iter()
+                .map(NatsEventStoreConfig::outcome_state_stream_name),
+        ) {
             if existing.contains(name) {
                 self.js().delete_stream(name).await?;
             }
@@ -162,6 +228,15 @@ impl Fixture {
         self.connection.drain().await?;
         Ok(())
     }
+}
+
+pub fn unique_application() -> TestResult<ApplicationName> {
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let sequence = NEXT_APPLICATION.fetch_add(1, Ordering::Relaxed);
+    Ok(ApplicationName::new(format!(
+        "history-{:x}-{nanos:x}-{sequence:x}",
+        std::process::id()
+    ))?)
 }
 
 pub async fn new_connection() -> TestResult<NatsConnection> {
@@ -174,13 +249,9 @@ pub async fn new_connection() -> TestResult<NatsConnection> {
 
 async fn domain_store(
     connection: &NatsConnection,
-    application: &ApplicationName,
-    scope: TrafficScope,
-    name: &str,
+    config: NatsEventStoreConfig,
 ) -> TestResult<NatsEventStore> {
-    let context = application.bounded_context_in_scope(scope, name)?;
-    let config = NatsEventStoreConfig::for_bounded_context(&context)?
-        .with_storage_limits(32 * 1024 * 1024, 512 * 1024)?;
+    let config = config.with_storage_limits(32 * 1024 * 1024, 512 * 1024)?;
     provision_event_store(connection.jetstream(), &config).await?;
     Ok(NatsEventStore::connect(connection.jetstream().clone(), config).await?)
 }

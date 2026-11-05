@@ -10,11 +10,11 @@ use async_trait::async_trait;
 use axum::{body::Body, http::Request};
 use bike_rental::{demo::demo_fixture, tracer};
 use http_body_util::BodyExt as _;
-use rostfrei::nats::{NatsConnectionConfig, NatsEventStoreConfig, connect};
+use rostfrei::nats::{NatsConnection, NatsConnectionConfig, NatsEventStoreConfig, connect};
 use rostfrei::tracer::{
-    CommandInvocation, CommandOutcome, CommandPublication, CommandTransportObserver,
-    NatsApplication, NatsHostError, NatsRuntime, NatsRuntimeConfig, TracerConfig,
-    command_execution_fingerprint,
+    ApplicationBindings, CommandInvocation, CommandOutcome, CommandPublication,
+    CommandTransportObserver, NatsApplication, NatsHostError, NatsRuntime, NatsRuntimeConfig,
+    TracerConfig, command_execution_fingerprint,
     http::{self, HttpConfig},
 };
 use rostfrei::{ApplicationName, OperationId};
@@ -94,15 +94,58 @@ fn correlation_ids(body: &Value) -> Vec<&str> {
         .collect()
 }
 
-#[tokio::test]
-async fn ordinary_runtime_events_are_inspectable_without_a_projector_even_after_shutdown()
--> TestResult {
-    inspect_retained_events(false).await
+async fn start_inspection_host(
+    application: &ApplicationName,
+    connection: &NatsConnection,
+    bindings: Arc<ApplicationBindings>,
+    config: TracerConfig,
+) -> TestResult<NatsApplication> {
+    Ok(NatsApplication::builder(
+        application.test_bounded_context("bike-rental")?,
+        connection.clone(),
+        bindings,
+    )?
+    .with_fresh_completed_outcome_epoch("retained-correlations")?
+    .with_default_test_fixture(demo_fixture()?)
+    .with_tracer(Some(config))
+    .provision_and_start()
+    .await?)
+}
+
+fn assert_source_cutoffs(body: &Value, normal: &NatsRuntime) -> TestResult {
+    let sources = body
+        .pointer("/snapshot/sources")
+        .and_then(Value::as_array)
+        .ok_or("missing source cutoffs")?;
+    assert_eq!(
+        sources.len(),
+        2,
+        "domain source must be registered exactly once"
+    );
+    let domain = sources
+        .iter()
+        .find(|source| source["kind"] == "domain")
+        .ok_or("missing domain cutoff")?;
+    assert_eq!(domain["context"], "bike-rental");
+    assert_eq!(domain["stream"], normal.config().event_store.stream_name());
+    assert!(sources.iter().any(|source| source["kind"] == "integration"));
+    for source in sources {
+        let cutoff = source["cutoff_sequence"]
+            .as_str()
+            .ok_or("cutoff must retain its decimal string representation")?;
+        assert!(cutoff.parse::<u64>()? > 0);
+    }
+    Ok(())
 }
 
 #[tokio::test]
-async fn inspection_only_host_reads_external_runtime_without_dispatch() -> TestResult {
-    inspect_retained_events(true).await
+async fn dispatch_runtime_automatically_registers_retained_inspection_sources() -> TestResult {
+    inspect_runtime_source(false).await
+}
+
+#[tokio::test]
+async fn inspection_only_host_deduplicates_explicit_sources_without_dispatch() -> TestResult {
+    inspect_runtime_source(true).await
 }
 
 #[tokio::test]
@@ -220,16 +263,9 @@ async fn inspection_host_survives_missing_outcome_state_but_rejects_replaced_jou
         .with_trace_payload_policy(Arc::new(
             rostfrei::tracer::ExposeTracePayloadsForLocalDevelopment,
         ));
-        let host = NatsApplication::builder(
-            application.test_bounded_context("bike-rental")?,
-            connection.clone(),
-            bindings.clone(),
-        )?
-        .with_fresh_completed_outcome_epoch("journal-history-host")?
-        .with_default_test_fixture(demo_fixture()?)
-        .with_tracer(Some(tracer_config))
-        .provision_and_start()
-        .await?;
+        let host =
+            start_inspection_host(&application, &connection, bindings.clone(), tracer_config)
+                .await?;
         let app = http::router(host.tracer().ok_or("missing Tracer")?.clone(), http);
         published_chain(&app, "retained-rent", 2).await?;
         runtime.stop_workers().await;
@@ -294,16 +330,7 @@ async fn aggregate_correlation_selection_intersects_history_and_preserves_retain
     .with_trace_payload_policy(Arc::new(
         rostfrei::tracer::ExposeTracePayloadsForLocalDevelopment,
     ));
-    let host = NatsApplication::builder(
-        application.test_bounded_context("bike-rental")?,
-        connection.clone(),
-        bindings,
-    )?
-    .with_fresh_completed_outcome_epoch("selected-correlations")?
-    .with_default_test_fixture(demo_fixture()?)
-    .with_tracer(Some(config))
-    .provision_and_start()
-    .await?;
+    let host = start_inspection_host(&application, &connection, bindings, config).await?;
     let app = http::router(host.tracer().ok_or("missing Tracer")?.clone(), http);
 
     // Commands establish both fleets and unrequested city history without fixtures.
@@ -358,16 +385,7 @@ async fn aggregate_correlation_selection_intersects_history_and_preserves_retain
             "selected-transfer"
         ]
     );
-    let sources = original["snapshot"]["sources"]
-        .as_array()
-        .ok_or("missing source cutoffs")?;
-    assert_eq!(sources.len(), 2);
-    for source in sources {
-        let cutoff = source["cutoff_sequence"]
-            .as_str()
-            .ok_or("cutoff must retain its decimal string representation")?;
-        assert!(cutoff.parse::<u64>()? > 0);
-    }
+    assert_source_cutoffs(&original, &normal)?;
     let rent_refs = rent["refs"].as_array().ok_or("missing rental refs")?;
     let rented = rent_refs
         .iter()
@@ -410,6 +428,27 @@ async fn aggregate_correlation_selection_intersects_history_and_preserves_retain
         .ok_or("missing included destination event")?;
     assert_eq!(destination["payload"]["bicycle_id"], "bike-7");
 
+    let (status, harbor) = get(
+        &app,
+        &format!("{FLEET}/harbor-fleet/correlations?include=context:bike-rental"),
+        "inspection",
+    )
+    .await?;
+    assert_eq!(status, 200, "{harbor}");
+    assert_eq!(
+        correlation_ids(&harbor),
+        ["harbor-bike-8", "selected-transfer"]
+    );
+    assert_eq!(harbor["snapshot"], original["snapshot"]);
+    assert_eq!(harbor["correlations"][1], selected["correlations"][1]);
+    let source = harbor["correlations"][1]["refs"]
+        .as_array()
+        .ok_or("missing destination-anchored transfer")?
+        .iter()
+        .find(|reference| reference["aggregate_id"] == "city-fleet")
+        .ok_or("missing included source event")?;
+    assert_eq!(source["payload"]["bicycle_id"], "bike-7");
+
     let payload_match = "match=bike-rental/bicycle-transferred-in.bicycle_id=bike-7";
     let (status, matched) = get(
         &app,
@@ -422,23 +461,17 @@ async fn aggregate_correlation_selection_intersects_history_and_preserves_retain
     assert_eq!(matched["snapshot"], original["snapshot"]);
     assert_eq!(matched["correlations"][0], selected["correlations"][1]);
 
-    // Without an include the destination payload cannot match. Matching must also
-    // not pull an unselected transfer back into a rent-only selection.
-    for query in [
-        format!("{selection}&{payload_match}"),
-        format!("correlation=selected-rent&include=context:bike-rental&{payload_match}"),
-        "correlation=harbor-bike-8&correlation=not-recorded".to_owned(),
-    ] {
-        let (status, empty) = get(
-            &app,
-            &format!("{FLEET}/city-fleet/correlations?{query}"),
-            "inspection",
-        )
-        .await?;
-        assert_eq!(status, 200, "{empty}");
-        assert_eq!(empty["correlations"], json!([]));
-        assert!(empty.get("truncated").is_none());
-    }
+    let (status, empty) = get(
+        &app,
+        &format!(
+            "{FLEET}/city-fleet/correlations?correlation=harbor-bike-8&correlation=not-recorded"
+        ),
+        "inspection",
+    )
+    .await?;
+    assert_eq!(status, 200, "{empty}");
+    assert_eq!(empty["correlations"], json!([]));
+    assert!(empty.get("truncated").is_none());
     let (status, unknown) = get(
         &app,
         &format!("{FLEET}/missing-fleet/correlations?{selection}"),
@@ -503,7 +536,7 @@ async fn production_inspection_rejects_wrong_scope_application_and_conflicting_s
     Ok(())
 }
 
-async fn inspect_retained_events(inspection_only: bool) -> TestResult {
+async fn inspect_runtime_source(inspection_only: bool) -> TestResult {
     let connection = connect(&NatsConnectionConfig::new(
         "subject-correlations-host",
         rostfrei::testing::integration::nats_url()?,
@@ -533,10 +566,7 @@ async fn inspect_retained_events(inspection_only: bool) -> TestResult {
     let config = TracerConfig::new(
         tokio::net::TcpListener::bind("127.0.0.1:0").await?,
         http.clone(),
-    )
-    .with_trace_payload_policy(Arc::new(
-        rostfrei::tracer::ExposeTracePayloadsForLocalDevelopment,
-    ));
+    );
     let config = if inspection_only {
         normal.start_workers().await?;
         config
@@ -545,16 +575,7 @@ async fn inspect_retained_events(inspection_only: bool) -> TestResult {
     } else {
         config.with_dispatch_runtime(normal.clone())
     };
-    let host = NatsApplication::builder(
-        application.test_bounded_context("bike-rental")?,
-        connection.clone(),
-        bindings,
-    )?
-    .with_fresh_completed_outcome_epoch("subject-correlations")?
-    .with_default_test_fixture(demo_fixture()?)
-    .with_tracer(Some(config))
-    .provision_and_start()
-    .await?;
+    let host = start_inspection_host(&application, &connection, bindings, config).await?;
     let app = http::router(host.tracer().ok_or("missing Tracer")?.clone(), http);
 
     let (status, catalog) = get(&app, "/catalog", "inspection").await?;
@@ -598,91 +619,18 @@ async fn inspect_retained_events(inspection_only: bool) -> TestResult {
         .find(|item| item["kind"] == "integration")
         .ok_or("missing integration event")?;
     assert_eq!(domain["event_type"], "bicycle-rented");
-    assert_eq!(integration["causation_id"], domain["event_id"]);
+    let event_id = domain["event_id"]
+        .as_str()
+        .ok_or("missing domain event identity")?;
+    assert!(!event_id.is_empty());
+    assert_eq!(integration["causation_id"], event_id);
     assert!(
         integration["subject"]
             .as_str()
             .is_some_and(|subject| subject.contains(".external-rent."))
     );
     assert!(rent.get("lag").is_none());
-    assert_eq!(
-        rent.pointer("/snapshot/sources")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        Some(2)
-    );
-
-    command(
-        &normal,
-        "city-bike-7",
-        "add-bicycle",
-        json!({
-            "fleet_id": "city-fleet", "bicycle_id": "bike-7", "condition": "serviceable"
-        }),
-    )
-    .await?;
-    command(
-        &normal,
-        "harbor-bike-8",
-        "add-bicycle",
-        json!({
-            "fleet_id": "harbor-fleet", "bicycle_id": "bike-8", "condition": "serviceable"
-        }),
-    )
-    .await?;
-    command(
-        &normal,
-        "transfer-bike-7",
-        "transfer-bicycle",
-        json!({
-            "from_fleet_id": "city-fleet", "bicycle_id": "bike-7", "to_fleet_id": "harbor-fleet"
-        }),
-    )
-    .await?;
-
-    let (status, harbor) = get(
-        &app,
-        &format!("{FLEET}/harbor-fleet/correlations?include=context:bike-rental"),
-        "inspection",
-    )
-    .await?;
-    assert_eq!(status, 200, "{harbor}");
-    assert_eq!(
-        correlation_ids(&harbor),
-        ["harbor-bike-8", "transfer-bike-7"]
-    );
-    let transfer = harbor
-        .pointer("/correlations/1/refs")
-        .and_then(Value::as_array)
-        .ok_or("missing transfer")?;
-    let source = transfer
-        .iter()
-        .find(|item| item["aggregate_id"] == "city-fleet")
-        .ok_or("missing source")?;
-    assert_eq!(
-        source
-            .pointer("/payload/bicycle_id")
-            .and_then(Value::as_str),
-        Some("bike-7")
-    );
-
-    let (status, matched) = get(
-        &app,
-        &format!(
-            "{FLEET}/city-fleet/correlations?match=bike-rental/bicycle-added.bicycle_id=bike-7"
-        ),
-        "inspection",
-    )
-    .await?;
-    assert_eq!(status, 200, "{matched}");
-    assert_eq!(correlation_ids(&matched), ["city-bike-7"]);
-    let (status, unknown) =
-        get(&app, &format!("{FLEET}/bike-42/correlations"), "inspection").await?;
-    assert_eq!(status, 404);
-    assert_eq!(
-        unknown.get("code").and_then(Value::as_str),
-        Some("unknown-anchor-stream")
-    );
+    assert_source_cutoffs(&rent, &normal)?;
     for token in ["control", "dispatch"] {
         assert_eq!(
             get(&app, &format!("{FLEET}/city-fleet/correlations"), token)
@@ -700,7 +648,10 @@ async fn inspect_retained_events(inspection_only: bool) -> TestResult {
         status, 200,
         "retained reads require no running workers: {after_shutdown}"
     );
-    assert_eq!(after_shutdown.get("refs"), rent.get("refs"));
+    assert_eq!(
+        after_shutdown, rent,
+        "shutdown preserves evidence and source cutoffs"
+    );
     connection.drain().await?;
     Ok(())
 }

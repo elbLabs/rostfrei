@@ -178,102 +178,67 @@ export function anchorView(snapshot = correlationSnapshot()) {
   }
 }
 
-const included = {
-  "bike-rental": {
-    "event:bicycle-transferred-in": {
-      fleet_id: "harbor-fleet",
-      bicycle_id: "bike-7",
-    },
-  },
-  billing: {
-    "event:invoice-opened": {
-      invoice_id: "invoice-42",
-      amount: 12,
-      paid: false,
-    },
-  },
-}
-
-function fieldValue(payload, path) {
-  return path
-    .split(".")
-    .reduce(
-      (value, segment) =>
-        value === null || typeof value !== "object"
-          ? undefined
-          : value[segment],
-      payload
-    )
-}
-
-function equals(actual, expected) {
-  if (typeof actual === "string") return actual === expected
-  if (typeof actual === "number")
-    return expected.trim() !== "" && Number(expected) === actual
-  if (typeof actual === "boolean") return String(actual) === expected
-  return false
-}
-
+// Only the query combinations exercised by the browser tests and visual scenes.
+// Tracer's HTTP tests own payload matching and include validation.
 export function anchorResponse(search, snapshot) {
-  const params = new URLSearchParams(search)
-  const contexts = params
-    .getAll("include")
-    .map((value) => value.replace(/^context:/, ""))
-  const matches = []
-  for (const expression of params.getAll("match")) {
-    const slash = expression.indexOf("/")
-    const equalsAt = expression.indexOf("=", slash + 1)
-    const target = expression.slice(slash + 1, equalsAt)
-    const dot = target.indexOf(".")
-    if (slash <= 0 || equalsAt < 0 || dot <= 0)
-      return {
-        status: 400,
-        body: {
-          code: "invalid-match",
-          message: `invalid match \`${expression}\``,
-        },
-      }
-    const match = {
-      context: expression.slice(0, slash),
-      event_type: target.slice(0, dot),
-      field: target.slice(dot + 1),
-      value: expression.slice(equalsAt + 1),
-    }
-    if (match.context !== "bike-rental" && !contexts.includes(match.context))
-      return {
-        status: 400,
-        body: {
-          code: "match-requires-include",
-          message: `payloads of context \`${match.context}\` are not loaded; add include=context:${match.context}`,
-        },
-      }
-    matches.push(match)
-  }
   const view = anchorView(snapshot)
-  view.correlations = view.correlations.map((correlation) => ({
-    ...correlation,
-    refs: correlation.refs.map((reference) => {
-      const payload = contexts.includes(reference.context)
-        ? included[reference.context]?.[reference.event_id]
-        : undefined
-      return payload ? { ...reference, payload } : reference
-    }),
-  }))
-  if (!matches.length) return { status: 200, body: view }
-  view.matched = matches
-  view.correlations = view.correlations.filter((correlation) =>
-    matches.every((match) =>
-      correlation.refs.some(
-        (reference) =>
-          reference.kind === "domain" &&
-          reference.context === match.context &&
-          reference.event_type === match.event_type &&
-          reference.payload !== undefined &&
-          equals(fieldValue(reference.payload, match.field), match.value)
-      )
-    )
-  )
-  return { status: 200, body: view }
+  const billing = structuredClone(view)
+  billing.correlations[1].refs[2].payload = {
+    invoice_id: "invoice-42",
+    amount: 12,
+    paid: false,
+  }
+  const sameContext = structuredClone(view)
+  sameContext.correlations[2].refs[1].payload = {
+    fleet_id: "harbor-fleet",
+    bicycle_id: "bike-7",
+  }
+  const rentalQuery = "match=bike-rental/bicycle-rented.bicycle_id=bike-42"
+  const billingQuery = "match=billing/invoice-opened.amount=12"
+  const rentalMatch = {
+    context: "bike-rental",
+    event_type: "bicycle-rented",
+    field: "bicycle_id",
+    value: "bike-42",
+  }
+  const billingMatch = {
+    context: "billing",
+    event_type: "invoice-opened",
+    field: "amount",
+    value: "12",
+  }
+  const matched = (source, matches) => ({
+    ...source,
+    correlations: [source.correlations[1]],
+    matched: matches,
+  })
+  const responses = [
+    ["", view],
+    ["include=context:billing", billing],
+    ["include=context:bike-rental", sameContext],
+    [rentalQuery, matched(view, [rentalMatch])],
+    [
+      `include=context:billing&${billingQuery}`,
+      matched(billing, [billingMatch]),
+    ],
+    [
+      `include=context:billing&${billingQuery}&${rentalQuery}`,
+      matched(billing, [billingMatch, rentalMatch]),
+    ],
+  ]
+  const queryKey = (value) => new URLSearchParams(value).toString()
+  const query = queryKey(search)
+  if (query === queryKey(billingQuery))
+    return {
+      status: 400,
+      body: {
+        code: "match-requires-include",
+        message:
+          "payloads of context `billing` are not loaded; add include=context:billing",
+      },
+    }
+  const body = responses.find(([key]) => queryKey(key) === query)?.[1]
+  return body ? { status: 200, body } : undefined
 }
 
 export function chainView(correlationId, snapshot = correlationSnapshot()) {

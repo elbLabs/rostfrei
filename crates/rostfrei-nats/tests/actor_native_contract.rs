@@ -1,5 +1,4 @@
-//! ACT-14..16. Run only `actor_` tests: source import retains unrelated original unit tests.
-//! Future `ActorRef` API; real owned NATS, no production changes or replacement store.
+//! Native actor propagation, authorization, wire emission, and restart contracts.
 #![allow(
     dead_code,
     clippy::unwrap_used,
@@ -8,27 +7,6 @@
 )]
 mod modular_restart_support;
 mod release_contract_support;
-// Source import gives test-only access to existing serialization boundaries.
-#[path = "../src/event_store_config.rs"]
-mod event_store_config;
-#[path = "../src/hex.rs"]
-mod hex;
-#[path = "../src/stream_policy.rs"]
-mod stream_policy;
-#[path = "../src/subject_tokens.rs"]
-mod subject_tokens;
-use event_store_config::NatsEventStoreConfig;
-mod event_store {
-    pub fn actor_check_receipt(
-        config: &NatsEventStoreConfig,
-        sequence: u64,
-        headers: &HeaderMap,
-        bytes: &[u8],
-    ) -> Result<(), EventStoreError> {
-        decode_transaction_receipt(config, sequence, headers, bytes).map(|_| ())
-    }
-    include!("../src/event_store.rs");
-}
 use async_trait::async_trait;
 use release_contract_support::*;
 use rostfrei_runtime::{
@@ -210,11 +188,7 @@ async fn actor_native_resolver_keeps_authenticated_principal_distinct_on_replay(
 }
 
 #[tokio::test]
-#[allow(
-    clippy::too_many_lines,
-    reason = "checks all command, fixture, and receipt attribution wire forms together"
-)]
-async fn actor_native_event_and_receipt_wire_mutations_fail_integrity_checks() -> TestResult {
+async fn actor_native_command_and_fixture_writes_emit_attributed_wire_forms() -> TestResult {
     let f = Fixture::new("actor-wire").await?;
     let store = store(&f).await?;
     let service = service(
@@ -243,9 +217,8 @@ async fn actor_native_event_and_receipt_wire_mutations_fail_integrity_checks() -
     )?;
     let fixture_config = NatsEventStoreConfig::for_bounded_context(&fixture_context)?
         .with_storage_limits(32 * 1024 * 1024, 524_288)?;
-    event_store::provision_event_store(&f.js, &fixture_config).await?;
-    let fixture_store =
-        event_store::NatsEventStore::connect(f.js.clone(), fixture_config.clone()).await?;
+    provision_event_store(&f.js, &fixture_config).await?;
+    let fixture_store = NatsEventStore::connect(f.js.clone(), fixture_config.clone()).await?;
     let raw_operation = OperationId::new("standalone")?;
     let raw_commit = derive_commit_id(&raw_stream, &raw_operation);
     rostfrei_core::FixtureEventStore::append_fixture(
@@ -273,51 +246,19 @@ async fn actor_native_event_and_receipt_wire_mutations_fail_integrity_checks() -
             raw_stream.aggregate_id().as_str(),
         ))
         .await?;
-    let config = NatsEventStoreConfig::for_bounded_context(&f.context)?
-        .with_fresh_split_outcome_epoch("actor-contract")?
-        .with_explicit_detail_expiry(true)?
-        .with_storage_limits(32 * 1024 * 1024, 524_288)?;
-    for (field, raw, expected_schema, config) in [
-        ("event", &event, 6, &config),
-        ("event", &standalone, 8, &fixture_config),
-        ("receipt", &receipt, 5, &config),
+    for (field, raw, expected_schema) in [
+        ("event", &event, 6),
+        ("event", &standalone, 8),
+        ("receipt", &receipt, 5),
     ] {
-        let check = |bytes: &[u8]| {
-            if field == "event" {
-                event_store::decode_consumed_event(
-                    config,
-                    raw.subject.as_str(),
-                    &raw.headers,
-                    bytes,
-                )
-                .map(|_| ())
-            } else {
-                event_store::actor_check_receipt(config, raw.sequence, &raw.headers, bytes)
-            }
-        };
-        check(&raw.payload)?;
         let wire: serde_json::Value = serde_json::from_slice(&raw.payload)?;
         assert_eq!(wire["schemaVersion"], expected_schema);
         assert_eq!(wire[field]["actor"], serde_json::to_value(actor("alice"))?);
-        for mutation in ["replace", "strip", "null", "legacy-version"] {
-            let mut bad = wire.clone();
-            match mutation {
-                "replace" => bad[field]["actor"] = serde_json::to_value(actor("bob"))?,
-                "strip" => {
-                    bad[field].as_object_mut().unwrap().remove("actor");
-                }
-                "null" => bad[field]["actor"] = serde_json::Value::Null,
-                _ => bad["schemaVersion"] = serde_json::json!(4),
-            }
-            let bytes = serde_json::to_vec(&bad)?;
-            let result = check(&bytes);
-            assert_eq!(
-                result.unwrap_err().kind(),
-                EventStoreErrorKind::CorruptHistory,
-                "{field}: {mutation}"
-            );
-        }
     }
+    assert_eq!(
+        fixture_store.load(&raw_stream).await?[0].actor(),
+        Some(&actor("alice"))
+    );
     Ok(())
 }
 

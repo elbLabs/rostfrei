@@ -1,10 +1,11 @@
 use std::fmt::{self, Display};
 
 use rostfrei_core::{
-    AggregateId, AggregateType, AppendOutcome, CommitId, ContentFingerprint, EventBatch,
-    EventStore, EventStoreError, EventStoreErrorKind, EventTransaction, ExpectedVersion,
-    FixtureEventStore, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, StreamId, StreamVersion,
-    TransactionAppendOutcome, TransactionParticipant, derive_commit_id, derive_event_id,
+    ActorRef, AggregateId, AggregateType, AppendOutcome, CommitId, ContentFingerprint,
+    EnvelopeError, EventBatch, EventStore, EventStoreError, EventStoreErrorKind, EventTransaction,
+    ExpectedVersion, FixtureEventStore, MAX_TRANSACTION_ITEMS, NewEvent, OperationId, StreamId,
+    StreamVersion, TransactionAppendOutcome, TransactionParticipant, derive_commit_id,
+    derive_event_id,
 };
 use rostfrei_messaging_core::{CausationId, CorrelationId};
 
@@ -1134,19 +1135,10 @@ pub async fn try_transaction_item_limit_preserves_fixture_append_limit<
     let accepted_operation = "transaction-item-limit-accepted";
     let accepted_event_count = MAX_TRANSACTION_ITEMS.saturating_sub(1);
     let accepted = store
-        .append_transaction(EventTransaction::new(
-            OperationId::new(accepted_operation)
-                .map_err(|error| fixture_error("accepted limit operation ID", error))?,
-            ContentFingerprint::digest(accepted_operation),
-            vec![TransactionParticipant::new(
-                accepted_stream.clone(),
-                ExpectedVersion::NoStream,
-                Some(batch_with_event_count(
-                    &accepted_stream,
-                    accepted_operation,
-                    accepted_event_count,
-                )?),
-            )],
+        .append_transaction(single_stream_transaction(
+            &accepted_stream,
+            ExpectedVersion::NoStream,
+            batch_with_event_count(&accepted_stream, accepted_operation, accepted_event_count)?,
         ))
         .await
         .map_err(|source| store_error("accepted transaction item limit", source))?;
@@ -1157,15 +1149,10 @@ pub async fn try_transaction_item_limit_preserves_fixture_append_limit<
     let maximum_batch =
         batch_with_event_count(&rejected_stream, rejected_operation, MAX_TRANSACTION_ITEMS)?;
     let result = store
-        .append_transaction(EventTransaction::new(
-            OperationId::new(rejected_operation)
-                .map_err(|error| fixture_error("rejected limit operation ID", error))?,
-            ContentFingerprint::digest(rejected_operation),
-            vec![TransactionParticipant::new(
-                rejected_stream.clone(),
-                ExpectedVersion::NoStream,
-                Some(maximum_batch.clone()),
-            )],
+        .append_transaction(single_stream_transaction(
+            &rejected_stream,
+            ExpectedVersion::NoStream,
+            maximum_batch.clone(),
         ))
         .await;
     let Err(error) = result else {
@@ -1181,10 +1168,59 @@ pub async fn try_transaction_item_limit_preserves_fixture_append_limit<
     assert!(rejected_history.is_empty());
 
     let fixture = store
-        .append_fixture(&rejected_stream, ExpectedVersion::NoStream, maximum_batch)
+        .append_fixture(
+            &rejected_stream,
+            ExpectedVersion::NoStream,
+            maximum_batch.clone(),
+        )
         .await
         .map_err(|source| store_error("maximum-size fixture append", source))?;
     assert_eq!(fixture.events().len(), MAX_TRANSACTION_ITEMS);
+    for (ordinal, event) in fixture.events().iter().enumerate() {
+        let ordinal = u32::try_from(ordinal)
+            .map_err(|error| fixture_error("maximum-size fixture ordinal", error))?;
+        assert_eq!(event.stream_version().value(), u64::from(ordinal) + 1);
+        assert_eq!(event.commit_event_ordinal(), ordinal);
+        assert_eq!(event.commit_event_count(), 100);
+    }
+    let replay = store
+        .append_fixture(
+            &rejected_stream,
+            ExpectedVersion::NoStream,
+            maximum_batch.clone(),
+        )
+        .await
+        .map_err(|source| store_error("maximum-size fixture replay", source))?;
+    assert!(replay.is_exact_replay());
+    assert_eq!(replay.events(), fixture.events());
+    let history = store
+        .load(&rejected_stream)
+        .await
+        .map_err(|source| store_error("maximum-size fixture load", source))?;
+    assert_eq!(history, fixture.events());
+
+    let mut oversized = maximum_batch.events().to_vec();
+    oversized.push(
+        NewEvent::new(
+            derive_event_id(maximum_batch.commit_id(), 100),
+            "contract-event",
+            1,
+            b"event",
+        )
+        .map_err(|error| fixture_error("oversized fixture event", error))?,
+    );
+    assert!(matches!(
+        EventBatch::new(
+            maximum_batch.commit_id().clone(),
+            maximum_batch.operation_id().clone(),
+            maximum_batch.operation_fingerprint(),
+            oversized,
+        ),
+        Err(EnvelopeError::BatchTooLarge {
+            actual: 101,
+            maximum: 100
+        })
+    ));
     Ok(())
 }
 
@@ -1433,22 +1469,42 @@ pub async fn try_identities_are_stream_scoped<Store: FixtureEventStore>(
         AggregateId::new("identity-scope-b")
             .map_err(|error| fixture_error("other contract aggregate ID", error))?,
     );
-    store
+    let first_batch = batch(&first_stream, "shared-operation", "same", &[b"first"])?;
+    let second_batch = batch(&second_stream, "shared-operation", "same", &[b"second"])?;
+    assert_ne!(first_batch.commit_id(), second_batch.commit_id());
+    let first = store
         .append_fixture(
             &first_stream,
             ExpectedVersion::NoStream,
-            batch(&first_stream, "shared-operation", "same", &[b"first"])?,
+            first_batch.clone(),
         )
         .await
         .map_err(|source| store_error("first identity-scoped append should succeed", source))?;
-    store
+    let second = store
         .append_fixture(
             &second_stream,
             ExpectedVersion::NoStream,
-            batch(&second_stream, "shared-operation", "same", &[b"second"])?,
+            second_batch.clone(),
         )
         .await
         .map_err(|source| store_error("operation identities must be stream scoped", source))?;
+    for (stream, batch, appended) in [
+        (&first_stream, first_batch, first),
+        (&second_stream, second_batch, second),
+    ] {
+        assert!(!appended.is_exact_replay());
+        let replay = store
+            .append_fixture(stream, ExpectedVersion::NoStream, batch)
+            .await
+            .map_err(|source| store_error("stream-scoped exact replay", source))?;
+        assert!(replay.is_exact_replay());
+        assert_eq!(replay.events(), appended.events());
+        let history = store
+            .load(stream)
+            .await
+            .map_err(|source| store_error("stream-scoped replay history", source))?;
+        assert_eq!(history, appended.events());
+    }
     Ok(())
 }
 
@@ -1509,9 +1565,12 @@ pub async fn try_exact_retry<Store: FixtureEventStore>(store: &Store) -> Contrac
         .map_err(|error| fixture_error("retry correlation ID", error))?;
     let causation = CausationId::new("retry-causation")
         .map_err(|error| fixture_error("retry causation ID", error))?;
+    let actor = ActorRef::new("test-authors", "alice")
+        .map_err(|error| fixture_error("retry actor", error))?;
     let retry_batch = batch(&stream, "retry-operation", "same", &[b"one", b"two"])?
-        .with_correlation_id(correlation)
-        .with_causation_id(causation);
+        .with_correlation_id(correlation.clone())
+        .with_causation_id(causation.clone())
+        .with_actor(actor.clone());
     let first = store
         .append_fixture(&stream, ExpectedVersion::NoStream, retry_batch.clone())
         .await
@@ -1527,6 +1586,11 @@ pub async fn try_exact_retry<Store: FixtureEventStore>(store: &Store) -> Contrac
         )
         .await
         .map_err(|source| store_error("later commit should succeed", source))?;
+    let before = store
+        .load(&stream)
+        .await
+        .map_err(|source| store_error("pre-retry history load", source))?;
+    assert_eq!(before.len(), 3);
 
     let replay = store
         .append_fixture(&stream, ExpectedVersion::NoStream, retry_batch)
@@ -1534,39 +1598,17 @@ pub async fn try_exact_retry<Store: FixtureEventStore>(store: &Store) -> Contrac
         .map_err(|source| store_error("exact retry should succeed", source))?;
     assert!(matches!(replay, AppendOutcome::ExactReplay(_)));
     assert_eq!(replay.events(), first.events());
-    let Some(replayed_event) = replay.events().first() else {
-        return Err(missing("exact retry", "at least one replayed event"));
-    };
-    let correlation = replayed_event
-        .correlation_id()
-        .ok_or_else(|| missing("exact retry", "stored correlation ID"))?;
-    assert_eq!(correlation.as_str(), "retry-correlation");
-    let causation = replayed_event
-        .causation_id()
-        .ok_or_else(|| missing("exact retry", "stored causation ID"))?;
-    assert_eq!(causation.as_str(), "retry-causation");
-
-    let changed_correlation = CorrelationId::new("retry-correlation")
-        .map_err(|error| fixture_error("changed retry correlation ID", error))?;
-    let changed_causation = CausationId::new("changed-causation")
-        .map_err(|error| fixture_error("changed retry causation ID", error))?;
-    let conflicting_metadata = batch(&stream, "retry-operation", "same", &[b"one", b"two"])?
-        .with_correlation_id(changed_correlation)
-        .with_causation_id(changed_causation);
-    let result = store
-        .append_fixture(&stream, ExpectedVersion::NoStream, conflicting_metadata)
-        .await;
-    let Err(error) = result else {
-        return Err(ContractTestError::UnexpectedSuccess {
-            context: "metadata changes must not be an exact retry",
-        });
-    };
-    assert_eq!(error.kind(), EventStoreErrorKind::IdentityConflict);
+    assert_eq!(replay.events().len(), 2);
+    for event in replay.events() {
+        assert_eq!(event.correlation_id(), Some(&correlation));
+        assert_eq!(event.causation_id(), Some(&causation));
+        assert_eq!(event.actor(), Some(&actor));
+    }
     let loaded = store
         .load(&stream)
         .await
         .map_err(|source| store_error("post-retry history load should succeed", source))?;
-    assert_eq!(loaded.len(), 3);
+    assert_eq!(loaded, before);
     Ok(())
 }
 
@@ -1576,45 +1618,71 @@ pub async fn identity_conflicts<Store: FixtureEventStore>(store: &Store) {
 
 pub async fn try_identity_conflicts<Store: FixtureEventStore>(store: &Store) -> ContractResult {
     let stream = stream("identity")?;
-    let original = batch(&stream, "identity-operation", "original", &[b"original"])?;
-    let metadata = BatchMetadata::new(
-        stream.clone(),
-        OperationId::new("identity-operation")
-            .map_err(|error| fixture_error("identity-conflict operation ID", error))?,
-        ContentFingerprint::digest("different"),
-    );
-    store
-        .append_fixture(&stream, ExpectedVersion::NoStream, original)
+    let correlation = CorrelationId::new("identity-correlation")
+        .map_err(|error| fixture_error("identity correlation", error))?;
+    let causation = CausationId::new("identity-causation")
+        .map_err(|error| fixture_error("identity causation", error))?;
+    let actor = ActorRef::new("test-authors", "alice")
+        .map_err(|error| fixture_error("identity actor", error))?;
+    let original = batch(&stream, "identity-operation", "original", &[b"original"])?
+        .with_correlation_id(correlation.clone())
+        .with_causation_id(causation.clone())
+        .with_actor(actor.clone());
+    let appended = store
+        .append_fixture(&stream, ExpectedVersion::NoStream, original.clone())
         .await
         .map_err(|source| store_error("initial identity append should succeed", source))?;
 
-    let changed_event = NewEvent::new(metadata.event_id(0), "contract-event", 1, b"changed")
-        .map_err(|error| fixture_error("changed identity-conflict event", error))?;
-    let changed = EventBatch::new(
-        metadata.commit_id(),
-        metadata.operation_id().clone(),
-        metadata.operation_fingerprint(),
-        vec![changed_event],
-    )
-    .map_err(|error| fixture_error("changed identity-conflict batch", error))?;
-    let result = store
-        .append_fixture(
-            &stream,
-            ExpectedVersion::Exact(StreamVersion::new(1)),
-            changed,
-        )
-        .await;
-    let Err(error) = result else {
-        return Err(ContractTestError::UnexpectedSuccess {
-            context: "changed content with the same operation identity must fail",
-        });
-    };
-    assert_eq!(error.kind(), EventStoreErrorKind::IdentityConflict);
-    let loaded = store
-        .load(&stream)
-        .await
-        .map_err(|source| store_error("post-identity-conflict load should succeed", source))?;
-    assert_eq!(loaded.len(), 1);
+    let changed_payload = batch(&stream, "identity-operation", "original", &[b"changed"])?
+        .with_correlation_id(correlation.clone())
+        .with_causation_id(causation.clone())
+        .with_actor(actor.clone());
+    let changed_fingerprint = batch(&stream, "identity-operation", "different", &[b"original"])?
+        .with_correlation_id(correlation)
+        .with_causation_id(causation)
+        .with_actor(actor);
+    for (context, changed) in [
+        ("changed fixture payload", changed_payload),
+        ("changed fixture fingerprint", changed_fingerprint),
+        (
+            "changed fixture correlation",
+            original.clone().with_correlation_id(
+                CorrelationId::new("different-correlation")
+                    .map_err(|error| fixture_error("changed correlation", error))?,
+            ),
+        ),
+        (
+            "changed fixture causation",
+            original.clone().with_causation_id(
+                CausationId::new("different-causation")
+                    .map_err(|error| fixture_error("changed causation", error))?,
+            ),
+        ),
+        (
+            "changed fixture actor",
+            original.clone().with_actor(
+                ActorRef::new("test-authors", "bob")
+                    .map_err(|error| fixture_error("changed actor", error))?,
+            ),
+        ),
+    ] {
+        let Err(error) = store
+            .append_fixture(&stream, ExpectedVersion::NoStream, changed)
+            .await
+        else {
+            return Err(ContractTestError::UnexpectedSuccess { context });
+        };
+        assert_eq!(
+            error.kind(),
+            EventStoreErrorKind::IdentityConflict,
+            "{context}"
+        );
+        let loaded = store
+            .load(&stream)
+            .await
+            .map_err(|source| store_error(context, source))?;
+        assert_eq!(loaded, appended.events(), "{context}");
+    }
 
     let other_metadata = BatchMetadata::new(
         stream.clone(),
@@ -1622,13 +1690,11 @@ pub async fn try_identity_conflicts<Store: FixtureEventStore>(store: &Store) -> 
             .map_err(|error| fixture_error("other identity operation ID", error))?,
         ContentFingerprint::digest("other"),
     );
-    let reused_event = NewEvent::new(metadata.event_id(0), "contract-event", 1, b"original")
-        .map_err(|error| fixture_error("reused identity event", error))?;
     let reused_event = EventBatch::new(
         other_metadata.commit_id(),
         other_metadata.operation_id().clone(),
         other_metadata.operation_fingerprint(),
-        vec![reused_event],
+        original.events().to_vec(),
     )
     .map_err(|error| fixture_error("reused identity batch", error))?;
     let result = store

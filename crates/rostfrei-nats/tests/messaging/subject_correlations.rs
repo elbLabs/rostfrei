@@ -160,7 +160,7 @@ async fn publication_derives_missing_outbound_correlation_from_the_envelope() ->
     assert_eq!(
         stored
             .headers
-            .get(publish::CORRELATION_ID_HEADER)
+            .get(CORRELATION_ID_HEADER)
             .map(async_nats::HeaderValue::as_str),
         Some("envelope-correlation"),
         "the adapter-owned correlation header must agree with the required envelope",
@@ -252,7 +252,7 @@ async fn maximum_valid_control_ids_remain_publishable_and_filterable() -> TestRe
         fixture.context.application().as_str(),
         "%25".repeat(MAX_IDENTIFIER_BYTES),
     );
-    let accepted = messaging_config::SubjectFilter::new(filter.clone());
+    let accepted = SubjectFilter::new(filter.clone());
     let selected = native_filtered_ids(&fixture, &filter).await?;
     fixture.cleanup().await?;
     assert!(
@@ -424,7 +424,7 @@ async fn publish_raw(
     let mut headers = async_nats::HeaderMap::new();
     headers.insert(CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE);
     headers.insert("Nats-Msg-Id", id);
-    headers.insert(publish::CORRELATION_ID_HEADER, correlation);
+    headers.insert(CORRELATION_ID_HEADER, correlation);
     fixture
         .connection
         .jetstream()
