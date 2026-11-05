@@ -58,6 +58,9 @@ routes (preserving anchors), and sends repository-code links to GitHub. A produc
 build also emits `llms.txt` and raw sources under `docs/source/`, from the same files.
 The macro explorer reads its authored examples from the documentation's Rust code
 blocks, and the subject explorer reads its reference table from the shared Markdown.
+Project-structure file browsers display the checked-in bike-rental Rust files;
+their directory and file lists live in `src/docs/project-structure-example-data.ts`.
+Keep focused code excerpts in the shared guides for readers outside the website.
 
 After changing route files, regenerate the typed route tree from `website/`:
 
@@ -120,8 +123,8 @@ the inspector sheet. The preview example is local to the gallery.
 After building, run `pnpm test:website` from the repository root for production
 browser checks of the website and local gallery in light/dark themes and
 desktop/mobile widths. They cover header/sidebar/mobile navigation, theme boot,
-real clipboard contents, denied and unavailable clipboard fallbacks, shared raw
-documentation, and overflow. Set `CHROME_BIN`
+real clipboard contents, denied and unavailable clipboard fallbacks, example-file
+selection and copying, shared raw documentation, and overflow. Set `CHROME_BIN`
 when Chrome is not in a standard location. Captures go to `artifacts/website/`.
 
 ## Identity studies

@@ -337,6 +337,56 @@
   color: inherit;
 }
 
+.project-file-browser {
+  display: grid;
+  align-items: start;
+  gap: 24px;
+  min-width: 0;
+  margin-block: 28px;
+}
+.project-file-tree {
+  min-width: 0;
+  max-height: 18rem;
+  overflow: auto;
+  padding: 4px;
+}
+.docs-article .project-file-tree ul,
+.docs-article .project-file-tree li {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.project-file-source {
+  min-width: 0;
+}
+.project-file-source-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  font-size: 12px;
+}
+.project-file-source-heading > code {
+  overflow-wrap: anywhere;
+  background: none;
+  padding: 0;
+}
+.project-file-source [data-slot="mdx-code-block"] {
+  margin-block: 12px 0;
+}
+.project-file-source pre {
+  max-height: 36rem;
+}
+@media (min-width: 1100px) {
+  .project-file-browser {
+    grid-template-columns: 13rem minmax(0, 1fr);
+  }
+  .project-file-tree {
+    max-height: 32rem;
+  }
+}
+
 .docs-navigation {
   font-size: 13px;
 }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
@@ -46,6 +46,8 @@ const routes = [
   "docs/command-runtime",
   "docs/read-models",
   "docs/agent-tutorial",
+  "docs/project-structure/behaviorful-value-object",
+  "docs/project-structure/value-object-policy",
 ]
 
 const readme = await readFile(new URL("../README.md", import.meta.url), "utf8")
@@ -139,6 +141,68 @@ async function checkNavigation(browser) {
   }
 }
 
+async function checkStructureFiles(browser) {
+  const context = await browser.createBrowserContext()
+  try {
+    await context.overridePermissions(origin, ["clipboard-read", "clipboard-write", "clipboard-sanitized-write"])
+    const page = await context.newPage()
+    await mockRepositoryMetadata(page)
+    await page.setViewport({ width: 1440, height: 900 })
+    await page.goto(`${origin}${base}docs/project-structure/behaviorful-value-object`, { waitUntil: "networkidle0" })
+    const example = '[data-project-structure-example="behaviorful-value-object"]'
+    await page.waitForSelector(example)
+    const directory = "examples/bike-rental/src/domain/bike_rental/rental_fleet/bicycle/registration_number/"
+    const actualFiles = (await readdir(new URL(`../${directory}`, import.meta.url), { recursive: true }))
+      .filter((path) => path.endsWith(".rs")).sort()
+    const buttons = await page.$$(`${example} button[data-source-path]`)
+    const displayedFiles = await Promise.all(buttons.map((button) => button.evaluate((element) =>
+      element.getAttribute("data-source-path")
+    )))
+    assert.deepEqual(displayedFiles.map((path) => path.slice(directory.length)).sort(), actualFiles)
+
+    for (let index = 0; index < buttons.length; index++) {
+      const path = displayedFiles[index]
+      assert.ok(path.startsWith(directory))
+      const expected = (await readFile(new URL(`../${path}`, import.meta.url), "utf8")).trimEnd()
+      // ElementHandle.click only checks viewport intersection, not sticky overlays.
+      await buttons[index].evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }))
+      await buttons[index].click()
+      await page.waitForFunction((path) =>
+        document.querySelector("[data-selected-source]")?.getAttribute("data-selected-source") === path,
+      {}, path)
+      assert.equal(await page.$eval(`${example} pre code`, (element) => element.textContent), expected)
+      assert.equal(await page.$$eval(`${example} button[aria-pressed="true"]`, (elements) => elements.length), 1)
+      await page.locator(`${example} button[aria-label="Copy code"]`).click()
+      await page.waitForFunction(() =>
+        document.querySelector('.project-file-source button[aria-label="Copy code"]')?.textContent.includes("Copied")
+      )
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), expected)
+    }
+
+    const keyboardFile = `${example} button[aria-label="choose_format/outcome.rs"]`
+    await page.focus(keyboardFile)
+    await page.keyboard.press("Enter")
+    await page.waitForFunction(() => document.querySelector("[data-selected-source]")?.getAttribute("data-selected-source").endsWith("choose_format/outcome.rs"))
+    const selected = await page.$eval(`${example} pre code`, (element) => element.textContent)
+    await page.locator(`${example} button[aria-label="Toggle choose_format"]`).click()
+    assert.equal(await page.$(keyboardFile), null)
+    assert.equal(await page.$eval(`${example} pre code`, (element) => element.textContent), selected)
+    await page.locator(`${example} button[aria-label="Toggle choose_format"]`).click()
+    assert.equal(await page.$eval(keyboardFile, (element) => element.getAttribute("aria-pressed")), "true")
+
+    // Client-side navigation must reset to the new example's own default file.
+    await page.locator('.site-rail a[href$="/docs/project-structure/value-object-policy"]').click()
+    await page.waitForSelector('[data-project-structure-example="value-object-policy"]')
+    const policyPath = `${directory}choose_format/policy.rs`
+    assert.equal(await page.$eval("[data-selected-source]", (element) => element.getAttribute("data-selected-source")), policyPath)
+    assert.equal(await page.$eval(".project-file-source pre code", (element) => element.textContent),
+      (await readFile(new URL(`../${policyPath}`, import.meta.url), "utf8")).trimEnd())
+    console.log(`Checked ${actualFiles.length} real example files, selected-file copying, keyboard selection, folder toggles and navigation reset`)
+  } finally {
+    await context.close()
+  }
+}
+
 async function mockRepositoryMetadata(page) {
   await page.setRequestInterception(true)
   page.on("request", (request) => {
@@ -205,6 +269,7 @@ try {
   await checkThemeBoot(browser)
   await checkAgentPrompt(browser)
   await checkNavigation(browser)
+  await checkStructureFiles(browser)
   const documentation = await browser.newPage()
   await mockRepositoryMetadata(documentation)
   await documentation.goto(`${origin}${base}docs/domain-macros/command`, {
@@ -340,7 +405,7 @@ try {
           assert.deepEqual(diagnostics.pageErrors, [], label)
           assert.deepEqual(diagnostics.failedRequests, [], label)
           assert.deepEqual(diagnostics.httpErrors, [], label)
-          if (["", "docs", "docs/getting-started", "docs/messaging/subjects"].includes(route) && width !== 320) {
+          if (["", "docs", "docs/getting-started", "docs/messaging/subjects", "docs/project-structure/behaviorful-value-object"].includes(route) && width !== 320) {
             await page.screenshot({
               path: fileURLToPath(new URL(`${label}.png`, output)),
               fullPage: true,

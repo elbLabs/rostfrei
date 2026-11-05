@@ -16,14 +16,8 @@ export function LazyProjectStructureExample({
   name: ProjectStructureExampleName
 }) {
   return (
-    <Suspense
-      fallback={
-        <div className="my-6 grid h-64 place-items-center rounded-xl border border-border bg-muted/20 text-sm text-muted-foreground">
-          Loading structure example…
-        </div>
-      }
-    >
-      <ProjectStructureExample name={name}>{children}</ProjectStructureExample>
+    <Suspense fallback={children}>
+      <ProjectStructureExample key={name} name={name} />
     </Suspense>
   )
 }

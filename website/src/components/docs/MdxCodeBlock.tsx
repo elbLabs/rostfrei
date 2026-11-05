@@ -146,11 +146,13 @@ export function MdxCodeBlock({
               {tokens.map((line, lineIndex) => (
                 <span
                   {...getLineProps({ line })}
-                  className="block min-w-max"
+                  className="block min-h-[1lh] min-w-max"
                   key={lineIndex}
                 >
                   {line.map((token, tokenIndex) => (
-                    <span {...getTokenProps({ token })} key={tokenIndex} />
+                    <span {...getTokenProps({ token })} key={tokenIndex}>
+                      {token.empty ? "" : token.content}
+                    </span>
                   ))}
                   {lineIndex < tokens.length - 1 ? "\n" : null}
                 </span>
