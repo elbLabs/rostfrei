@@ -277,7 +277,7 @@ try {
           })
           assert.equal(response.status(), 200, label)
           await page.waitForSelector("h1")
-          assert.ok(await page.$(".site-shell .site-body #main-content"), `${label}: original site layout`)
+          assert.ok(await page.$(".site-shell .site-body #main-content"), `${label}: documentation layout`)
           assert.ok(await page.$('.site-header a[href="https://github.com/elbLabs/rostfrei"]'), `${label}: GitHub navigation`)
           assert.equal(await page.$eval(".site-rail", (element) => element.checkVisibility()), width > 760)
           if (route === "") {

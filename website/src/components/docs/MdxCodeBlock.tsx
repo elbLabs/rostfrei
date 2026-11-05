@@ -106,13 +106,11 @@ export function MdxCodeBlock({
 
   return (
     <div
-      className="my-5 min-w-0 overflow-hidden border border-border bg-muted"
+      className="my-5 min-w-0 overflow-hidden rounded-md bg-muted"
       data-slot="mdx-code-block"
     >
-      <div className="flex items-center justify-between border-b border-border/70 px-4 py-2">
-        <span className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase">
-          {label}
-        </span>
+      <div className="flex items-center justify-between px-4 pt-2">
+        <span className="font-mono text-xs text-muted-foreground">{label}</span>
         <Button
           aria-label="Copy code"
           className="text-muted-foreground hover:text-foreground"

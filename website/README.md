@@ -1,8 +1,7 @@
 # Rostfrei website
 
-Rostfrei is a **batteries-included Rust framework for event-sourced applications**:
-domain code, durable commands, messaging, read models, and runtime inspection.
-Business rules stay in ordinary Rust.
+The website publishes Rostfrei's landing page and shared documentation. It is a
+client-side React application built with Vite and TanStack Router.
 
 ## Explore the framework
 
@@ -13,17 +12,14 @@ Business rules stay in ordinary Rust.
 - [Agent tutorial guide](../docs/agent-tutorial.md): checkout-local setup and
   text-first guidance. Studio is an optional visual client.
 
-The website presents these shared docs alongside the project landing page. It is
-a client-side React application built with Vite and TanStack Router.
-
 ## Public story and page metadata
 
-Introduce the whole application framework. Make “batteries included” concrete
-through domain declarations, command execution, NATS and HTTP adapters, read
-models, testing, and project tooling. Applications use one `rostfrei` dependency
-and enable the adapters they need. Keep claims tied to current capabilities,
-distinguish authoritative domain history from bounded runtime observations, and
-describe the current alpha status explicitly.
+Describe the application framework through its domain declarations, command
+execution, NATS and HTTP adapters, read models, testing, and project tooling.
+Applications use one `rostfrei` dependency and enable the adapters they need.
+Keep claims tied to current capabilities and distinguish authoritative domain
+history from bounded runtime observations. Use descriptive headings and complete
+sentences rather than paired slogans or decorative middle-dot separators.
 
 - Landing-page content lives in `src/components/page-shell`.
 - The docs introduction explains the mental model; `getting-started.mdx` is a
@@ -87,10 +83,18 @@ GitHub Pages deployment is configured in
 
 ## Appearance and shared components
 
-Keep the original `SiteLayout`, landing sections, docs sidebar, system typography,
-and duck branding. The website's grey/rust palette lives in `src/theme.css`:
-`#f4f4f5` / `#7e342a` in light mode and `#262626` / `#d3a498` in dark mode.
-Reference pages use ordinary headings and visible code examples.
+Use an unframed, documentation-like page with an open sidebar, generous spacing,
+and restrained separators. The neutral grey surfaces and rust accents take
+inspiration from [elbtech.ai](https://elbtech.ai); the website's palette lives in
+`src/theme.css`. Avoid an outer bordered box and card-based landing sections.
+Keep the duck branding, use self-hosted Signika Negative for headings, and use a
+readable system font for body text. Reference pages use ordinary headings and
+visible code examples. The rental flow belongs below the framework introduction
+and getting-started entry point.
+
+The Latin variable font and its SIL Open Font License are served from
+`public/fonts/`. The same Signika Negative face is used by elbtech.ai; font files
+are local so reading the site does not require a third-party font request.
 
 The website and docs use `@rostfrei/ui` from `packages/ui`. Run `pnpm dev:ui`
 from the repository root for the separate local gallery on port 4177. Its source
@@ -120,8 +124,8 @@ when Chrome is not in a standard location. Captures go to `artifacts/website/`.
 ## Identity studies
 
 Open `/design-study/` on the development server to compare website and Tracer
-Studio design concepts in light and dark mode. Reference ’15 is the selected default;
-Workshop ’12 and Reference ’15 explore 2010s developer-web aesthetics. The static
-preview also runs with `python3 -m http.server 4178 --directory website/public` from the
-repository root. The current visual contract is documented in
-[`packages/ui/README.md`](../packages/ui/README.md).
+Studio design concepts in light and dark mode. These standalone studies are
+separate from the current website appearance described above. The static preview
+also runs with `python3 -m http.server 4178 --directory website/public` from the
+repository root. See [`packages/ui/README.md`](../packages/ui/README.md) for shared
+components and the local gallery.

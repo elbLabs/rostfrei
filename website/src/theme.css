@@ -1,9 +1,10 @@
-/* Website grey/rust palette. Shared components consume these semantic roles. */
+/* Open grey/rust reading surfaces, adapted from elbtech.ai. */
 :root,
 .light {
   --background: #f4f4f5;
   --foreground: #1f1f23;
-  --card: #fafafa;
+  --radius: 6px;
+  --card: #f4f4f5;
   --card-foreground: #1f1f23;
   --popover: #fafafa;
   --popover-foreground: #1f1f23;
@@ -26,7 +27,7 @@
 .dark {
   --background: #262626;
   --foreground: #d0d0d0;
-  --card: #404040;
+  --card: #262626;
   --card-foreground: #d0d0d0;
   --popover: #404040;
   --popover-foreground: #d0d0d0;
@@ -39,7 +40,7 @@
   --muted-foreground: #b3b3b3;
   --accent: #352725;
   --accent-foreground: #d3a498;
-  --border: #767676;
+  --border: #444444;
   --control-border: #9a9a9a;
   --input: #9a9a9a;
   --ring: #bf8274;

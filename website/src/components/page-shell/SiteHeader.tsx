@@ -8,7 +8,7 @@ export function SiteHeader() {
   return (
     <header className="site-header">
       <Link to="/" aria-label="Rostfrei home">
-        <Brand />
+        <Brand compact />
       </Link>
       <nav aria-label="Main navigation">
         <Link to="/" activeOptions={{ exact: true }}>

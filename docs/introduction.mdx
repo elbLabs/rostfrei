@@ -1,6 +1,6 @@
 # Introduction
 
-Rostfrei is a batteries-included Rust framework for event-sourced applications. It includes domain declarations, the command runtime, durable messaging, read models, and runtime inspection. Business rules stay in ordinary Rust.
+Rostfrei is a Rust framework for event-sourced applications. Business rules stay in ordinary Rust; the framework connects them to durable command execution, messaging, read models, and runtime inspection.
 
 Applications depend on `rostfrei` and enable the adapters they need. The bike-rental example combines NATS storage and messaging, HTTP routes, and Tracer with its domain code.
 
@@ -69,4 +69,4 @@ An exact retry returns the recorded outcome. A deliberate new request uses a new
 
 Rostfrei is aimed at applications where business rules, consistency boundaries, and the history of change are central to the design. Explicit ownership and inspectable behavior help teams keep agent-assisted development understandable as the codebase grows. The example shows both single-fleet decisions and a bicycle transfer committed atomically across two fleet aggregate streams in one event store.
 
-The project is **alpha** and its APIs are evolving. Use the example and architecture decisions to evaluate the model and its tradeoffs. Rostfrei is open source under the [European Union Public Licence 1.2](https://github.com/elbLabs/rostfrei/blob/main/LICENSE).
+Use the example and [architectural maxims](adr/README.md) to evaluate the model and its tradeoffs. See [LICENSE](../LICENSE) for the license terms.

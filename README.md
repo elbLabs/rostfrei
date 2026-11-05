@@ -1,11 +1,10 @@
 # <img src="packages/ui/src/brand/duck-icon.png" width="36" height="36" alt="" align="absmiddle" /> rostfrei
 
-**A batteries-included Rust framework for event-sourced applications.**
+**A Rust framework for event-sourced applications.**
 
-Domain code, durable commands, messaging, read models, and runtime inspection.
 Business rules stay in ordinary Rust. Rostfrei supplies history loading,
-atomic event transactions, NATS JetStream adapters, HTTP routes, and behavioral
-tests you can inspect through Tracer.
+durable commands, atomic event transactions, NATS JetStream adapters, HTTP routes,
+read models, and behavioral tests you can inspect through Tracer.
 
 Domain declarations name the model and its ownership; `cargo rostfrei check`
 validates its structure. Applications use the `rostfrei` facade and enable the
@@ -158,7 +157,7 @@ git config core.hooksPath .githooks
 
 The hook runs the workspace structure check and Clippy.
 
-The website and Tracer Studio share the Reference ’15 theme and components in
+The website and Tracer Studio share components and theme controls in
 [`@rostfrei/ui`](packages/ui/README.md). Use Node.js 24 (or 22.13+ on the 22.x line) and
 pnpm 10.10.0. Install the frontend workspace from this repository root:
 
@@ -180,4 +179,4 @@ dependency contract.
 
 Copyright (c) 2026 elbtech.dev.
 
-Licensed under the [European Union Public Licence 1.2](LICENSE).
+See [LICENSE](LICENSE) for the license terms.

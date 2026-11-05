@@ -7,7 +7,7 @@ import { agentTutorialPrompt } from "@/agent-prompt"
 export function AgentPrompt() {
   const promptRef = useRef<HTMLTextAreaElement>(null)
   const statusId = useId()
-  const [status, setStatus] = useState("Copy this prompt into your coding agent.")
+  const [status, setStatus] = useState("")
 
   async function copyPrompt() {
     try {
