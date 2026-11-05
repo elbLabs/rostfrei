@@ -13,6 +13,19 @@
   src: url("/fonts/signika-negative-latin-variable.woff2") format("woff2");
 }
 
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-regular.woff2") format("woff2");
+}
+
+@theme {
+  --font-mono:
+    "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
 @layer base {
   html {
     scroll-behavior: smooth;
@@ -32,7 +45,9 @@
   }
   code,
   pre,
-  kbd {
+  kbd,
+  samp {
+    font-family: var(--font-mono);
     font-variant-ligatures: none;
   }
   :focus-visible {
@@ -337,6 +352,19 @@
   color: inherit;
 }
 
+.code-block {
+  background: var(--code-background);
+  border: 1px solid var(--border);
+}
+.code-source {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 1.7;
+  letter-spacing: normal;
+  tab-size: 4;
+  scrollbar-gutter: stable;
+}
+
 .project-file-browser {
   display: grid;
   align-items: start;
@@ -360,15 +388,17 @@
   min-width: 0;
 }
 .project-file-source-heading {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 8px 16px;
-  font-size: 12px;
+  gap: 16px;
+  font-size: 13px;
+  line-height: 24px;
 }
 .project-file-source-heading > code {
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   background: none;
   padding: 0;
 }
@@ -376,7 +406,8 @@
   margin-block: 12px 0;
 }
 .project-file-source pre {
-  max-height: 36rem;
+  /* File length and scrollbar changes must not move the picker or the page. */
+  height: clamp(24rem, 55dvh, 34rem);
 }
 @media (min-width: 1100px) {
   .project-file-browser {

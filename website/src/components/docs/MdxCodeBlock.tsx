@@ -106,7 +106,7 @@ export function MdxCodeBlock({
 
   return (
     <div
-      className="my-5 min-w-0 overflow-hidden rounded-md bg-muted"
+      className="code-block my-5 min-w-0 overflow-hidden rounded-md"
       data-slot="mdx-code-block"
     >
       <div className="flex items-center justify-between px-4 pt-2">
@@ -136,7 +136,7 @@ export function MdxCodeBlock({
             aria-label={`${label} code example`}
             className={cn(
               prismClassName,
-              "max-w-full overflow-auto p-4 font-mono text-[12px] leading-6 sm:px-5 sm:text-[13px]",
+              "code-source max-w-full overflow-auto p-5 sm:px-6",
               className
             )}
             style={{ ...style, backgroundColor: "transparent" }}

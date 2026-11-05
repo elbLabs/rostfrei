@@ -22,6 +22,15 @@
   --input: #6f6f7b;
   --ring: #7e342a;
   --link: #7e342a;
+  --code-background: #ffffff;
+  --code-foreground: #24292f;
+  --code-comment: #59636e;
+  --code-keyword: #a62635;
+  --code-string: #116329;
+  --code-function: #6639ba;
+  --code-type: #0550ae;
+  --code-number: #953800;
+  --code-punctuation: #424a53;
 }
 
 .dark {
@@ -45,4 +54,13 @@
   --input: #9a9a9a;
   --ring: #bf8274;
   --link: #d3a498;
+  --code-background: #1e1e20;
+  --code-foreground: #e6edf3;
+  --code-comment: #a3abb8;
+  --code-keyword: #ff9b94;
+  --code-string: #a5d6a7;
+  --code-function: #d2a8ff;
+  --code-type: #91caff;
+  --code-number: #f2c38b;
+  --code-punctuation: #c9d1d9;
 }

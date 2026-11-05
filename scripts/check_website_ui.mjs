@@ -190,14 +190,41 @@ async function checkStructureFiles(browser) {
     await page.locator(`${example} button[aria-label="Toggle choose_format"]`).click()
     assert.equal(await page.$eval(keyboardFile, (element) => element.getAttribute("aria-pressed")), "true")
 
+    // Switching between short and long files must not move the page or source pane,
+    // including when horizontal/vertical scrollbars become necessary.
+    const layout = () => page.$eval(`${example} .project-file-source`, (element) => {
+      const rect = element.getBoundingClientRect()
+      return {
+        top: rect.top + scrollY,
+        width: rect.width,
+        height: rect.height,
+        pageHeight: document.documentElement.scrollHeight,
+        scrollY,
+      }
+    })
+    for (const width of [1440, 390, 320]) {
+      await page.setViewport({ width, height: 900 })
+      await page.evaluate(() => document.fonts.ready)
+      for (const file of ["normalize/mod.rs", "validity/evaluate.rs", "value.rs"]) {
+        const button = await page.$(`${example} button[aria-label="${file}"]`)
+        await button.evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }))
+        const before = await layout()
+        await button.click()
+        await page.waitForFunction((path) => document.querySelector("[data-selected-source]")?.getAttribute("data-selected-source") === path,
+          {}, `${directory}${file}`)
+        assert.deepEqual(await layout(), before, `Switching to ${file} shifts the layout at ${width}px`)
+      }
+    }
+
     // Client-side navigation must reset to the new example's own default file.
+    await page.setViewport({ width: 1440, height: 900 })
     await page.locator('.site-rail a[href$="/docs/project-structure/value-object-policy"]').click()
     await page.waitForSelector('[data-project-structure-example="value-object-policy"]')
     const policyPath = `${directory}choose_format/policy.rs`
     assert.equal(await page.$eval("[data-selected-source]", (element) => element.getAttribute("data-selected-source")), policyPath)
     assert.equal(await page.$eval(".project-file-source pre code", (element) => element.textContent),
       (await readFile(new URL(`../${policyPath}`, import.meta.url), "utf8")).trimEnd())
-    console.log(`Checked ${actualFiles.length} real example files, selected-file copying, keyboard selection, folder toggles and navigation reset`)
+    console.log(`Checked ${actualFiles.length} real example files, selected-file copying, keyboard selection, folder toggles, stable file-switch layout and navigation reset`)
   } finally {
     await context.close()
   }

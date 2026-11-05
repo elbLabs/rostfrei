@@ -97,7 +97,7 @@ export function ProjectStructureExample({
         className="project-file-tree"
         aria-label={`Example files in ${example.root}`}
       >
-        <div className="mb-3 flex items-center gap-2 font-mono text-xs text-muted-foreground">
+        <div className="mb-3 flex items-center gap-2 font-mono text-[13px] text-muted-foreground">
           <FolderOpen className="size-3.5" aria-hidden="true" />
           {example.root}
         </div>
@@ -131,7 +131,7 @@ export function ProjectStructureExample({
                       : setSelectedFile(row.path)
                   }
                   className={cn(
-                    "flex min-h-8 w-full min-w-max items-center gap-2 rounded pr-2 text-left font-mono text-xs",
+                    "flex min-h-8 w-full min-w-max items-center gap-2 rounded pr-2 text-left font-mono text-[13px]",
                     isActive
                       ? "bg-accent text-accent-foreground"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -162,8 +162,8 @@ export function ProjectStructureExample({
         data-selected-source={sourcePath}
       >
         <div className="project-file-source-heading">
-          <code aria-live="polite">
-            {example.root}/{selectedFile}
+          <code aria-live="polite" title={sourcePath}>
+            {selectedFile}
           </code>
           <a
             href={`https://github.com/elbLabs/rostfrei/blob/main/${sourcePath}`}

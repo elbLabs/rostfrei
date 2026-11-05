@@ -92,14 +92,18 @@ and restrained separators. The neutral grey surfaces and rust accents take
 inspiration from [elbtech.ai](https://elbtech.ai); the website's palette lives in
 `src/theme.css`. Avoid an outer bordered box and card-based landing sections.
 Keep the duck branding, use self-hosted Signika Negative for headings, and use a
-readable system font for body text. Reference pages use ordinary headings and
+readable system font for body text. Code uses self-hosted JetBrains Mono at 15px,
+generous line spacing, and a dedicated light/dark syntax palette. File browsers
+keep the source viewport and filename header stable when switching files;
+long lines scroll within the code pane. Reference pages use ordinary headings and
 visible code examples. The rental flow belongs below the framework introduction
 and getting-started entry point.
 The footer stays at the viewport bottom while the document scrolls; its normal
 layout space and the sidebar height keep the final content and navigation accessible.
 
-The Latin variable font and its SIL Open Font License are served from
-`public/fonts/`. The same Signika Negative face is used by elbtech.ai; font files
+The fonts and their SIL Open Font Licenses are served from `public/fonts/`.
+JetBrains Mono Regular comes from the upstream v2.304 release. The same
+Signika Negative face is used by elbtech.ai; font files
 are local so reading the site does not require a third-party font request.
 
 The website and docs use `@rostfrei/ui` from `packages/ui`. Run `pnpm dev:ui`
