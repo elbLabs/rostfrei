@@ -4,7 +4,7 @@ A read model keeps a ready-made answer to a query. Domain-event and integration-
 handlers update it as facts arrive; queries read the saved value in one KV lookup.
 
 You define the data, select the key each event affects, and describe the changes.
-Rostfrei handles loading, initialization, source checkpoints, compare-and-set
+rostfrei handles loading, initialization, source checkpoints, compare-and-set
 retries, and persistence.
 
 ```plaintext

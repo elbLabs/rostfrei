@@ -17,7 +17,7 @@ export const MACROS: MacroSlide[] = [
     family: "setup",
     headline: "Install macro support once.",
     description:
-      "One crate-root call gives every Rostfrei macro a deterministic path to its domain, runtime, and registry support.",
+      "One crate-root call gives every rostfrei macro a deterministic path to its domain, runtime, and registry support.",
     points: [
       "One call per declaring crate",
       "Safe with renamed dependencies",

@@ -1,7 +1,7 @@
 ---
 name: rostfrei-tracer
 license: EUPL-1.2
-description: Use Rostfrei Tracer to discover runtime capabilities, execute real isolated tests, observe external application activity, inspect operations or quarantine, and explain causal flows with Mermaid. Also covers explicit handler simulation for rule diagnostics and authorized production dispatch.
+description: Use Rostfrei Tracer for a guided, text-first tutorial, runtime capability discovery, real isolated tests, external activity observation, operation or quarantine inspection, and evidence-based causal explanations. Also covers optional Mermaid, explicit handler simulation for rule diagnostics and authorized production dispatch.
 compatibility: Requires the release-matched cargo-rostfrei Rust CLI, a Tracer HTTP endpoint and capability credentials. Test acceptance needs application handlers, workers and event store on isolated real NATS 2.12.1 or newer. Direct HTTP examples require Bash and curl; no Python is required.
 ---
 
@@ -14,7 +14,8 @@ Use Tracer to execute real isolated behavior and explain actual recorded activit
    then use real **Test** publication or a behavior suite in the isolated runtime.
 3. For “what happened?”, inspect the recorded operation or continuous observation
    window; do not submit another command to explain existing activity.
-4. Explain only what the evidence establishes, with an explicit-causality Mermaid graph.
+4. Explain only what the evidence establishes, using explicit message identities
+   for causality. Guided tutorials use text by default; diagrams are optional.
 
 Call direct isolated publication **Test** and production publication **production
 dispatch**. Optional **Simulate handler** computes a handler decision and proposed,
@@ -32,10 +33,26 @@ No generated source resources or preparation command are required. Installed
 release skills contain their own metadata and schema resources.
 Use ordinary conversation if a host-specific question tool is unavailable.
 
+## Guided Tutorial
+
+For “help me explore”, “walk me through” or an introductory bike-rental tutorial,
+**read and follow [the guided tutorial](references/guided-tutorial.md)** before
+setup or execution. It defines the one-step-at-a-time teaching loop, the two
+canonical example tests, evidence preservation across resets, and the optional
+presentation-adapter contract. Explain a step, inspect real evidence, then pause
+for the learner's next choice. Use ordinary text without requiring a frontend.
+
+In a framework checkout, `docs/agent-tutorial.md` supplies environment bootstrap.
+In an installed application, use this skill's release-matched reference and the
+application's registered definitions/fixtures; bike-rental fixtures are not
+automatically installed into other applications. Read-only questions and display
+changes inspect existing evidence, never rerun a test.
+
 ## Choose The Right Workflow
 
 | Task | Use the live capability | Evidence |
 | --- | --- | --- |
+| Guided introduction | [Tutorial workflow](references/guided-tutorial.md), then advertised Test capabilities | Saved real outcomes and finite captures, explained one step at a time |
 | Develop/verify behavior | JSON v2 suite via `cargo rostfrei test` | Real NATS outcome and finite capture; explain red/green |
 | Run/test/try a command in the agreed isolated scope | `testHrefTemplate` | Real command publication and operation capture |
 | Why would this handler reject; which events would it propose? | Optional `simulateHandlerHrefTemplate` | Actual handler computation, uncommitted proposals only |
@@ -407,6 +424,9 @@ flowchart TD
 Treat every dynamic label as untrusted. Keep payloads and tokens out of labels. Escape `&` first, then quotes, angle brackets, backticks, backslashes, brackets, braces, pipes, semicolons, and control/newline characters using HTML entities or spaces. Use only generated aliases as Mermaid identifiers. Never emit dynamic directives, links, click handlers, class names, or style definitions.
 
 ## Normal Response
+
+For a guided tutorial, use the staged text-first responses and pauses in the
+[tutorial reference](references/guided-tutorial.md) instead of this full template.
 
 Do not dump raw API JSON unless the user asks. Use these sections in this order:
 

@@ -162,9 +162,9 @@ are defined in `src/styles.css`; core colors match the selected design study.
 ```tsx
 import { Brand, DuckMascot } from "@rostfrei/ui/brand"
 
-<a href="/" aria-label="Rostfrei home"><Brand /></a>
+<a href="/" aria-label="rostfrei home"><Brand /></a>
 <Brand compact className="shrink-0" />
-<DuckMascot alt="Rostfrei duck mascot" className="w-32" />
+<DuckMascot alt="rostfrei duck mascot" className="w-32" />
 ```
 
 `Brand({ compact?, className? })` is a noninteractive duck-and-wordmark span.

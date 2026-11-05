@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
@@ -44,7 +44,191 @@ const routes = [
   "docs/messaging/subjects",
   "docs/reference",
   "docs/command-runtime",
+  "docs/read-models",
+  "docs/agent-tutorial",
+  "docs/project-structure/behaviorful-value-object",
+  "docs/project-structure/value-object-policy",
 ]
+
+const readme = await readFile(new URL("../README.md", import.meta.url), "utf8")
+const expectedPrompt = readme.match(/```text\n([\s\S]*?)\n```/)?.[1]
+assert.ok(expectedPrompt, "README must include the agent prompt")
+assert.match(expectedPrompt, /read docs\/agent-tutorial\.md from the checkout before setup/)
+
+async function checkAgentPrompt(browser) {
+  const context = await browser.createBrowserContext()
+  try {
+    await context.overridePermissions(origin, ["clipboard-read", "clipboard-write", "clipboard-sanitized-write"])
+    const page = await context.newPage()
+    await mockRepositoryMetadata(page)
+    for (const route of ["", "docs/getting-started"]) {
+      await page.goto(`${origin}${base}${route}`, { waitUntil: "networkidle0" })
+      const prompt = 'textarea[aria-label="Agent tutorial prompt"]'
+      await page.waitForSelector(prompt)
+      assert.equal(await page.$eval(prompt, (element) => element.value), expectedPrompt)
+      await page.evaluate(() => navigator.clipboard.writeText("stale clipboard"))
+      await page.locator('button[aria-label="Copy agent prompt"]').click()
+      await page.waitForFunction(() =>
+        document.querySelector('[data-agent-prompt] [role="status"]')?.textContent.includes("Copied")
+      )
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), expectedPrompt)
+
+      // Check denial and an unavailable API (for example, an insecure origin).
+      for (const failure of ["denied", "unavailable"]) {
+        await page.evaluate((mode) => {
+          if (mode === "unavailable") {
+            Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined })
+          } else {
+            navigator.clipboard.writeText = async () => {
+              throw new DOMException("Clipboard access denied", "NotAllowedError")
+            }
+          }
+        }, failure)
+        await page.locator('button[aria-label="Copy agent prompt"]').click()
+        await page.waitForFunction(() =>
+          document.querySelector('[data-agent-prompt] [role="status"]')?.textContent.includes("copy it manually")
+        )
+        assert.equal(await page.$eval(prompt, (element) =>
+          document.activeElement === element && element.value.slice(element.selectionStart, element.selectionEnd)
+        ), expectedPrompt)
+        if (failure === "unavailable") await page.evaluate(() => delete navigator.clipboard)
+        // Prove manual selection is useful, rather than checking its label alone.
+        const clipboardPage = await context.newPage()
+        await clipboardPage.goto(`${origin}${base}`, { waitUntil: "domcontentloaded" })
+        await clipboardPage.evaluate(() => navigator.clipboard.writeText("stale clipboard"))
+        await page.bringToFront()
+        await page.keyboard.down("Control")
+        await page.keyboard.press("c")
+        await page.keyboard.up("Control")
+        assert.equal(await page.evaluate(() => navigator.clipboard.readText()), expectedPrompt)
+        await clipboardPage.close()
+      }
+    }
+    const response = await fetch(`${origin}${base}docs/source/getting-started.mdx`)
+    assert.equal(response.status, 200)
+    assert.ok((await response.text()).includes(expectedPrompt), "Raw guide must contain the complete prompt")
+    console.log("Checked README-aligned clipboard contents, manual-copy fallbacks, and raw guide prompt")
+  } finally {
+    await context.close()
+  }
+}
+
+async function checkNavigation(browser) {
+  const page = await browser.newPage()
+  try {
+    await mockRepositoryMetadata(page)
+    await page.setViewport({ width: 390, height: 900 })
+    await page.goto(`${origin}${base}`, { waitUntil: "networkidle0" })
+    await page.locator('.site-header a[href$="/docs"]').click()
+    await page.waitForSelector(".docs-article h1")
+    const menu = await page.$(".mobile-navigation button")
+    await menu.click()
+    await page.waitForSelector('[role="dialog"]', { visible: true })
+    await page.keyboard.press("Escape")
+    await page.waitForFunction((element) => document.activeElement === element, {}, menu)
+    await menu.click()
+    await page.locator('[role="dialog"] a[href$="/docs/getting-started"]').click()
+    await page.waitForSelector('[role="dialog"]', { hidden: true })
+    await page.waitForSelector("[data-agent-prompt]")
+    assert.ok(page.url().endsWith("/docs/getting-started"))
+    await page.setViewport({ width: 1440, height: 900 })
+    assert.equal(await page.$eval('.site-rail a[data-status="active"]', (element) => element.textContent), "Getting started")
+    await page.locator('.site-rail a[href$="/docs"]').click()
+    await page.waitForFunction(() => document.querySelector("h1")?.textContent === "Introduction")
+    console.log("Checked header, desktop docs sidebar, and mobile navigation with Escape/focus restoration")
+  } finally {
+    await page.close()
+  }
+}
+
+async function checkStructureFiles(browser) {
+  const context = await browser.createBrowserContext()
+  try {
+    await context.overridePermissions(origin, ["clipboard-read", "clipboard-write", "clipboard-sanitized-write"])
+    const page = await context.newPage()
+    await mockRepositoryMetadata(page)
+    await page.setViewport({ width: 1440, height: 900 })
+    await page.goto(`${origin}${base}docs/project-structure/behaviorful-value-object`, { waitUntil: "networkidle0" })
+    const example = '[data-project-structure-example="behaviorful-value-object"]'
+    await page.waitForSelector(example)
+    const directory = "examples/bike-rental/src/domain/bike_rental/rental_fleet/bicycle/registration_number/"
+    const actualFiles = (await readdir(new URL(`../${directory}`, import.meta.url), { recursive: true }))
+      .filter((path) => path.endsWith(".rs")).sort()
+    const buttons = await page.$$(`${example} button[data-source-path]`)
+    const displayedFiles = await Promise.all(buttons.map((button) => button.evaluate((element) =>
+      element.getAttribute("data-source-path")
+    )))
+    assert.deepEqual(displayedFiles.map((path) => path.slice(directory.length)).sort(), actualFiles)
+
+    for (let index = 0; index < buttons.length; index++) {
+      const path = displayedFiles[index]
+      assert.ok(path.startsWith(directory))
+      const expected = (await readFile(new URL(`../${path}`, import.meta.url), "utf8")).trimEnd()
+      // ElementHandle.click only checks viewport intersection, not sticky overlays.
+      await buttons[index].evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }))
+      await buttons[index].click()
+      await page.waitForFunction((path) =>
+        document.querySelector("[data-selected-source]")?.getAttribute("data-selected-source") === path,
+      {}, path)
+      assert.equal(await page.$eval(`${example} pre code`, (element) => element.textContent), expected)
+      assert.equal(await page.$$eval(`${example} button[aria-pressed="true"]`, (elements) => elements.length), 1)
+      await page.locator(`${example} button[aria-label="Copy code"]`).click()
+      await page.waitForFunction(() =>
+        document.querySelector('.project-file-source button[aria-label="Copy code"]')?.textContent.includes("Copied")
+      )
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), expected)
+    }
+
+    const keyboardFile = `${example} button[aria-label="choose_format/outcome.rs"]`
+    await page.focus(keyboardFile)
+    await page.keyboard.press("Enter")
+    await page.waitForFunction(() => document.querySelector("[data-selected-source]")?.getAttribute("data-selected-source").endsWith("choose_format/outcome.rs"))
+    const selected = await page.$eval(`${example} pre code`, (element) => element.textContent)
+    await page.locator(`${example} button[aria-label="Toggle choose_format"]`).click()
+    assert.equal(await page.$(keyboardFile), null)
+    assert.equal(await page.$eval(`${example} pre code`, (element) => element.textContent), selected)
+    await page.locator(`${example} button[aria-label="Toggle choose_format"]`).click()
+    assert.equal(await page.$eval(keyboardFile, (element) => element.getAttribute("aria-pressed")), "true")
+
+    // Switching between short and long files must not move the page or source pane,
+    // including when horizontal/vertical scrollbars become necessary.
+    const layout = () => page.$eval(`${example} .project-file-source`, (element) => {
+      const rect = element.getBoundingClientRect()
+      return {
+        top: rect.top + scrollY,
+        width: rect.width,
+        height: rect.height,
+        pageHeight: document.documentElement.scrollHeight,
+        scrollY,
+      }
+    })
+    for (const width of [1440, 390, 320]) {
+      await page.setViewport({ width, height: 900 })
+      await page.evaluate(() => document.fonts.ready)
+      for (const file of ["normalize/mod.rs", "validity/evaluate.rs", "value.rs"]) {
+        const button = await page.$(`${example} button[aria-label="${file}"]`)
+        await button.evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }))
+        const before = await layout()
+        await button.click()
+        await page.waitForFunction((path) => document.querySelector("[data-selected-source]")?.getAttribute("data-selected-source") === path,
+          {}, `${directory}${file}`)
+        assert.deepEqual(await layout(), before, `Switching to ${file} shifts the layout at ${width}px`)
+      }
+    }
+
+    // Client-side navigation must reset to the new example's own default file.
+    await page.setViewport({ width: 1440, height: 900 })
+    await page.locator('.site-rail a[href$="/docs/project-structure/value-object-policy"]').click()
+    await page.waitForSelector('[data-project-structure-example="value-object-policy"]')
+    const policyPath = `${directory}choose_format/policy.rs`
+    assert.equal(await page.$eval("[data-selected-source]", (element) => element.getAttribute("data-selected-source")), policyPath)
+    assert.equal(await page.$eval(".project-file-source pre code", (element) => element.textContent),
+      (await readFile(new URL(`../${policyPath}`, import.meta.url), "utf8")).trimEnd())
+    console.log(`Checked ${actualFiles.length} real example files, selected-file copying, keyboard selection, folder toggles, stable file-switch layout and navigation reset`)
+  } finally {
+    await context.close()
+  }
+}
 
 async function mockRepositoryMetadata(page) {
   await page.setRequestInterception(true)
@@ -110,7 +294,11 @@ async function checkThemeBoot(browser) {
 try {
   browser = await launchStudioBrowser()
   await checkThemeBoot(browser)
+  await checkAgentPrompt(browser)
+  await checkNavigation(browser)
+  await checkStructureFiles(browser)
   const documentation = await browser.newPage()
+  await mockRepositoryMetadata(documentation)
   await documentation.goto(`${origin}${base}docs/domain-macros/command`, {
     waitUntil: "networkidle0",
   })
@@ -175,6 +363,12 @@ try {
           })
           assert.equal(response.status(), 200, label)
           await page.waitForSelector("h1")
+          assert.ok(await page.$(".site-shell .site-body #main-content"), `${label}: documentation layout`)
+          assert.ok(await page.$('.site-header a[href="https://github.com/elbLabs/rostfrei"]'), `${label}: GitHub navigation`)
+          assert.equal(await page.$eval(".site-rail", (element) => element.checkVisibility()), width > 760)
+          if (route === "") {
+            assert.equal(await page.$eval("h1", (element) => element.textContent), "A batteries-included Rust framework for event-sourced applications.")
+          }
           await page.waitForFunction(
             (value) => document.documentElement.classList.contains(value),
             {},
@@ -226,19 +420,19 @@ try {
           )
           assert.equal(
             state.background.toLowerCase(),
-            theme === "dark" ? "#141b22" : "#edf0f2",
+            theme === "dark" ? "#262626" : "#f4f4f5",
             label
           )
           assert.equal(
             state.primary.toLowerCase(),
-            theme === "dark" ? "#f0a479" : "#9f421f",
+            theme === "dark" ? "#d3a498" : "#7e342a",
             label
           )
           assert.deepEqual(state.badLinks, [], `${label}: base-path links`)
           assert.deepEqual(diagnostics.pageErrors, [], label)
           assert.deepEqual(diagnostics.failedRequests, [], label)
           assert.deepEqual(diagnostics.httpErrors, [], label)
-          if (["", "docs", "docs/messaging/subjects"].includes(route) && width !== 320) {
+          if (["", "docs", "docs/getting-started", "docs/messaging/subjects", "docs/project-structure/behaviorful-value-object"].includes(route) && width !== 320) {
             await page.screenshot({
               path: fileURLToPath(new URL(`${label}.png`, output)),
               fullPage: true,

@@ -1,4 +1,4 @@
-# Rostfrei documentation
+# rostfrei documentation
 
 This is the official documentation for developers and coding agents. The website
 renders these same files; read them here, in a checkout, or on the
@@ -10,6 +10,7 @@ the same Markdown/MDX sources without requiring JavaScript.
 
 - [Introduction](introduction.mdx)
 - [Getting started](getting-started.mdx)
+- [Explore with your coding agent](agent-tutorial.md)
 - [Domain macros](domain-macros/index.mdx) and [project structure](project-structure/index.mdx)
 - [Bike-rental setup and Tracer workflow](../examples/bike-rental/README.md)
 - [Tracer Studio](../studio/README.md)

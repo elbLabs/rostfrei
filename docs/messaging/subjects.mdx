@@ -1,6 +1,6 @@
 # Subjects and streams
 
-A **subject** is the dot-separated address on a NATS message. Rostfrei gives that
+A **subject** is the dot-separated address on a NATS message. rostfrei gives that
 address a predictable shape: the application, traffic scope, message kind, and
 bounded context. The [bike-rental example](https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental)
 shows how those addresses connect a rental command, private history, and a public
@@ -64,9 +64,9 @@ completed-outcome epoch. `<epoch-digest>` is derived from that configured epoch.
 </SubjectExplorer>
 
 Angle-bracketed digests are placeholders, not literal subjects or wildcards.
-Rostfrei derives their opaque values.
+rostfrei derives their opaque values.
 
-Rostfrei derives four messaging streams per application and traffic scope, plus
+rostfrei derives four messaging streams per application and traffic scope, plus
 the journal/state pair per bounded context, scope, and epoch. Human-readable
 stream-name components use uppercase and underscores; the epoch's hex digest
 retains its encoded case. Subjects keep lowercase kebab-case tokens.

@@ -1,17 +1,45 @@
 # <img src="packages/ui/src/brand/duck-icon.png" width="36" height="36" alt="" align="absmiddle" /> rostfrei
 
-**Understand your code. Even when AI wrote it.**
+**A Rust framework for event-sourced applications.**
 
-Rostfrei is a Rust framework for domain modeling, event sourcing, and messaging.
-It connects business ownership to Rust implementations, event history, and
-runtime tools used by developers and coding agents. Macros describe the model;
-`cargo rostfrei check` validates its structure. Domain behavior stays independent
-of persistence and messaging adapters.
+Business rules stay in ordinary Rust. rostfrei supplies history loading,
+durable commands, atomic event transactions, NATS JetStream adapters, HTTP routes,
+read models, and behavioral tests you can inspect through Tracer.
+
+Domain declarations name the model and its ownership; `cargo rostfrei check`
+validates its structure. Applications use the `rostfrei` facade and enable the
+adapters they need.
 
 **Status: 0.1.** APIs are evolving. Use the runnable example to evaluate the
 framework. See the [0.1 migration guide](docs/migration-0.1.md) when upgrading.
 
-## Start here
+## Explore with your agent
+
+Copy this prompt into your coding agent. It will guide you through the runnable
+bike-rental example, starting with an ordinary successful rental:
+
+```text
+Help me explore rostfrei through its bike-rental example. Use https://github.com/elbLabs/rostfrei and read docs/agent-tutorial.md from the checkout before setup. Check my environment, prepare an isolated local demo, and guide me through a successful rental and a rejection using real Tracer evidence. Explain one step at a time and let me choose what to inspect next. Use text by default; use a richer display only when its adapter is explicitly available.
+```
+
+The [tutorial entry guide](docs/agent-tutorial.md) connects setup to the
+checkout's Tracer skill. The text-based journey needs Git, Rust, and NATS
+(usually through Docker); Studio is optional. The agent checks what is available
+before setup. The [reference documentation](docs/README.md) remains directly
+readable by people and agents.
+
+## Why event sourcing?
+
+A bicycle was added, rented, then returned. Applying those recorded facts
+reconstructs its availability. The same history can support another question,
+such as rental activity, through a saved read model. Events are the source of
+domain data, beyond simply recording an audit trail.
+
+Should a returned bicycle be available immediately or need an inspection first?
+That remains a domain decision. Modeling the rule is useful engineering work;
+rostfrei handles the recurring persistence, concurrency, and delivery mechanics.
+
+## Use the framework
 
 Use **`rostfrei` as your framework dependency**, enabling the adapters you need:
 
@@ -28,7 +56,7 @@ Install the development CLI separately with
 [Agent Skills setup](docs/agent-skills-install.md) for dependency-aware installation.
 
 - [Getting started](https://elblabs.github.io/rostfrei/docs/getting-started):
-  inspect the model, start NATS, and open Tracer Studio.
+  explore with an agent or look up dependency setup.
 - [Bike-rental example](examples/bike-rental): run a NATS-backed application
   with rental, return, fleet-addition, and cross-fleet transfer commands.
 - [Official documentation](docs/README.md): shared by developers and agents,
@@ -38,17 +66,6 @@ Install the development CLI separately with
 - [Command runtime](docs/command-runtime.md): execution, persistence, and recovery.
 - [Tracer Studio](studio): inspect behavioral tests and their message graphs.
 - [Changelog](CHANGELOG.md): release changes and migration notes.
-
-With Git and [rustup](https://rustup.rs/) installed, inspect the model without a
-broker:
-
-```sh
-git clone https://github.com/elbLabs/rostfrei.git
-cd rostfrei
-cargo run --locked -p bike-rental --bin bike-rental-model
-```
-
-The repository selects its pinned Rust toolchain automatically.
 
 ## Execution model
 
@@ -121,8 +138,10 @@ rostfrei::install_macro_support!();
 
 - **`rostfrei-develop-feature`** guides Given/When/Then and test-first development
   through the application's real NATS-backed behavior suite.
-- **`rostfrei-tracer`** discovers runtime capabilities and explains tests,
-  recorded operations, observations and quarantine.
+- **`rostfrei-tracer`** guides the text-first tutorial, discovers runtime
+  capabilities and explains tests, recorded operations, observations and
+  quarantine. It presents text by default; richer displays require an explicitly
+  available adapter using the same recorded evidence.
 
 The [Agent Skills guide](docs/agent-skills-install.md) covers dependency-matched
 installation, updates, and application test execution.
@@ -138,7 +157,7 @@ git config core.hooksPath .githooks
 
 The hook runs the workspace structure check and Clippy.
 
-The website and Tracer Studio share the Reference ’15 theme and components in
+The website and Tracer Studio share components and theme controls in
 [`@rostfrei/ui`](packages/ui/README.md). Use Node.js 24 (or 22.13+ on the 22.x line) and
 pnpm 10.10.0. Install the frontend workspace from this repository root:
 
@@ -160,4 +179,4 @@ dependency contract.
 
 Copyright (c) 2026 elbtech.dev.
 
-Licensed under the [European Union Public Licence 1.2](LICENSE).
+See [LICENSE](LICENSE) for the license terms.

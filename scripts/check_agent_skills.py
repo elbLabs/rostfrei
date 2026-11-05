@@ -168,6 +168,31 @@ class InstalledKitTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), self.archive_digest)
         self.assertFalse((ROOT / ".opencode/skills/rostfrei-tracer/SKILL.md").exists())
 
+    def test_guided_tutorial_survives_install_and_application_relocation(self):
+        relative = Path("rostfrei-tracer/references/guided-tutorial.md")
+        expected = (ROOT / ".agents/skills" / relative).read_bytes()
+        manifest = json.loads((self.kit / "manifest.json").read_text())
+        self.assertEqual(manifest["sha256"][f"skills/{relative.as_posix()}"],
+                         hashlib.sha256(expected).hexdigest())
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        shutil.rmtree(self.kit)
+        relocated = self.consumer / "moved application"
+        (self.consumer / "app").rename(relocated)
+        skill = relocated / ".agents/skills/rostfrei-tracer"
+        tutorial = skill / "references/guided-tutorial.md"
+        self.assertFalse(tutorial.is_symlink())
+        self.assertEqual(tutorial.read_bytes(), expected)
+        # The installed entry point must lead to the packaged tutorial, whose
+        # local references must still work without a checkout or extracted kit.
+        entry_links = re.findall(r"\]\(([^)]+)\)", (skill / "SKILL.md").read_text())
+        self.assertIn("references/guided-tutorial.md", entry_links)
+        for href in re.findall(r"\]\(([^)]+)\)", tutorial.read_text()):
+            if "://" not in href and not href.startswith("#"):
+                target = (tutorial.parent / href.split("#")[0]).resolve()
+                self.assertTrue(target.is_relative_to(skill), href)
+                self.assertTrue(target.is_file(), href)
+
     def test_untracked_resources_and_caches_are_not_shipped(self):
         with tempfile.TemporaryDirectory(prefix=".package-regression-", dir=ROOT / ".agents/skills/rostfrei-develop-feature") as local:
             work = Path(local)

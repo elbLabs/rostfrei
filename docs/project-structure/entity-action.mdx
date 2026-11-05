@@ -10,8 +10,6 @@ Illustrative path: `src/domain/bike_rental/rental_fleet/bicycle/change_condition
 
 This illustrates placement; `change_condition` is not part of the runnable example. Rental-status changes in that example are applied from domain events.
 
-<ProjectStructureExample name="entity-action">
-
 ```rust
 #[domain_action(id = "change-condition", label = "Change condition")]
 pub trait ChangeConditionAction {
@@ -24,5 +22,3 @@ impl ChangeConditionAction for Bicycle {
     }
 }
 ```
-
-</ProjectStructureExample>

@@ -53,7 +53,7 @@ python3 scripts/check_new_project.py
 
 This requires GitHub and crates.io access. It generates a hyphenated starter in
 a temporary directory, runs `cargo check` and `cargo test --locked` with its
-unmodified manifest, and verifies that Rostfrei dependencies resolve from the
+unmodified manifest, and verifies that rostfrei dependencies resolve from the
 pinned Git release.
 
 ### NATS authentication and workers

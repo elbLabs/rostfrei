@@ -4,6 +4,9 @@ This is the canonical language for rostfrei's event-sourcing model. Framework
 APIs, architecture decisions, documentation, and AI tooling use these terms with
 the same meanings. See the [domain-model decision](adr/domain-model.md).
 
+The framework name is always lowercase **rostfrei**; technical identifiers keep
+their defined spelling.
+
 ## Domain model
 
 | Term | Definition | Aliases to avoid |
