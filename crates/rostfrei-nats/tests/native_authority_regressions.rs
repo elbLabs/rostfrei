@@ -6,12 +6,15 @@
 )]
 mod modular_state_fault_support;
 mod release_contract_support;
+mod transaction_support;
 use async_trait::async_trait;
 use modular_state_fault_support::StateProxy;
 use release_contract_support::*;
 use rostfrei_runtime::{
-    CommandAccess, CommandProcessingService, PrincipalId, TrustedCommandContext,
+    CommandAccess, CommandProcessingService, CommandProcessorErrorKind, PrincipalId,
+    TrustedCommandContext,
 };
+use transaction_support::AppendOneTransaction;
 rostfrei_runtime::install_macro_support!();
 
 static FIXTURE_ID: AtomicUsize = AtomicUsize::new(0);
@@ -237,7 +240,7 @@ async fn stale_route(route: Route) -> TestResult {
         let before = snapshot(&f, store.config()).await?;
         let result = match route {
             Route::Append => store
-                .append(&id, ExpectedVersion::NoStream, batch(&id, "direct")?)
+                .append_one_transaction(&id, ExpectedVersion::NoStream, batch(&id, "direct")?)
                 .await
                 .map(|_| ()),
             Route::Transaction => store
@@ -247,7 +250,7 @@ async fn stale_route(route: Route) -> TestResult {
             Route::NewAppend => store
                 .append_session()
                 .await?
-                .append(&id, ExpectedVersion::NoStream, batch(&id, "new")?)
+                .append_one_transaction(&id, ExpectedVersion::NoStream, batch(&id, "new")?)
                 .await
                 .map(|_| ()),
             Route::NewTransaction => store
@@ -257,7 +260,7 @@ async fn stale_route(route: Route) -> TestResult {
                 .await
                 .map(|_| ()),
             Route::OpenAppend => open
-                .append(&id, ExpectedVersion::NoStream, batch(&id, "open")?)
+                .append_one_transaction(&id, ExpectedVersion::NoStream, batch(&id, "open")?)
                 .await
                 .map(|_| ()),
             Route::OpenTransaction => open
@@ -402,11 +405,38 @@ fn service(
     p.register::<Act, _>(Handler(calls), map_rejection)?;
     Ok(p)
 }
+fn assert_state_info_read(
+    proxy: &StateProxy,
+    config: &NatsEventStoreConfig,
+    phase: &str,
+    blocked: bool,
+) {
+    let requests = proxy.finish_counting();
+    let subject = format!("$JS.API.STREAM.INFO.{}", config.outcome_state_stream_name());
+    assert_eq!(
+        requests.get(&subject).copied(),
+        Some(1),
+        "{phase}: requests={requests:?}"
+    );
+    assert_eq!(
+        proxy.faults.dropped_reads.swap(0, Ordering::SeqCst),
+        usize::from(blocked),
+        "{phase}: requests={requests:?}"
+    );
+}
 async fn missing_refuses(fault: Option<Damage>) -> TestResult {
     let f = fixture("authority-missing").await?;
     let original = split_store(&f).await?;
-    let proxy =
-        StateProxy::start(original.config().outcome_state_stream_name(), "unused", 0).await?;
+    // The short 250 ms proxy default can time out a healthy journal read before
+    // reaching the state fault. Use the fixture's normal budget and prove each
+    // faulted call reaches the blocked state INFO, rather than accepting any timeout.
+    let proxy = StateProxy::start_with_timeout(
+        original.config().outcome_state_stream_name(),
+        "unused",
+        0,
+        WAIT,
+    )
+    .await?;
     let store =
         Arc::new(NatsEventStore::connect(proxy.js.clone(), original.config().clone()).await?);
     let calls = Arc::new(AtomicUsize::new(0));
@@ -419,10 +449,12 @@ async fn missing_refuses(fault: Option<Damage>) -> TestResult {
         f.context.name().clone(),
         OperationId::new("absent")?,
     );
+    proxy.start_counting();
     assert!(matches!(
         p.lookup(&caller()?, &command).await.into_result()?,
         OutcomeLookup::Missing
     ));
+    assert_state_info_read(&proxy, store.config(), "healthy lookup", false);
     log.0.lock().unwrap().clear();
     if let Some(fault) = fault {
         damage(&f, store.config(), fault).await?;
@@ -435,17 +467,40 @@ async fn missing_refuses(fault: Option<Damage>) -> TestResult {
     } else {
         EventStoreErrorKind::Unavailable
     };
-    assert_eq!(
-        store.lookup_outcome(&key).await.unwrap_err().kind(),
-        expected
+    let expected_service = if fault.is_some() {
+        CommandProcessorErrorKind::CompletedDetailsBlocked
+    } else {
+        CommandProcessorErrorKind::Unavailable
+    };
+    proxy.start_counting();
+    let direct_error = store.lookup_outcome(&key).await.unwrap_err();
+    assert_eq!(direct_error.kind(), expected, "{direct_error:?}");
+    assert_state_info_read(
+        &proxy,
+        store.config(),
+        "faulted direct lookup",
+        fault.is_none(),
     );
-    assert!(p.lookup(&caller()?, &command).await.into_result().is_err());
-    assert!(
-        CommandProcessingService::process(&p, &caller()?, &command)
-            .await
-            .into_result()
-            .is_err()
+    proxy.start_counting();
+    let lookup_error = p
+        .lookup(&caller()?, &command)
+        .await
+        .into_result()
+        .unwrap_err();
+    assert_eq!(lookup_error.kind(), expected_service, "{lookup_error:?}");
+    assert_state_info_read(
+        &proxy,
+        store.config(),
+        "faulted service lookup",
+        fault.is_none(),
     );
+    proxy.start_counting();
+    let process_error = CommandProcessingService::process(&p, &caller()?, &command)
+        .await
+        .into_result()
+        .unwrap_err();
+    assert_eq!(process_error.kind(), expected_service, "{process_error:?}");
+    assert_state_info_read(&proxy, store.config(), "faulted process", fault.is_none());
     assert_eq!(
         *log.0.lock().unwrap(),
         vec![CommandAccess::ReadOutcome, CommandAccess::ReadOutcome]
@@ -453,12 +508,13 @@ async fn missing_refuses(fault: Option<Damage>) -> TestResult {
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert_eq!(snapshot(&f, store.config()).await?, before);
     if fault.is_none() {
-        assert!(proxy.faults.dropped_reads.load(Ordering::SeqCst) >= 3);
         proxy.faults.block_state_info.store(false, Ordering::SeqCst);
+        proxy.start_counting();
         assert!(matches!(
             store.lookup_outcome(&key).await?,
             OutcomeLookup::Missing
         ));
+        assert_state_info_read(&proxy, store.config(), "restored direct lookup", false);
     }
     Ok(())
 }
@@ -589,7 +645,7 @@ async fn read_only_route(route: ReadOnlyRoute) -> TestResult {
         let writer = NatsEventStore::connect(f.js.clone(), config.clone()).await?;
         let id = stream("seed")?;
         writer
-            .append(&id, ExpectedVersion::NoStream, batch(&id, "seed-event")?)
+            .append_one_transaction(&id, ExpectedVersion::NoStream, batch(&id, "seed-event")?)
             .await?;
         writer
             .append_session()
@@ -677,7 +733,7 @@ async fn read_only_route(route: ReadOnlyRoute) -> TestResult {
         assert!(readonly.begin_command().await.is_err());
         let result = match route {
             ReadOnlyRoute::Append => readonly
-                .append(
+                .append_one_transaction(
                     &stream("new")?,
                     ExpectedVersion::NoStream,
                     batch(&stream("new")?, "new-event")?,

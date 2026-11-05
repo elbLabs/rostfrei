@@ -495,7 +495,7 @@ async fn worker_startup_failure_and_unexpected_exit_are_surfaced()
 }
 
 #[tokio::test]
-async fn observer_startup_failure_stops_previously_active_workers()
+async fn observer_startup_failure_preserves_previously_active_workers()
 -> Result<(), Box<dyn std::error::Error>> {
     use rostfrei::tracer::{NatsApplication, OperationMode};
     use std::sync::Arc;
@@ -536,13 +536,13 @@ async fn observer_startup_failure_stops_previously_active_workers()
             .await
             .is_err()
     );
-    assert_eq!(
+    assert!(!host.runtime().has_correlation_observer().await);
+    assert!(matches!(
         invoke(host.runtime(), "after-observer-failure")
-            .await
-            .unwrap_err()
-            .kind(),
-        rostfrei::tracer::CommandTransportErrorKind::Unavailable
-    );
+            .await?
+            .outcome(),
+        rostfrei::tracer::CommandOutcome::Accepted
+    ));
     host.shutdown().await?;
     connection.drain().await?;
     Ok(())

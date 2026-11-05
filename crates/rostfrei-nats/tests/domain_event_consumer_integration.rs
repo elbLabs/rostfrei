@@ -1,6 +1,9 @@
 #[path = "../src/hex.rs"]
 mod hex;
 mod native_connection_support;
+mod transaction_support;
+use rostfrei_core::FixtureEventStore;
+use transaction_support::AppendOneTransaction;
 
 #[path = "domain_event_consumer/worker_pool.rs"]
 mod worker_pool;
@@ -242,7 +245,7 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
 
     let first_stream = stream("first").expect("first stream id");
     let first_outcome = store
-        .append(
+        .append_one_transaction(
             &first_stream,
             ExpectedVersion::NoStream,
             batch(&first_stream, "first-operation", &["first"]).expect("first event batch"),
@@ -339,7 +342,7 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         tokio::spawn(async move { restarted.run_until_shutdown(restart_shutdown_rx).await });
     let next_stream = stream("next").expect("next stream id");
     store
-        .append(
+        .append_one_transaction(
             &next_stream,
             ExpectedVersion::NoStream,
             batch(&next_stream, "next-operation", &["next"]).expect("next event batch"),
@@ -356,7 +359,7 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
 
     let ordered_stream = stream("ordered").expect("ordered stream id");
     store
-        .append(
+        .append_one_transaction(
             &ordered_stream,
             ExpectedVersion::NoStream,
             batch(
@@ -429,7 +432,7 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         .expect("cross-stream transaction");
     assert_eq!(transaction_outcome.receipt().events().len(), 2);
     let transaction_final_sequence = event_stream
-        .get_last_raw_message_by_subject(&event_store_config.aggregate_subject(
+        .get_last_raw_message_by_subject(&event_store_config.aggregate_history_subject_filter(
             transaction_destination.aggregate_type().as_str(),
             transaction_destination.aggregate_id().as_str(),
         ))
@@ -487,7 +490,7 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
     });
     let after_transaction_stream = stream("after-transaction").expect("post-transaction stream");
     store
-        .append(
+        .append_one_transaction(
             &after_transaction_stream,
             ExpectedVersion::NoStream,
             batch(
@@ -674,13 +677,23 @@ async fn durable_domain_event_consumers_preserve_history_order_and_independent_p
         .expect("unblocked task join")
         .expect("clean unblocked shutdown");
 
+    let committed_messages = event_stream
+        .info()
+        .await
+        .expect("committed stream info")
+        .state
+        .messages;
+    assert_eq!(
+        committed_messages, 13,
+        "eight events and five transaction receipts"
+    );
     let staged_response_payload = stage_uncommitted_batch(&client, &event_store_config)
         .await
         .expect("stage uncommitted batch");
     assert!(staged_response_payload.is_empty());
     let stream_info = event_stream.info().await.expect("stream info");
     assert_eq!(
-        stream_info.state.messages, 9,
+        stream_info.state.messages, committed_messages,
         "staged ADR-50 messages stay invisible"
     );
 }
@@ -801,6 +814,111 @@ fn batch(stream: &StreamId, operation: &str, values: &[&str]) -> TestResult<Even
     )?)
 }
 
+#[tokio::test]
+async fn fixture_manifests_suppress_handlers_but_command_transactions_still_dispatch()
+-> TestResult<()> {
+    for split_authority in [false, true] {
+        fixture_worker_suppression(split_authority)
+            .await
+            .map_err(|error| format!("fixture suppression (split={split_authority}): {error}"))?;
+    }
+    Ok(())
+}
+
+#[allow(
+    clippy::panic_in_result_fn,
+    reason = "assertions report fixture and transaction delivery contract violations"
+)]
+async fn fixture_worker_suppression(split_authority: bool) -> TestResult<()> {
+    let context = async_nats::jetstream::new(
+        native_connection_support::client(rostfrei_testing::integration::nats_url()?).await?,
+    );
+    let bounded_context = ApplicationName::new(format!("fixture-worker-{}", unique_suffix()?))?
+        .bounded_context_in_scope(
+            rostfrei_messaging_core::TrafficScope::Test,
+            "domain-event-consumer",
+        )?;
+    let config = NatsEventStoreConfig::for_bounded_context(&bounded_context)?
+        .with_storage_limits(64 * 1024 * 1024, 512 * 1024)?;
+    let config = if split_authority {
+        config.with_fresh_split_outcome_epoch("fixture-worker")?
+    } else {
+        config
+    };
+    provision_event_store(&context, &config).await?;
+    let store = NatsEventStore::connect(context.clone(), config.clone()).await?;
+    let aggregate = stream("fixture-then-command")?;
+    let given = vec!["given"; rostfrei_core::MAX_EVENTS_PER_BATCH];
+    let fixture = store
+        .append_fixture(
+            &aggregate,
+            ExpectedVersion::NoStream,
+            batch(&aggregate, "fixture", &given)?,
+        )
+        .await?;
+    assert_eq!(fixture.events().len(), 100);
+    assert!(
+        store
+            .load_transaction_receipt(&OperationId::new("fixture")?)
+            .await?
+            .is_none()
+    );
+    let command = store
+        .append_transaction(transaction_support::transaction(
+            &aggregate,
+            ExpectedVersion::Exact(rostfrei_core::StreamVersion::new(u64::try_from(
+                given.len(),
+            )?)),
+            batch(&aggregate, "command", &["command-one", "command-two"])?,
+        ))
+        .await?;
+    let consumer_config = consumer_config(&bounded_context, "fixture-suppression")?;
+    provision_domain_event_consumer(&context, &config, &consumer_config).await?;
+    let (sender, mut receiver) = mpsc::unbounded_channel();
+    let handler = Arc::new(RecordingHandler::new(sender, 0));
+    let worker = connect_consumer(
+        context.clone(),
+        config.clone(),
+        consumer_config.clone(),
+        handler.clone(),
+    )
+    .await?;
+    let (shutdown, stopping) = watch::channel(false);
+    let mut task = tokio::spawn(worker.run_until_shutdown(stopping));
+    let result = async {
+        for expected in ["command-one", "command-two"] {
+            let delivery = receive(&mut receiver).await?;
+            assert_eq!(delivery.value, expected, "split={split_authority}");
+        }
+        wait_for_ack(&context, &config, &consumer_config).await?;
+        assert_eq!(
+            handler.calls.load(Ordering::Relaxed),
+            2,
+            "split={split_authority}"
+        );
+        assert!(receiver.try_recv().is_err());
+        let mut expected = fixture.into_events();
+        expected.extend(command.receipt().events());
+        assert_eq!(store.load(&aggregate).await?, expected);
+        TestResult::Ok(())
+    }
+    .await;
+    let _ = shutdown.send(true);
+    let stopped = tokio::time::timeout(Duration::from_secs(5), &mut task).await;
+    if stopped.is_err() {
+        task.abort();
+    }
+    context.delete_stream(config.stream_name()).await?;
+    if split_authority {
+        context
+            .delete_stream(config.outcome_state_stream_name())
+            .await?;
+    }
+    result?;
+    stopped???;
+    Ok(())
+}
+
 async fn receive(receiver: &mut mpsc::UnboundedReceiver<HandledEvent>) -> TestResult<HandledEvent> {
     tokio::time::timeout(Duration::from_secs(5), receiver.recv())
         .await?
@@ -862,7 +980,7 @@ async fn stage_uncommitted_batch(
     config: &NatsEventStoreConfig,
 ) -> TestResult<Vec<u8>> {
     let staged_stream = stream("staged")?;
-    let subject = config.aggregate_subject(
+    let subject = config.event_subject(
         staged_stream.aggregate_type().as_str(),
         staged_stream.aggregate_id().as_str(),
     );
@@ -980,7 +1098,7 @@ async fn commit_schema_four_event_without_receipt(
         event: &content,
     })?;
     let batch_id = "schema-four-with-unrelated-filler";
-    let subject = config.aggregate_subject(
+    let subject = config.event_subject(
         stream_id.aggregate_type().as_str(),
         stream_id.aggregate_id().as_str(),
     );
@@ -991,6 +1109,13 @@ async fn commit_schema_four_event_without_receipt(
     event_headers.insert(NATS_BATCH_SEQUENCE, "1");
     event_headers.insert(NATS_EXPECTED_STREAM, config.stream_name());
     event_headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, "0");
+    event_headers.insert(
+        "Nats-Expected-Last-Subject-Sequence-Subject",
+        config.aggregate_history_subject_filter(
+            stream_id.aggregate_type().as_str(),
+            stream_id.aggregate_id().as_str(),
+        ),
+    );
     let staged = client
         .send_request(
             subject,

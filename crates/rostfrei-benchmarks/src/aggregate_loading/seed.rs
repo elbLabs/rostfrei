@@ -1,12 +1,12 @@
 use rostfrei_core::{
     AppendOutcome, CommandExecutor, CommandOutcome, CommandReceipt, ContentFingerprint, Event,
-    EventBatch, EventStore, ExpectedVersion, MAX_BATCH_PAYLOAD_LEN, MAX_EVENTS_PER_BATCH, NewEvent,
-    OperationId, StreamVersion, derive_commit_id, derive_event_id,
+    EventBatch, ExpectedVersion, FixtureEventStore, MAX_BATCH_PAYLOAD_LEN, MAX_EVENTS_PER_BATCH,
+    NewEvent, OperationId, StreamVersion, derive_commit_id, derive_event_id,
 };
 
 use super::{BenchResult, config::HistoryKind, model};
 
-pub async fn seed<S: EventStore + rostfrei_core::ExecutionStore + Clone>(
+pub async fn seed<S: FixtureEventStore + rostfrei_core::ExecutionStore + Clone>(
     store: S,
     id: &str,
     kind: HistoryKind,
@@ -14,7 +14,7 @@ pub async fn seed<S: EventStore + rostfrei_core::ExecutionStore + Clone>(
     note_bytes: u32,
 ) -> BenchResult {
     match kind {
-        HistoryKind::Direct => direct(&store, id, count, note_bytes).await,
+        HistoryKind::Fixtures => fixtures(&store, id, count, note_bytes).await,
         HistoryKind::Commands => {
             let executor = CommandExecutor::new(store);
             for index in 0..count {
@@ -35,7 +35,12 @@ pub async fn seed<S: EventStore + rostfrei_core::ExecutionStore + Clone>(
     }
 }
 
-async fn direct<S: EventStore>(store: &S, id: &str, count: u32, note_bytes: u32) -> BenchResult {
+async fn fixtures<S: FixtureEventStore>(
+    store: &S,
+    id: &str,
+    count: u32,
+    note_bytes: u32,
+) -> BenchResult {
     let stream = model::stream(id)?;
     let mut position = 0_u32;
     while position < count {
@@ -77,10 +82,10 @@ async fn direct<S: EventStore>(store: &S, id: &str, count: u32, note_bytes: u32)
             ExpectedVersion::Exact(StreamVersion::new(u64::from(base)))
         };
         if !matches!(
-            store.append(&stream, expected, batch).await?,
+            store.append_fixture(&stream, expected, batch).await?,
             AppendOutcome::Appended(_)
         ) {
-            return Err("direct fixture unexpectedly replayed an existing operation".into());
+            return Err("fixture setup unexpectedly replayed an existing operation".into());
         }
     }
     Ok(())

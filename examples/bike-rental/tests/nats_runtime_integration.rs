@@ -23,7 +23,7 @@ use axum::{
 use bike_rental::{
     BicycleRentalStarted, BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
     BikeRentalNatsRuntime,
-    demo::{demo_fixture, demo_stream, no_rental_fleets_fixture, rented_demo_fixture},
+    demo::{demo_fixture, demo_stream, no_rental_fleets_fixture, rented_demo_fixture, seed_demo},
     rental_fleet::{
         AddBicycle, AddBicycleHandler, BicycleRented, BicycleReturned, RentBicycle,
         RentBicycleHandler, RentalFleetAggregate, ReturnBicycle, ReturnBicycleHandler,
@@ -38,8 +38,8 @@ use rostfrei::messaging::{
     SchemaVersion,
 };
 use rostfrei::nats::{
-    CORRELATION_ID_HEADER, NatsConnection, NatsConnectionConfig, ServerVersion, StreamRetention,
-    connect, provision_durable_consumer,
+    CORRELATION_ID_HEADER, IntegrationEventSubject, NatsConnection, NatsConnectionConfig,
+    ServerVersion, StreamRetention, connect, provision_durable_consumer,
 };
 use rostfrei::testing::integration::nats_url as required_nats_url;
 use rostfrei::tracer::{
@@ -131,7 +131,7 @@ async fn command_workers_and_test_reset_are_subject_scope_isolated() -> TestResu
         );
         let fixture = demo_fixture()?;
         test_runtime.apply_fixture(&fixture).await?;
-        production_runtime.apply_fixture(&fixture).await?;
+        seed_demo(&production_runtime.store()).await?;
         test_runtime.start_workers().await?;
         production_runtime.start_workers().await?;
 
@@ -631,7 +631,7 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
         let runtime = Arc::new(
             BikeRentalNatsRuntime::provision_config(connection.clone(), config.clone()).await?,
         );
-        runtime.apply_fixture(&demo_fixture()?).await?;
+        seed_demo(&runtime.store()).await?;
 
         let topology = runtime.config().messaging().topology().clone();
         let context = runtime.config().context();
@@ -1119,12 +1119,14 @@ async fn run_isolation_test(
         1,
     )
     .await?;
-    let reprovision = production_runtime.apply_fixture(&demo_fixture()?).await?;
+    let reprovision = seed_demo(&production_runtime.store()).await?;
     ensure(
-        reprovision.applied_domain_event_count() == 0
-            && reprovision.reused_domain_event_count() == 2
+        reprovision.len() == 2
+            && reprovision
+                .iter()
+                .all(|receipt| matches!(receipt, rostfrei::CommandReceipt::ExactReplay(_)))
             && production_runtime.store().load(&demo_stream()).await?.len() == 4,
-        "production fixture provisioning did not tolerate extended business history",
+        "production command seeding did not replay across extended business history",
     )?;
     wait_for_command_stream_empty(connection, test_runtime).await?;
     wait_for_command_stream_empty(connection, production_runtime).await
@@ -1196,6 +1198,14 @@ async fn wait_for_integration_chain(
         SchemaVersion::new(1)?,
         source_event.event_id(),
     )?;
+    let expected_subject = IntegrationEventSubject::new(
+        route.address().clone(),
+        source_event
+            .correlation_id()
+            .ok_or_else(|| io::Error::other("source event has no correlation"))?
+            .clone(),
+        Some(CausationId::new(source_event.event_id().as_str())?),
+    )?;
     loop {
         let mut integration_stream = connection
             .jetstream()
@@ -1210,7 +1220,7 @@ async fn wait_for_integration_chain(
             .await?;
         if integration_stream.info().await?.state.messages == expected_messages {
             let raw = integration_stream
-                .get_last_raw_message_by_subject(route.address().as_str())
+                .get_last_raw_message_by_subject(expected_subject.as_str())
                 .await?;
             let integration_info = consumer_info(
                 connection,
@@ -1248,7 +1258,7 @@ async fn wait_for_integration_chain(
                 && domain_info.ack_floor.stream_sequence >= source_event.stream_version().value();
             if integration_consumed && domain_consumed {
                 ensure(
-                    raw.subject.as_str() == route.address().as_str(),
+                    raw.subject.as_str() == expected_subject.as_str(),
                     "wrong integration subject",
                 )?;
                 ensure(

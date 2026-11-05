@@ -61,7 +61,7 @@ Two history kinds are supported:
 
 | Kind | Fixture creation |
 | --- | --- |
-| `direct` | Low-level atomic event batches, bounded by both event count and payload bytes; no per-command receipts |
+| `fixtures` | Test fixture batches with atomic fixture manifests, bounded by event count and payload bytes; no command decisions |
 | `commands` | One typed handler execution and one event-producing transaction per event, with durable receipts |
 
 The command-history case is the more representative baseline for ordinary
@@ -154,7 +154,7 @@ not a reliable production p95/p99 under load.
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `--events` | `0,100,1000` | Unique history sizes; zero covers initialization without events |
-| `--history` | `direct,commands` | Select fixture provenance |
+| `--history` | `fixtures,commands` | Select fixture provenance |
 | `--samples` | `5` | Timed samples per phase |
 | `--warmups` | `1` | Untimed warmups per read phase; writes warm a separate aggregate |
 | `--audit-reads` | off | Audit historical receipts/participants during read phases |
@@ -176,7 +176,7 @@ The fixture and reporting contracts run without a broker:
 cargo test --locked -p rostfrei-benchmarks --test aggregate_benchmark
 ```
 
-They cover direct/command fixture equivalence, usable reconstructed state,
+They cover fixture/command history equivalence, usable reconstructed state,
 idempotent replay, large-event batch boundaries, CLI validation, sample counts,
 history growth, and quantile definitions. The actual NATS suite is exercised by
 the release benchmark command above; ordinary Cargo tests exercise the in-memory

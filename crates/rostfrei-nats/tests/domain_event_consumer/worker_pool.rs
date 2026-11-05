@@ -70,7 +70,7 @@ impl Fixture {
     async fn append(&self, operation: &str, values: &[&str]) -> TestResult<()> {
         let id = stream(operation)?;
         self.store
-            .append(
+            .append_one_transaction(
                 &id,
                 ExpectedVersion::NoStream,
                 batch(&id, operation, values)?,
@@ -215,7 +215,10 @@ async fn overlapping_workers_share_a_durable_and_preserve_multi_aggregate_order(
             );
         }
     }
-    let large: Vec<String> = (0..rostfrei_core::MAX_EVENTS_PER_BATCH)
+    let event_limit = rostfrei_core::MAX_TRANSACTION_ITEMS
+        .checked_sub(1)
+        .ok_or("missing transaction receipt capacity")?;
+    let large: Vec<String> = (0..event_limit)
         .map(|ordinal| format!("large-{ordinal}"))
         .collect();
     fixture
@@ -538,7 +541,7 @@ async fn takeover_after_puback_reuses_message_identity_and_deduplicates_on_the_b
     let source = stream("publication")?;
     fixture
         .store
-        .append(
+        .append_one_transaction(
             &source,
             ExpectedVersion::NoStream,
             batch(&source, "publication", &["one", "two"])?.with_correlation_id(

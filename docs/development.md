@@ -74,6 +74,21 @@ ROSTFREI_NATS_SERVER=/path/to/nats-server \
   cargo test --locked -p rostfrei-nats --test connection_integration -- --include-ignored --test-threads=1
 ```
 
+The replicated retained-inspection test owns a three-node file-backed cluster:
+
+```sh
+ROSTFREI_NATS_SERVER=/path/to/nats-server \
+  cargo test --locked -p rostfrei-nats --test receipt_cluster_integration -- --ignored --test-threads=1
+```
+
+Native event-store contracts share the library test target so private wire checks
+and test-only fault hooks compile once. To run its clustered replay checks:
+
+```sh
+ROSTFREI_NATS_SERVER=/path/to/nats-server \
+  cargo test --locked -p rostfrei-nats --lib event_store_integration::history_cluster -- --ignored --test-threads=1
+```
+
 Run the [domain-event worker pool](domain-event-workers.md) checks with:
 
 ```sh
@@ -118,7 +133,7 @@ target/release/rostfrei-benchmarks aggregate-loading -- \
 ```
 
 The release-mode suite measures history loading, event application, complete
-rehydration, and executor commands. It creates direct-appended and
+rehydration, and executor commands. It creates Test-fixture and
 command-generated histories, verifies state, and writes raw samples and summaries
 as JSON. Fixture setup is excluded from sample timings. See the
 [methodology](benchmarks/aggregate-loading.md) and

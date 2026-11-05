@@ -14,10 +14,10 @@ use std::{
 
 use rostfrei_core::{
     Aggregate, AggregateCodecs, AggregateId, AggregateType, CommandExecutionMetadata,
-    ContentFingerprint, EnvelopeError, Event, EventBatch, EventCodecError, EventId, EventStore,
-    EventStoreError, ExpectedVersion, IdentityError, MAX_EVENT_PAYLOAD_LEN, MAX_EVENT_TYPE_LEN,
-    NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion, derive_commit_id,
-    derive_event_id,
+    ContentFingerprint, EnvelopeError, Event, EventBatch, EventCodecError, EventId,
+    EventStoreError, ExpectedVersion, FixtureEventStore, IdentityError, MAX_EVENT_PAYLOAD_LEN,
+    MAX_EVENT_TYPE_LEN, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
+    derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{
     CausationId, ContractError, CorrelationId, MessageId, MessageSeries, MessageSeriesNode,
@@ -505,9 +505,10 @@ impl MessageSeriesEngine {
     /// Every domain-event node is one atomic event-store batch. Multi-stream
     /// fixture application is deliberately not globally atomic; retrying uses
     /// the same operation, commit, event, and fingerprint identities.
+    #[allow(clippy::too_many_lines)]
     pub async fn apply(
         &self,
-        store: &dyn EventStore,
+        store: &dyn FixtureEventStore,
         fixture: &Fixture,
     ) -> Result<FixtureApplyReport, FixtureApplyError> {
         fixture.validate()?;
@@ -587,7 +588,9 @@ impl MessageSeriesEngine {
             } else {
                 ExpectedVersion::Exact(StreamVersion::new(previous_version))
             };
-            let outcome = store.append(stream_id, expected, planned.batch).await?;
+            let outcome = store
+                .append_fixture(stream_id, expected, planned.batch)
+                .await?;
             if outcome.events() != std::slice::from_ref(&planned.recorded) {
                 return Err(FixtureApplyError::UnexpectedAppendResult {
                     stream_id: stream_id.clone(),

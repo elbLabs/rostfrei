@@ -4,6 +4,42 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Native NATS correlation and causation addressing on permanent transaction receipts
+  and Test fixture manifests. Domain subjects stay stable per aggregate; integration
+  subjects append control IDs while preserving logical addresses and durable identities.
+- On-demand retained correlation inspection with source cutoff snapshots, anchor
+  payload includes and matches, and inspection-only host wiring. No correlation
+  KV index or projector is required; integration retention remains unchanged.
+- `AggregateDefinition::ANCHOR` declares an aggregate as an anchor. The compiled
+  domain model projects it as `"anchor": true`.
+- Tracer Studio **Correlations** view: select an anchor aggregate or correlation
+  ID and inspect domain and integration events with recorded causation and
+  bounded-context labels, using the read-only inspection capability.
+- Payload-field match rows filter anchored correlations, request additional
+  context payloads explicitly, and show applied filters as removable chips.
+- Repeated `correlation` parameters select explicit flows on an aggregate anchor,
+  including correlations older than its default recent-history window.
+
+### Changed
+
+- The event-subject format requires fresh namespaces. Existing subject layouts
+  are rejected; historical migration is not included. See
+  [subjects and deployment compatibility](docs/messaging/subjects.mdx#fresh-deployments).
+- Low-level integration publication requires a valid envelope and derives its
+  correlation/causation subject tokens, rejecting inconsistent transport metadata.
+- **Breaking (fixture writes):** replace `EventStore::append` and
+  `AppendSession::append` with the separate `FixtureEventStore::append_fixture`
+  capability. NATS fixtures require Test scope and retain aggregate-scoped retry
+  identity and 100-event batches with atomic manifests. Application writes use
+  coordinated transactions; bike-rental seeds Normal state through commands.
+
+### Fixed
+
+- Attaching or replacing a runtime observer preserves application workers and
+  in-flight deliveries instead of stranding them until the acknowledgement timeout.
+
 ## [0.1.3] - 2026-10-29
 
 ### Added

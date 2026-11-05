@@ -3,7 +3,7 @@ use super::{
     CommandMessageAdapter, Duration, MessageHandler, NatsConnection, NatsEventStore, NatsHostError,
     NatsMessagingAdapter, NatsRuntimeConfig, async_trait,
 };
-use rostfrei_core::{EventHistory, EventStore, StreamDirectory};
+use rostfrei_core::{EventHistory, FixtureEventStore, StreamDirectory};
 use rostfrei_nats::TrustedCommandContextResolver;
 use rostfrei_runtime::{CommandProcessor, CommandProcessorBuilder, TrustedCommandContext};
 
@@ -140,51 +140,16 @@ impl StreamDirectory for CurrentBackend {
     }
 }
 #[async_trait]
-impl EventStore for CurrentBackend {
-    async fn load_completed_outcome_in_context(
-        &self,
-        context: &rostfrei_runtime::BoundedContextName,
-        id: &rostfrei_core::OperationId,
-    ) -> Result<Option<rostfrei_core::InlineCompletedOutcome>, rostfrei_core::EventStoreError> {
-        self.snapshot()
-            .store
-            .load_completed_outcome_in_context(context, id)
-            .await
-    }
-    async fn commit_outcome(
-        &self,
-        transaction: rostfrei_core::EventTransaction,
-    ) -> Result<rostfrei_core::CompletedAppendOutcome, rostfrei_core::EventStoreError> {
-        self.snapshot().store.commit_outcome(transaction).await
-    }
-    async fn append(
+impl FixtureEventStore for CurrentBackend {
+    async fn append_fixture(
         &self,
         stream: &rostfrei_core::StreamId,
         expected: rostfrei_core::ExpectedVersion,
         batch: rostfrei_core::EventBatch,
     ) -> Result<rostfrei_core::AppendOutcome, rostfrei_core::EventStoreError> {
-        self.snapshot().store.append(stream, expected, batch).await
-    }
-    async fn load_transaction_receipt(
-        &self,
-        id: &rostfrei_core::OperationId,
-    ) -> Result<Option<rostfrei_core::TransactionReceipt>, rostfrei_core::EventStoreError> {
-        self.snapshot().store.load_transaction_receipt(id).await
-    }
-    async fn load_transaction_receipt_in_context(
-        &self,
-        context: &rostfrei_runtime::BoundedContextName,
-        id: &rostfrei_core::OperationId,
-    ) -> Result<Option<rostfrei_core::TransactionReceipt>, rostfrei_core::EventStoreError> {
         self.snapshot()
             .store
-            .load_transaction_receipt_in_context(context, id)
+            .append_fixture(stream, expected, batch)
             .await
-    }
-    async fn append_transaction(
-        &self,
-        transaction: rostfrei_core::EventTransaction,
-    ) -> Result<rostfrei_core::TransactionAppendOutcome, rostfrei_core::EventStoreError> {
-        self.snapshot().store.append_transaction(transaction).await
     }
 }

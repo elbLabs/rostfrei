@@ -73,7 +73,7 @@ async fn add(store: &InMemoryEventStore, id: &str, expected: ExpectedVersion, va
     )
     .unwrap();
     store
-        .append(
+        .append_fixture(
             &stream(),
             expected,
             EventBatch::new(commit, op, ContentFingerprint::digest(id), vec![event]).unwrap(),
@@ -440,7 +440,7 @@ async fn seed_historical(store: &InMemoryEventStore) -> Vec<RecordedEvent> {
     let commit = derive_commit_id(&stream(), &operation);
     let event = NewEvent::new(derive_event_id(&commit, 0), "added", 1, b"2".to_vec()).unwrap();
     store
-        .append(
+        .append_fixture(
             &stream(),
             ExpectedVersion::NoStream,
             EventBatch::new(
@@ -603,7 +603,7 @@ async fn erased_validation_reports_the_original_malformed_event_without_json_fal
     )
     .unwrap();
     let recorded = InMemoryEventStore::new()
-        .append(&stream(), ExpectedVersion::NoStream, batch)
+        .append_fixture(&stream(), ExpectedVersion::NoStream, batch)
         .await
         .unwrap()
         .into_events();

@@ -129,15 +129,22 @@ async fn stale_missing_guard(store: &dyn EventStore, context: &BoundedContextNam
         b"{}".to_vec(),
     )?;
     store
-        .append(
-            &stale_stream,
-            ExpectedVersion::NoStream,
-            rostfrei_core::EventBatch::new(
-                commit,
-                prerequisite,
+        .append_transaction(
+            EventTransaction::new(
+                prerequisite.clone(),
                 ContentFingerprint::digest("prerequisite"),
-                vec![event],
-            )?,
+                vec![TransactionParticipant::new(
+                    stale_stream.clone(),
+                    ExpectedVersion::NoStream,
+                    Some(rostfrei_core::EventBatch::new(
+                        commit,
+                        prerequisite,
+                        ContentFingerprint::digest("prerequisite"),
+                        vec![event],
+                    )?),
+                )],
+            )
+            .with_bounded_context(context.clone()),
         )
         .await?;
     let stale_rejection = transaction(context, "conformance-stale-rejection", true)?;

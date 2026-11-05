@@ -191,11 +191,14 @@ Applications must monitor quarantined materialization failures and implement a
 recovery policy. After repairing storage/configuration, either:
 
 1. **Republish the quarantined event.** Validate its application/context/address,
-   schema, and complete payload (`payload_truncated` must be false). Publish to the
-   intended integration-event subject with a new transport/envelope message ID so
-   JetStream's duplicate window does not suppress the recovery delivery. Preserve
-   the logical billing source version, original occurrence time, and correlation;
-   link the new delivery to the original with causation and recovery metadata.
+   schema, and complete payload (`payload_truncated` must be false). Use the supported
+   integration publisher with a valid canonical envelope and a new matching
+   transport/envelope message ID so JetStream's duplicate window does not suppress
+   the recovery delivery. Preserve the logical billing source version, original
+   occurrence time, and correlation; link the new delivery to the original with
+   causation and recovery metadata.
+   The publisher derives the [physical subject suffix](messaging/subjects.mdx#stored-event-subjects)
+   from the envelope's identities.
    The normal handler then applies it through the same source-checkpoint/CAS path.
 2. **Refresh from the billing authority.** Fetch its latest complete fact and pass
    it through `Entitlements::billing_changed`. Its monotonic source version makes

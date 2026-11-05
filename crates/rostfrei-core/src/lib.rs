@@ -5,6 +5,7 @@ mod append_session;
 mod codecs;
 mod completed_outcome;
 mod conflict_retry;
+mod correlation_history;
 mod domain_event;
 mod envelope;
 mod execution_store;
@@ -29,6 +30,10 @@ pub use completed_outcome::{
     validate_completed_transaction,
 };
 pub use conflict_retry::*;
+pub use correlation_history::{
+    CorrelationChain, CorrelationHistory, CorrelationRead, CorrelationRef, CorrelationSnapshot,
+    CorrelationSourceKind, CorrelationSourceSnapshot, DomainEventRef, IntegrationEventRef,
+};
 pub use domain_event::{
     CommittedDomainEvent, DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler,
     DomainEventHandlerError, DomainEventHandlerErrorKind, DomainEventRegistrationError,
@@ -60,9 +65,9 @@ pub use read_model::{
 };
 pub use store::{
     AppendOutcome, EventHistory, EventStore, EventStoreError, EventStoreErrorKind,
-    EventStoreErrorOrigin, EventTransaction, MAX_TRANSACTION_ITEMS, StreamDirectory, StreamSummary,
-    TransactionAppendOutcome, TransactionParticipant, TransactionReceipt, TransactionStreamReceipt,
-    validate_transaction_item_limit,
+    EventStoreErrorOrigin, EventTransaction, FixtureEventStore, MAX_TRANSACTION_ITEMS,
+    StreamDirectory, StreamSummary, TransactionAppendOutcome, TransactionParticipant,
+    TransactionReceipt, TransactionStreamReceipt, validate_transaction_item_limit,
 };
 
 #[doc(hidden)]

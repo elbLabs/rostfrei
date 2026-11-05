@@ -8,14 +8,14 @@ use super::BenchResult;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum HistoryKind {
-    Direct,
+    Fixtures,
     Commands,
 }
 
 impl HistoryKind {
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Direct => "direct",
+            Self::Fixtures => "fixtures",
             Self::Commands => "commands",
         }
     }
@@ -30,7 +30,7 @@ pub struct Options {
         long,
         value_enum,
         value_delimiter = ',',
-        default_value = "direct,commands"
+        default_value = "fixtures,commands"
     )]
     pub history: Vec<HistoryKind>,
     #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u32).range(1..=1000))]

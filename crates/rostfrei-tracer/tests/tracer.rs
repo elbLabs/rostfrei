@@ -3210,7 +3210,7 @@ fn fixture_registry_configuration_is_validated_at_build() {
 
 #[test]
 fn catalog_lists_all_registered_fixtures_in_id_order() {
-    let store = Arc::new(InMemoryEventStore::new());
+    let store: Arc<dyn rostfrei_core::FixtureEventStore> = Arc::new(InMemoryEventStore::new());
     let history: Arc<dyn EventHistory> = store.clone();
     let mut builder = builder(history)
         .with_test_event_store(store)

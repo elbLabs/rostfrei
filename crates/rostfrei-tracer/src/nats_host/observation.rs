@@ -3,9 +3,10 @@ use crate::{
     ObservationSource,
 };
 use async_trait::async_trait;
-use rostfrei_messaging_core::{IntegrationEventAddress, IntegrationEventEnvelope};
+use rostfrei_messaging_core::IntegrationEventEnvelope;
 use rostfrei_nats::{
-    CorrelatedMessage, CorrelatedMessageFamily, CorrelatedMessageHandler, NatsEventStore,
+    CorrelatedMessage, CorrelatedMessageFamily, CorrelatedMessageHandler, IntegrationEventSubject,
+    NatsEventStore,
 };
 use serde_json::Value;
 
@@ -110,10 +111,8 @@ fn integration_observation(
     consumer_context: &str,
     message: &CorrelatedMessage,
 ) -> Result<IntegrationEventObservation, String> {
-    let address: IntegrationEventAddress = message
-        .subject()
-        .parse()
-        .map_err(|e: rostfrei_messaging_core::ContractError| e.to_string())?;
+    let subject = IntegrationEventSubject::parse(message.subject()).map_err(|e| e.to_string())?;
+    let address = subject.address();
     let envelope: IntegrationEventEnvelope<Value> =
         serde_json::from_slice(message.payload()).map_err(|e| e.to_string())?;
     let causation = envelope
@@ -121,11 +120,13 @@ fn integration_observation(
         .ok_or("integration event has no causation identity")?;
     let source = rostfrei_runtime::EventId::new(causation.as_str()).map_err(|e| e.to_string())?;
     let expected =
-        rostfrei_runtime::integration_message_id(&address, envelope.schema_version(), &source)
+        rostfrei_runtime::integration_message_id(address, envelope.schema_version(), &source)
             .map_err(|e| e.to_string())?;
     if message.message_id() != Some(envelope.message_id())
         || envelope.message_id() != &expected
         || envelope.correlation_id() != message.correlation_id()
+        || subject.correlation_id() != envelope.correlation_id()
+        || subject.causation_id() != envelope.causation_id()
     {
         return Err(
             "integration-event envelope identity does not match delivery headers and provenance"
@@ -153,7 +154,7 @@ fn integration_observation(
         .copied()
         .ok_or("integration event codec is not registered")?;
     let encoded = rostfrei_runtime::EncodedIntegrationMessage::from_delivery(
-        address,
+        address.clone(),
         expected,
         message.payload().to_vec(),
         Some(message.correlation_id().clone()),

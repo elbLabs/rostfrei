@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -9,14 +9,14 @@ use std::{
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    AggregateType, CommandHandler, ContentFingerprint, EventHistory, EventStore, OperationId,
-    StreamDirectory,
+    AggregateType, CommandHandler, ContentFingerprint, CorrelationHistory, EventHistory,
+    FixtureEventStore, OperationId, StreamDirectory,
 };
 use rostfrei_fixtures::Fixture;
 use rostfrei_messaging_core::{
     ApplicationErrorCode, CommandRejection as MessagingCommandRejection,
-    CommandRejectionClassification, CommandResponseOutcome, QuarantineQuery, QuarantineReadError,
-    QuarantineReader, TrafficScope,
+    CommandRejectionClassification, CommandResponseOutcome, CorrelationId, QuarantineQuery,
+    QuarantineReadError, QuarantineReader, TrafficScope,
 };
 use rostfrei_registry::{CommandDefinition, DomainRegistry};
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,10 @@ use crate::{
     },
     command_execution_fingerprint,
     correlation::{CorrelationEvidenceSnapshot, CorrelationEvidenceSubscription, CorrelationHub},
+    correlation_view::{
+        AnchorCorrelations, CorrelationInspection, CorrelationInspectionError, PayloadMatch,
+        RetainedCorrelation,
+    },
     input::{CommandInputDocument, CommandInputOptions},
     message_series::{
         MessageGraphDefinition, MessageSeriesComparison, MessageSeriesComparisonContext,
@@ -312,8 +316,10 @@ pub type SimulationRequest = CommandRequest;
 pub struct TracerBuilder {
     event_codecs: Arc<rostfrei_core::AggregateCodecs>,
     history: Arc<dyn EventHistory>,
+    correlation_history: Option<Arc<dyn CorrelationHistory>>,
+    production_histories: BTreeMap<String, Arc<dyn EventHistory>>,
     observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
-    test_event_store: Option<Arc<dyn EventStore>>,
+    test_event_store: Option<Arc<dyn FixtureEventStore>>,
     test_transport: Option<Arc<dyn CommandTransport>>,
     dispatch_transport: Option<Arc<dyn CommandTransport>>,
     test_scenario_reset: Option<Arc<dyn TestScenarioReset>>,
@@ -342,6 +348,8 @@ impl TracerBuilder {
         Self {
             event_codecs: Arc::new(rostfrei_core::AggregateCodecs::default()),
             history,
+            correlation_history: None,
+            production_histories: BTreeMap::new(),
             observation: BTreeMap::new(),
             test_event_store: None,
             test_transport: None,
@@ -376,6 +384,23 @@ impl TracerBuilder {
     }
 
     #[must_use]
+    pub fn with_correlation_history(mut self, history: Arc<dyn CorrelationHistory>) -> Self {
+        self.correlation_history = Some(history);
+        self
+    }
+
+    /// Production history used for anchor selection and explicitly included payloads.
+    #[must_use]
+    pub fn with_production_history(
+        mut self,
+        context: impl Into<String>,
+        history: Arc<dyn EventHistory>,
+    ) -> Self {
+        self.production_histories.insert(context.into(), history);
+        self
+    }
+
+    #[must_use]
     pub fn with_stream_directory(mut self, stream_directory: Arc<dyn StreamDirectory>) -> Self {
         self.stream_directory = Some(stream_directory);
         self
@@ -388,10 +413,7 @@ impl TracerBuilder {
     }
 
     #[must_use]
-    pub fn with_test_event_store<Store>(mut self, store: Arc<Store>) -> Self
-    where
-        Store: EventStore + 'static,
-    {
+    pub fn with_test_event_store(mut self, store: Arc<dyn FixtureEventStore>) -> Self {
         self.history = store.clone();
         self.test_event_store = Some(store);
         self
@@ -558,6 +580,10 @@ impl TracerBuilder {
         Ok(())
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "builder validation and independent capability wiring are kept together"
+    )]
     pub fn build(self) -> Result<Tracer, RuntimeRegistrationError> {
         self.bindings.validate()?;
         self.validate_quarantine_readers()?;
@@ -594,6 +620,9 @@ impl TracerBuilder {
             self.test_fixtures.keys().map(String::as_str),
             self.test_repository.is_some(),
         );
+        let correlation_inspection = self.correlation_history.map(|reader| {
+            build_correlation_inspection(reader, self.production_histories, &mut catalog)
+        });
         if self.test_quarantine_reader.is_some() || self.production_quarantine_reader.is_some() {
             catalog.quarantine = Some(crate::CatalogQuarantine {
                 test: self.test_quarantine_reader.as_ref().map(|reader| {
@@ -624,6 +653,7 @@ impl TracerBuilder {
             inner: Arc::new(TracerInner {
                 event_codecs: self.event_codecs,
                 history: self.history,
+                correlation_inspection,
                 handler_permits: Arc::new(Semaphore::new(maximum_concurrent_operations)),
                 handler_sequence: AtomicU64::new(0),
                 observation: self.observation,
@@ -658,6 +688,36 @@ impl TracerBuilder {
             }),
         })
     }
+}
+
+fn build_correlation_inspection(
+    reader: Arc<dyn CorrelationHistory>,
+    histories: BTreeMap<String, Arc<dyn EventHistory>>,
+    catalog: &mut TracerCatalog,
+) -> CorrelationInspection {
+    let anchors: Vec<_> = catalog
+        .contexts
+        .iter()
+        .flat_map(|context| &context.aggregates)
+        .filter(|aggregate| aggregate.anchor)
+        .map(|aggregate| crate::CatalogAnchor {
+            aggregate_type: aggregate.aggregate_type.clone(),
+            label: aggregate.label.clone(),
+            correlations_href_template: format!(
+                "/aggregates/{}/{{aggregateId}}/correlations",
+                crate::catalog::encode_path_segment(&aggregate.aggregate_type)
+            ),
+        })
+        .collect();
+    let anchor_types = anchors
+        .iter()
+        .map(|anchor| anchor.aggregate_type.clone())
+        .collect();
+    catalog.correlations = Some(crate::CatalogCorrelations {
+        events_href_template: "/correlations/{correlationId}/events".to_owned(),
+        anchors,
+    });
+    CorrelationInspection::new(reader, histories, anchor_types)
 }
 
 fn validate_test_repository(
@@ -780,6 +840,7 @@ fn test_transport_payload_limit(transport: Option<&dyn CommandTransport>) -> usi
 struct TracerInner {
     event_codecs: Arc<rostfrei_core::AggregateCodecs>,
     history: Arc<dyn EventHistory>,
+    correlation_inspection: Option<CorrelationInspection>,
     handler_permits: Arc<Semaphore>,
     handler_sequence: AtomicU64,
     observation: BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
@@ -1048,6 +1109,65 @@ impl Tracer {
 
     pub fn catalog(&self) -> &TracerCatalog {
         &self.inner.catalog
+    }
+
+    pub fn has_correlation_history(&self) -> bool {
+        self.inner.correlation_inspection.is_some()
+    }
+
+    pub async fn anchor_correlations(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: &str,
+        includes: &BTreeSet<String>,
+        matches: &[PayloadMatch],
+    ) -> Result<AnchorCorrelations, CorrelationInspectionError> {
+        self.anchor_correlations_with_selection(
+            aggregate_type,
+            aggregate_id,
+            includes,
+            matches,
+            None,
+        )
+        .await
+    }
+
+    /// Intersects explicit IDs with the anchor's event correlations before applying
+    /// the recent-correlation limit. `None` selects the usual anchor window;
+    /// `Some(&[])` selects no correlations. Includes and matches retain their policy.
+    pub async fn anchor_correlations_with_selection(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: &str,
+        includes: &BTreeSet<String>,
+        matches: &[PayloadMatch],
+        selection: Option<&[CorrelationId]>,
+    ) -> Result<AnchorCorrelations, CorrelationInspectionError> {
+        self.inner
+            .correlation_inspection
+            .as_ref()
+            .ok_or(CorrelationInspectionError::Unavailable)?
+            .anchor(
+                aggregate_type,
+                aggregate_id,
+                includes,
+                matches,
+                selection,
+                self.inner.trace_payload_policy.as_ref(),
+            )
+            .await
+    }
+
+    pub async fn retained_correlation(
+        &self,
+        correlation_id: &str,
+    ) -> Result<RetainedCorrelation, CorrelationInspectionError> {
+        self.inner
+            .correlation_inspection
+            .as_ref()
+            .ok_or(CorrelationInspectionError::Unavailable)?
+            .correlation(correlation_id)
+            .await
     }
 
     pub fn test_definitions(&self) -> Result<TestDefinitionCollection, TestRepositoryError> {
