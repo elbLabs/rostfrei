@@ -3,9 +3,9 @@ import type { DocsNavigationEntry } from "./docs/navigation.ts"
 
 export const site = {
   name: "Rostfrei",
-  title: "Rostfrei · Understand your code, even when AI writes it",
+  title: "Rostfrei · Batteries-included event sourcing for Rust",
   description:
-    "Keep AI-written Rust understandable. Rostfrei connects explicit domain ownership, event history, and traceable command flows for humans and coding agents.",
+    "A batteries-included Rust framework for event-sourced applications. Domain code, durable commands, messaging, read models, and runtime inspection.",
   url: "https://elblabs.github.io/rostfrei/",
 }
 
@@ -23,12 +23,12 @@ const introductions: Record<
   "": {
     title: "Introduction · Rostfrei docs",
     description:
-      "Understand a Rostfrei codebase, even when AI agents wrote it. Find business rules, inspect domain contracts, and follow commands through history and integrations.",
+      "The Rostfrei application framework: domain code, command execution, NATS messaging, HTTP routes, read models, and runtime tools.",
   },
   "getting-started": {
     title: "Getting started · Rostfrei docs",
     description:
-      "Run the Rostfrei bike-rental example. Inspect its domain model, start the NATS-backed application, and explore command flows in Tracer Studio.",
+      "Explore Rostfrei with your coding agent. Copy a prompt to prepare an isolated bike-rental demo and inspect successful and rejected rentals through real Tracer evidence.",
   },
   "messaging/subjects": {
     title: "Subjects and streams · Rostfrei docs",

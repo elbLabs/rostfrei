@@ -183,6 +183,7 @@ export const docsNavigation = [
   {
     title: "Tracer and agents",
     items: [
+      { title: "Agent tutorial guide", slug: "agent-tutorial", file: "agent-tutorial.md" },
       { title: "Agent Skills", slug: "agent-skills-install", file: "agent-skills-install.md" },
       { title: "Observation", slug: "continuous-observation", file: "continuous-observation.md" },
       { title: "Quarantine", slug: "quarantine-inspection", file: "quarantine-inspection.md" },

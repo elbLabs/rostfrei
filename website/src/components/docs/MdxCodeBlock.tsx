@@ -13,6 +13,8 @@ import { Highlight, type Language } from "prism-react-renderer"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { codeTheme } from "@/lib/code-theme"
+import { agentTutorialPrompt } from "@/agent-prompt"
+import { AgentPrompt } from "@/components/AgentPrompt"
 
 const languageAliases: Record<string, Language> = {
   html: "markup",
@@ -99,6 +101,8 @@ export function MdxCodeBlock({
       setCopied(false)
     }
   }
+
+  if (code === agentTutorialPrompt) return <AgentPrompt />
 
   return (
     <div

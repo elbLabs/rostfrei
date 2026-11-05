@@ -1,0 +1,47 @@
+/* Website grey/rust palette. Shared components consume these semantic roles. */
+:root,
+.light {
+  --background: #f4f4f5;
+  --foreground: #1f1f23;
+  --card: #fafafa;
+  --card-foreground: #1f1f23;
+  --popover: #fafafa;
+  --popover-foreground: #1f1f23;
+  --brand-accent: #7e342a;
+  --primary: #7e342a;
+  --primary-foreground: #ffffff;
+  --secondary: #eaeaed;
+  --secondary-foreground: #1f1f23;
+  --muted: #eaeaed;
+  --muted-foreground: #5c5c66;
+  --accent: #ede5e3;
+  --accent-foreground: #672c24;
+  --border: #dfdfe2;
+  --control-border: #6f6f7b;
+  --input: #6f6f7b;
+  --ring: #7e342a;
+  --link: #7e342a;
+}
+
+.dark {
+  --background: #262626;
+  --foreground: #d0d0d0;
+  --card: #404040;
+  --card-foreground: #d0d0d0;
+  --popover: #404040;
+  --popover-foreground: #d0d0d0;
+  --brand-accent: #bf8274;
+  --primary: #d3a498;
+  --primary-foreground: #211a17;
+  --secondary: #323232;
+  --secondary-foreground: #d0d0d0;
+  --muted: #323232;
+  --muted-foreground: #b3b3b3;
+  --accent: #352725;
+  --accent-foreground: #d3a498;
+  --border: #767676;
+  --control-border: #9a9a9a;
+  --input: #9a9a9a;
+  --ring: #bf8274;
+  --link: #d3a498;
+}

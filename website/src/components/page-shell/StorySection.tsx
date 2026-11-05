@@ -1,27 +1,49 @@
 import { Link } from "@tanstack/react-router"
 import { ArrowRight } from "lucide-react"
+import { AgentPrompt } from "@/components/AgentPrompt"
 
 const capabilities = [
   {
-    title: "Find the rule",
+    title: "Domain code",
     description:
-      "Know where a business rule belongs, whoever wrote it. Checked project structure makes ownership visible, while typed declarations give humans and tools a navigable domain model.",
-    link: "Explore project structure",
-    slug: "project-structure",
+      "Actions, policies, and event application are ordinary Rust. Domain declarations attach names and ownership metadata. Aggregates stay independent of persistence and messaging adapters.",
+    link: "Domain declarations",
+    slug: "domain-macros",
   },
   {
-    title: "Follow the change",
+    title: "Command runtime",
     description:
-      "Understand a change through the business facts it records. Domain events preserve aggregate history; separate integration events describe what the application shares. NATS adapters provide durable storage and messaging.",
-    link: "Follow the message flow",
+      "Load history, check stream versions, and atomically commit accepted events and completed outcomes. Transactions can span aggregates in one store. Exact retries return the recorded decision.",
+    link: "Command execution",
+    slug: "command-runtime",
+  },
+  {
+    title: "Messaging and HTTP",
+    description:
+      "Typed buses connect commands, queries, and integration events. NATS JetStream supplies durable storage and delivery; the HTTP adapter exposes routes the application mounts explicitly.",
+    link: "Subjects and streams",
     slug: "messaging/subjects",
   },
   {
-    title: "Check the behavior",
+    title: "Read models",
     description:
-      "Review an implementation against what it does. Discover commands through Tracer, use isolated Test execution and Studio to inspect the resulting message flow, and observe activity initiated by other clients.",
-    link: "Try the bike-rental example",
+      "Typed event handlers maintain saved query views. The runtime persists each value with its source checkpoints and retries concurrent updates. Queries use a read-only handle.",
+    link: "Declare and query",
+    slug: "read-models",
+  },
+  {
+    title: "Testing and inspection",
+    description:
+      "Discover command contracts, run behavioral tests against isolated application resources, and inspect observed message flows. Tracer exposes the API; coding agents and Studio can use it.",
+    link: "Explore the example",
     slug: "getting-started",
+  },
+  {
+    title: "Project tooling",
+    description:
+      "Domain declarations and implementations follow a checked directory structure. cargo rostfrei check validates placement, ownership, and implementation targets. Compiled domain metadata is available to tools.",
+    link: "Structure and checks",
+    slug: "project-structure",
   },
 ]
 
@@ -29,15 +51,14 @@ export function StorySection() {
   return (
     <section aria-labelledby="story-title" className="content-section">
       <div className="max-w-3xl">
-        <p className="section-kicker">For developers and coding agents</p>
+        <p className="section-kicker">Batteries included</p>
         <h2 id="story-title" className="section-heading">
-          Code gets written faster. Understanding has to keep up.
+          The pieces around your domain code.
         </h2>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          When an AI agent adds a feature, you still need to know where the rule
-          lives, what it can change, and why it behaved that way. Rostfrei
-          connects the domain model, event history, and runtime evidence so you
-          can review the system in the language of the business.
+          Applications depend on <code>rostfrei</code> and enable the adapters
+          they need. The framework covers execution, storage, communication,
+          queries, and tools for working with a running application.
         </p>
       </div>
       <div className="mt-5 grid gap-5 lg:grid-cols-3">
@@ -63,10 +84,17 @@ export function StorySection() {
         ))}
       </div>
       <p className="mt-5 border-l-2 border-primary pl-4 text-xs leading-6 text-muted-foreground">
-        Humans can navigate the code and explore behavior in Studio. Coding
-        agents can read the compiled model and discover command contracts
-        through Tracer’s API. Both work from explicit contracts and observed
-        outcomes.
+        A bicycle was added, rented, then returned. Those recorded facts
+        reconstruct its availability and support new query views. The application
+        still decides which bicycles are eligible and whether a return needs an
+        inspection.{" "}
+        <Link
+          to="/docs"
+          hash="why-events-are-the-foundation"
+          className="text-link"
+        >
+          Read the execution model and tradeoffs →
+        </Link>
       </p>
     </section>
   )
@@ -75,42 +103,30 @@ export function StorySection() {
 export function GettingStartedSection() {
   return (
     <section
+      id="explore-with-your-agent"
       aria-labelledby="start-title"
-      className="content-section grid gap-5 lg:grid-cols-2"
+      className="content-section"
     >
       <div>
-        <p className="section-kicker">Start with a real domain</p>
+        <p className="section-kicker">Start with a real application</p>
         <h2 id="start-title" className="section-heading">
-          Read the model. Then rent a bicycle.
+          Explore with your agent
         </h2>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          The bike-rental example connects fleet rules, accepted and rejected
-          commands, event history, and public integration events. Inspect its
-          compiled model first, then run the NATS-backed application and Studio.
+          Give your coding agent this prompt. It will check your environment,
+          prepare an isolated bike-rental demo, and guide you through real
+          outcomes one step at a time. You choose what to inspect next.
         </p>
       </div>
-      <div className="min-w-0 border border-border bg-muted p-4">
-        <p className="text-sm font-medium">
-          Inspect the model from a repository checkout
-        </p>
-        <pre className="mt-3 overflow-x-auto text-xs leading-6" tabIndex={0}>
-          <code>
-            cargo run --locked -p bike-rental \{"\n"} --bin bike-rental-model
-          </code>
-        </pre>
-        <p className="mt-3 text-xs leading-5 text-muted-foreground">
-          Uses the repository’s pinned Rust toolchain. No broker needed for this
-          step.
-        </p>
-        <Link
-          to="/docs/$"
-          params={{ _splat: "getting-started" }}
-          className="mt-4 inline-flex items-center gap-2 text-xs text-link"
-        >
-          Follow the getting-started guide{" "}
-          <ArrowRight aria-hidden="true" className="size-4" />
-        </Link>
-      </div>
+      <AgentPrompt />
+      <Link
+        to="/docs/$"
+        params={{ _splat: "getting-started" }}
+        className="mt-4 inline-flex items-center gap-2 text-xs text-link"
+      >
+        Prerequisites and reference links{" "}
+        <ArrowRight aria-hidden="true" className="size-4" />
+      </Link>
     </section>
   )
 }

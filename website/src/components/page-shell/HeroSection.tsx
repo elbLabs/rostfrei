@@ -20,23 +20,20 @@ export function HeroSection() {
       <div className="hero-copy">
         <DuckMascot className="hero-duck" />
         <h1 id="intro-title" className="page-title">
-          Understand your code.
-          <br />
-          Even when AI wrote it.
+          A batteries-included Rust framework for event-sourced applications.
         </h1>
         <p className="mt-4 text-sm leading-7">
-          Rostfrei is a Rust framework for domain modeling, event sourcing, and
-          messaging. Give humans and AI agents a shared model of the business,
-          with explicit ownership, event history, and behavior you can inspect.
+          Domain code, durable commands, messaging, read models, and runtime
+          inspection. Business rules stay in ordinary Rust.
         </p>
         <div className="mt-5 flex flex-wrap items-center gap-5">
           <Button asChild>
-            <Link to="/docs/$" params={{ _splat: "getting-started" }}>
-              Run the example <ArrowRight aria-hidden="true" />
-            </Link>
+            <a href="#explore-with-your-agent">
+              Explore with your agent <ArrowRight aria-hidden="true" />
+            </a>
           </Button>
           <Link to="/docs" className="text-xs text-link underline">
-            Explore the documentation
+            Read the docs
           </Link>
         </div>
       </div>

@@ -40,11 +40,11 @@ function SiteNavigation() {
       </nav>
       <div className="rail-note">
         <h2 className="mb-2 font-semibold text-foreground">
-          One model. Shared understanding.
+          Under the hood
         </h2>
         <p>
-          Domain modeling, event sourcing, and messaging for humans and coding
-          agents.
+          One framework dependency, with adapters for storage, messaging, HTTP,
+          and runtime inspection.
         </p>
         <a
           className="mt-3 block"

@@ -19,10 +19,10 @@ function LandingPage() {
     <SiteLayout>
       <HeroSection />
       <PrinciplesBar />
+      <GettingStartedSection />
       <StorySection />
       <ProjectStructureSection />
       <MacroExplorerSection />
-      <GettingStartedSection />
     </SiteLayout>
   )
 }

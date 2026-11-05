@@ -6,6 +6,23 @@ Rostfrei provides two project-local skills for coding agents:
   NATS-backed tests, then guides the red/green/refactor loop.
 - **`rostfrei-tracer`** discovers runtime capabilities, runs isolated tests and
   explains recorded operations, observations and quarantine through HTTP/SSE.
+  Its guided tutorial reference adds step-by-step, text-first exploration.
+
+## Start with a guided tutorial
+
+For a new-user bike-rental demo, give your agent the prompt in the
+[source-checkout tutorial](https://github.com/elbLabs/rostfrei/blob/main/docs/agent-tutorial.md).
+It checks the selected checkout and prerequisites, starts an isolated real
+runtime, and guides acceptance and rejection using saved Tracer evidence.
+Text needs no Node, Studio or visual adapter.
+
+Use a checkout that contains the tutorial. Kits built from tutorial-capable revisions
+include `rostfrei-tracer/references/guided-tutorial.md` with the existing skill;
+installed references remain matched to the application's resolved release.
+Check their `references/release.json` rather than assuming the latest online
+guide describes an older installation. In another application, the agent uses
+that host's registered definitions and fixtures; installation does not supply a
+bike-rental runtime or register bicycle fixtures.
 
 ## Install and update
 

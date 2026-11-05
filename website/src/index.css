@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "@rostfrei/ui/styles.css";
+@import "./theme.css";
 @import "tw-animate-css";
 @import "@xyflow/react/dist/style.css";
 @source "../../packages/ui/src";
@@ -34,7 +35,7 @@
   width: min(1210px, calc(100% - 64px));
   margin: 28px auto 36px;
   border: 1px solid var(--border);
-  border-top: 4px solid var(--primary);
+  border-top: 2px solid var(--brand-accent);
   background: var(--card);
 }
 .site-header {
@@ -54,10 +55,9 @@
   font-size: 12px;
 }
 .site-header nav > a {
-  color: var(--link);
+  color: var(--foreground);
 }
 .site-header nav > a[data-status="active"] {
-  color: var(--primary);
   font-weight: 700;
 }
 .site-body {
@@ -143,6 +143,39 @@
   min-width: 0;
   padding-block: 26px;
   border-top: 1px solid var(--border);
+}
+.agent-prompt {
+  min-width: 0;
+  margin-top: 20px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+}
+.agent-prompt-text {
+  display: block;
+  width: 100%;
+  min-height: 9em;
+  padding: 14px;
+  resize: vertical;
+  field-sizing: content;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.agent-prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  border-top: 1px solid var(--border);
+  padding: 12px 14px;
+}
+.agent-prompt-actions p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
 }
 .hero-copy {
   display: flow-root;
@@ -259,6 +292,10 @@
 }
 .docs-article pre {
   overflow-wrap: normal;
+}
+.docs-article th,
+.docs-article td {
+  min-width: 8rem;
 }
 .docs-article h1 {
   font-size: 32px;

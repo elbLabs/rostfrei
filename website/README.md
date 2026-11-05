@@ -1,22 +1,38 @@
 # Rostfrei website
 
-The Rostfrei website contains the project landing page and MDX documentation.
-It is a client-side React application built with Vite and TanStack Router.
+Rostfrei is a **batteries-included Rust framework for event-sourced applications**:
+domain code, durable commands, messaging, read models, and runtime inspection.
+Business rules stay in ordinary Rust.
+
+## Explore the framework
+
+- [Getting started](../docs/getting-started.mdx): copy a prompt into your coding
+  agent to explore the bike-rental example with real Tracer evidence.
+- [Introduction](../docs/introduction.mdx): the framework's pieces and execution model.
+- [Documentation index](../docs/README.md): contracts, reference, and operations.
+- [Agent tutorial guide](../docs/agent-tutorial.md): checkout-local setup and
+  text-first guidance. Studio is an optional visual client.
+
+The website presents these shared docs alongside the project landing page. It is
+a client-side React application built with Vite and TanStack Router.
 
 ## Public story and page metadata
 
-The site introduces Rostfrei as **domain-driven, event-sourced Rust** with the
-promise **Understand your code. Even when AI wrote it.** Lead with the human need
-to understand and review an agent-assisted codebase. Support that promise with
-specific capabilities: checked ownership, typed contracts, a compiled domain
-model, event history, and inspectable command flows. Explain how developers and
-coding agents use those capabilities, and keep claims tied to what the framework
-actually exposes. Keep domain events, integration events, observation, and Test
-distinct, and describe the current alpha status explicitly.
+Introduce the whole application framework. Make “batteries included” concrete
+through domain declarations, command execution, NATS and HTTP adapters, read
+models, testing, and project tooling. Applications use one `rostfrei` dependency
+and enable the adapters they need. Keep claims tied to current capabilities,
+distinguish authoritative domain history from bounded runtime observations, and
+describe the current alpha status explicitly.
 
 - Landing-page content lives in `src/components/page-shell`.
-- The docs introduction explains the mental model; `getting-started.mdx` is the
-  first-run path into the bike-rental example.
+- The docs introduction explains the mental model; `getting-started.mdx` is a
+  short agent entry point with prerequisites and reference links. The tutorial
+  takes place in the reader's agent, using the checkout's `docs/agent-tutorial.md`.
+- `src/agent-prompt.ts` reads the prompt from the shared getting-started source.
+  `AgentPrompt` supplies the landing and docs copy control, with a selectable
+  text field and manual-copy fallback. Keep the root README's prompt aligned;
+  the production browser check compares both clipboard results with it.
 - `src/site.ts` owns page titles, descriptions, canonical URLs, and sharing
   metadata. Reference-page metadata follows the documentation navigation.
 - `metadata-plugin.ts` emits an HTML entry for each docs URL so link previews
@@ -69,7 +85,12 @@ the machine index, and relative-link routing.
 GitHub Pages deployment is configured in
 `.github/workflows/deploy-website.yml` at the repository root.
 
-## Reference ’15 and shared components
+## Appearance and shared components
+
+Keep the original `SiteLayout`, landing sections, docs sidebar, system typography,
+and duck branding. The website's grey/rust palette lives in `src/theme.css`:
+`#f4f4f5` / `#7e342a` in light mode and `#262626` / `#d3a498` in dark mode.
+Reference pages use ordinary headings and visible code examples.
 
 The website and docs use `@rostfrei/ui` from `packages/ui`. Run `pnpm dev:ui`
 from the repository root for the separate local gallery on port 4177. Its source
@@ -77,7 +98,7 @@ lives in `packages/ui/gallery` and exercises theme selection, inputs and
 validation, button states, message badges, tabs, tables, popovers, dialogs, and
 the inspector sheet. The preview example is local to the gallery.
 
-- Shared tokens and primitives belong in `packages/ui`; app layout lives in
+- Shared primitives and default tokens belong in `packages/ui`; app layout lives in
   `src/index.css` and `src/components/page-shell/SiteLayout.tsx`.
 - `src/components/ui` compatibility exports and `src/lib/utils.ts` re-export the
   shared package. The carousel and sidebar are app-specific.
@@ -91,7 +112,9 @@ the inspector sheet. The preview example is local to the gallery.
 
 After building, run `pnpm test:website` from the repository root for production
 browser checks of the website and local gallery in light/dark themes and
-desktop/mobile widths. Set `CHROME_BIN`
+desktop/mobile widths. They cover header/sidebar/mobile navigation, theme boot,
+real clipboard contents, denied and unavailable clipboard fallbacks, shared raw
+documentation, and overflow. Set `CHROME_BIN`
 when Chrome is not in a standard location. Captures go to `artifacts/website/`.
 
 ## Identity studies
