@@ -19,6 +19,8 @@ advancing application durable consumers. Reader credentials need scoped replay-c
 create/pull/delete and inbox permissions, plus stream-info/raw-message access.
 The native iterator uses 500-message pulls without a batch byte cap; each
 next-message wait, including recovery, has a five-second deadline.
+Loads also await replay-consumer cleanup under the JetStream context's request
+timeout, so the next-message deadline is not an end-to-end load limit.
 Replay stops at a captured cutoff and validates complete local commits. Missing
 permissions or consumer capacity fail the read rather than selecting another path.
 
