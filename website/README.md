@@ -98,8 +98,8 @@ keep the source viewport and filename header stable when switching files;
 long lines scroll within the code pane. Reference pages use ordinary headings and
 visible code examples. The rental flow belongs below the framework introduction
 and getting-started entry point.
-The footer stays at the viewport bottom while the document scrolls; its normal
-layout space and the sidebar height keep the final content and navigation accessible.
+The footer follows the page content in normal document flow. On short pages,
+the layout keeps it at the bottom of the viewport.
 
 The fonts and their SIL Open Font Licenses are served from `public/fonts/`.
 JetBrains Mono Regular comes from the upstream v2.304 release. The same

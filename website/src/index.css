@@ -30,7 +30,6 @@
   html {
     scroll-behavior: smooth;
     scroll-padding-top: 110px;
-    scroll-padding-bottom: 96px;
   }
   body {
     margin: 0;
@@ -116,7 +115,7 @@
   position: sticky;
   top: 88px;
   align-self: start;
-  max-height: calc(100dvh - 160px);
+  max-height: calc(100dvh - 112px);
   overflow-y: auto;
   padding-block: 44px 24px;
   scrollbar-width: thin;
@@ -334,9 +333,6 @@
   color: var(--muted-foreground);
 }
 .site-footer {
-  position: sticky;
-  bottom: 0;
-  z-index: 30;
   flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
