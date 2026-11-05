@@ -13,6 +13,8 @@ import { Highlight, type Language } from "prism-react-renderer"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { codeTheme } from "@/lib/code-theme"
+import { agentTutorialPrompt } from "@/agent-prompt"
+import { AgentPrompt } from "@/components/AgentPrompt"
 
 const languageAliases: Record<string, Language> = {
   html: "markup",
@@ -100,15 +102,15 @@ export function MdxCodeBlock({
     }
   }
 
+  if (code === agentTutorialPrompt) return <AgentPrompt />
+
   return (
     <div
-      className="my-5 min-w-0 overflow-hidden border border-border bg-muted"
+      className="code-block my-5 min-w-0 overflow-hidden rounded-md"
       data-slot="mdx-code-block"
     >
-      <div className="flex items-center justify-between border-b border-border/70 px-4 py-2">
-        <span className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase">
-          {label}
-        </span>
+      <div className="flex items-center justify-between px-4 pt-2">
+        <span className="font-mono text-xs text-muted-foreground">{label}</span>
         <Button
           aria-label="Copy code"
           className="text-muted-foreground hover:text-foreground"
@@ -134,7 +136,7 @@ export function MdxCodeBlock({
             aria-label={`${label} code example`}
             className={cn(
               prismClassName,
-              "max-w-full overflow-auto p-4 font-mono text-[12px] leading-6 sm:px-5 sm:text-[13px]",
+              "code-source max-w-full overflow-auto p-5 sm:px-6",
               className
             )}
             style={{ ...style, backgroundColor: "transparent" }}
@@ -144,11 +146,13 @@ export function MdxCodeBlock({
               {tokens.map((line, lineIndex) => (
                 <span
                   {...getLineProps({ line })}
-                  className="block min-w-max"
+                  className="block min-h-[1lh] min-w-max"
                   key={lineIndex}
                 >
                   {line.map((token, tokenIndex) => (
-                    <span {...getTokenProps({ token })} key={tokenIndex} />
+                    <span {...getTokenProps({ token })} key={tokenIndex}>
+                      {token.empty ? "" : token.content}
+                    </span>
                   ))}
                   {lineIndex < tokens.length - 1 ? "\n" : null}
                 </span>

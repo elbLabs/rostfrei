@@ -892,7 +892,7 @@ export const STRUCTURE: StructureNode[] = [
       file("model", "model.rs", "src/domain/model.rs", {
         role: "Domain model inventory",
         summary:
-          "Composes only the stable declarations Rostfrei can verify deterministically.",
+          "Composes only the stable declarations rostfrei can verify deterministically.",
         allowed: [
           "One domain_model! composition",
           "Imports needed by that composition",

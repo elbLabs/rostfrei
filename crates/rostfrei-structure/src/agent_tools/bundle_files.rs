@@ -33,6 +33,10 @@ pub const FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../resources/runtime.md"),
     ),
     (
+        "rostfrei-tracer/references/guided-tutorial.md",
+        include_bytes!("../../resources/guided-tutorial.md"),
+    ),
+    (
         "rostfrei-develop-feature/LICENSE",
         include_bytes!("../../resources/LICENSE"),
     ),

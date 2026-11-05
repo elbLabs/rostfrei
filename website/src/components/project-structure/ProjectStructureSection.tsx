@@ -36,9 +36,8 @@ export function ProjectStructureSection() {
     >
       <div className="mx-auto max-w-7xl">
         <div className="mb-5">
-          <p className="section-kicker">Project structure</p>
           <h2 id="project-structure-title" className="section-heading">
-            Make ownership visible. Keep it checked.
+            Find the implementation in the project structure
           </h2>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
             Explore the directory conventions for declarations and behavior.{" "}
@@ -48,8 +47,8 @@ export function ProjectStructureSection() {
           </p>
         </div>
 
-        <div className="min-w-0 overflow-hidden border border-border bg-card">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted px-4 py-2">
+        <div className="min-w-0 overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border py-3">
             <span className="text-xs font-semibold">Bike-rental project</span>
             <code className="font-mono text-[11px] text-muted-foreground">
               cargo rostfrei check

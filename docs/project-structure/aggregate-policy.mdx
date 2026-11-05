@@ -10,8 +10,6 @@ Illustrative path: `src/domain/bike_rental/rental_fleet/plan_fleet_capacity`
 
 This illustrates placement; `plan_fleet_capacity` is not part of the runnable example. For an implemented policy, see [entity policy](entity-policy.mdx).
 
-<ProjectStructureExample name="aggregate-policy">
-
 ```rust
 use rostfrei::domain_policy;
 
@@ -25,5 +23,3 @@ pub(in crate::domain) trait FleetCapacityPolicy {
     fn plan_fleet_capacity(&self) -> FleetCapacityOutcome;
 }
 ```
-
-</ProjectStructureExample>

@@ -1,21 +1,29 @@
-# Build a domain you can explain
+# Introduction
 
-Rostfrei is a Rust framework for domain modeling, event sourcing, and messaging. Domain declarations connect business ownership to Rust implementations, event history, and runtime tools used by developers and coding agents.
+rostfrei is a Rust framework for event-sourced applications. Business rules stay in ordinary Rust; the framework connects them to durable command execution, messaging, read models, and runtime inspection.
 
-Keep business decisions in ordinary Rust. Describe their contracts with a compiled domain model. Let the runtime handle event-store execution, then use Tracer to explore commands and follow their outcomes.
+Applications depend on `rostfrei` and enable the adapters they need. The bike-rental example combines NATS storage and messaging, HTTP routes, and Tracer with its domain code.
 
-**New here? [Run the bike-rental example](getting-started.mdx).** Start by inspecting its model without a broker, then explore the NATS-backed application and Tracer Studio.
+**New here? [Explore with your agent](getting-started.mdx).** Copy a prompt to prepare an isolated demo and inspect a successful rental and a rejection through real Tracer evidence.
 
-## Understand code you didn't write
+## How the pieces fit
 
-An agent can implement a feature. You still need to understand the business rule and its consequences. Use the same path whether you are reviewing an agent's change or joining an unfamiliar project:
+| Piece | Role in the application |
+| --- | --- |
+| **Domain code** | Actions, policies, and event application in ordinary Rust, with [declarations](domain-macros/index.mdx) for names and ownership metadata. |
+| **Command runtime** | Loads aggregates, checks stream versions, and atomically commits accepted events and completed outcomes. Exact retries return the recorded decision. |
+| **Messaging and HTTP** | Typed buses connect commands, queries, and integration events. [NATS adapters](messaging/subjects.mdx) provide durable storage and delivery; the HTTP adapter exposes explicitly mounted routes. |
+| **Read models** | [Saved query views](read-models/index.mdx) maintained by typed event handlers, with persistence, source checkpoints, and concurrency retries. |
+| **Testing and inspection** | Tracer exposes command contracts, isolated behavioral tests, and bounded observations. Coding agents use its API; Studio is an optional visual client. |
+| **Project tooling** | [Checked directories](project-structure/index.mdx), ownership and implementation validation, and compiled domain metadata. |
 
-1. **Find the owner.** [Project structure](project-structure/index.mdx) connects a bounded context, its aggregates, and their capabilities to predictable locations in the codebase.
-2. **Read the contract and implementation.** [Domain declarations](domain-macros/index.mdx) describe the model's roles and relationships. Follow them to the Rust behavior that implements the rule.
-3. **Observe the outcome.** Use isolated Test execution to inspect committed domain events and subsequent integrations in Tracer Studio, or observe existing application activity without submitting a command.
-4. **Keep the behavior reviewable.** Behavioral tests express setup, a command, and expected outcomes so you can check them again after a change.
+See [dependency setup](getting-started.mdx#one-framework-dependency) and the [workspace crates](README.md#workspace-crates) for features and package boundaries.
 
-The compiled model gives coding agents structured domain context, and Tracer's API lets them discover command contracts and inspect execution. Humans can navigate the same concepts in code and explore their behavior visually in Studio.
+## Domain code
+
+The framework handles recurring storage and execution mechanics. The application still decides what a rental means, which bicycles are eligible, and whether a return requires inspection. Discussing that model is part of the work.
+
+Declarations and implementations have predictable locations in the source tree. Behavioral tests specify setup, commands, and expected outcomes so changes can be checked against the running application. Humans and coding agents work from the same contracts and evidence.
 
 ## The mental model
 
@@ -28,17 +36,27 @@ Imagine a customer renting a bicycle:
 
 A query reads state without changing it. A domain policy evaluates facts without changing state or recording events.
 
+## Why events are the foundation
+
+A fleet's bicycles and their availability are reconstructed from events such as `BicycleAdded`, `BicycleRented`, and `BicycleReturned`. With event sourcing, domain data is derived from those recorded facts. The history is the source of truth.
+
+The same facts can reconstruct an earlier aggregate version, support another view of rental activity, or establish a test fixture. Replay applies recorded events; it does not resubmit the original command or publish another integration event. New views can use what was recorded, but cannot recover facts the application never captured.
+
+Read models serve queries without replaying history on every request. The runtime handles persistence and source checkpoints; the application owns schemas, compatibility mappings, and [projection rebuilds](read-models/ordering.mdx).
+
+Event history and runtime observation answer different questions. The store retains authoritative domain history; [Tracer observations](continuous-observation.md) are partial, retained windows of activity. A message trace alone is not a business-completion verdict.
+
 ## From command to decision
 
-The rental command carries fleet and bicycle IDs. Its action evaluates eligibility, then raises `BicycleRented` or returns a rejection. The runtime appends accepted domain events.
+The rental command carries fleet and bicycle IDs. Its action evaluates eligibility, then raises `BicycleRented` or returns a rejection. The runtime commits the decision and accepted events after checking the versions it read.
 
-<DomainFlow />
+An exact retry returns the recorded outcome. A deliberate new request uses a new operation identity. A timeout means the caller may not know whether the command completed; it is not a business rejection. See the [command runtime](command-runtime.md) for identity, retry, and outcome contracts.
 
 ## Choose your next step
 
 | Your goal | Start here |
 | --- | --- |
-| Evaluate Rostfrei with a working domain | [Getting started](getting-started.mdx) |
+| Evaluate rostfrei with a working domain | [Getting started](getting-started.mdx) |
 | Understand command routing, event history, and Test isolation | [Subjects and streams](messaging/subjects.mdx) |
 | Declare domain types and behavior contracts | [Domain macros](domain-macros/index.mdx) |
 | Serve saved query views maintained by domain and integration events | [Read models](read-models/index.mdx) |
@@ -47,16 +65,8 @@ The rental command carries fleet and bicycle IDs. Its action evaluates eligibili
 | Look up the precise meaning of a term | [Ubiquitous language](glossary.md) |
 | Find operating guides, recovery, and development commands | [Documentation index](README.md) |
 
-## How the pieces fit
+## When rostfrei fits
 
-- **Rostfrei** provides the domain model, command and query buses, and event-sourcing runtime. Aggregates stay independent of persistence, serialization, and brokers.
-- **NATS adapters** connect the application to JetStream for durable commands, integration events, and authoritative domain-event storage. Infrastructure provisioning is explicit.
-- **Tracer** exposes domain contracts, read-only observation, isolated Test publication, behavioral tests, and separately authorized production dispatch.
-- **Tracer Studio** is the visual client for exploring commands, test runs, and their message flows. Tracer's HTTP API also supports agent-driven workflows.
-- **The structure checker** validates domain ownership in the filesystem and the compiled model, so conventions remain checkable as the project grows.
+rostfrei is aimed at applications where business rules, consistency boundaries, and the history of change are central to the design. Explicit ownership and inspectable behavior help teams keep agent-assisted development understandable as the codebase grows. The example shows both single-fleet decisions and a bicycle transfer committed atomically across two fleet aggregate streams in one event store.
 
-## When Rostfrei fits
-
-Rostfrei is aimed at applications where business rules, consistency boundaries, and the history of change are central to the design. Explicit ownership and inspectable behavior help teams keep agent-assisted development understandable as the codebase grows. The example shows both single-fleet decisions and a bicycle transfer committed atomically across two fleet aggregate streams in one event store.
-
-The project is **alpha** and its APIs are evolving. Use the example and architecture decisions to evaluate the model and its tradeoffs. Rostfrei is open source under the [European Union Public Licence 1.2](https://github.com/elbLabs/rostfrei/blob/main/LICENSE).
+Use the example and [architectural maxims](adr/README.md) to evaluate the model and its tradeoffs. See [LICENSE](../LICENSE) for the license terms.

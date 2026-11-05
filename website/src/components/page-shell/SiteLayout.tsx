@@ -17,7 +17,7 @@ import { SiteFooter } from "./SiteFooter"
 function SiteNavigation() {
   return (
     <>
-      <h2 className="rail-heading">The project</h2>
+      <h2 className="rail-heading">rostfrei</h2>
       <nav className="rail-links" aria-label="Project navigation">
         <Link to="/" activeOptions={{ exact: true }}>
           Overview
@@ -38,28 +38,6 @@ function SiteNavigation() {
           Read models
         </Link>
       </nav>
-      <div className="rail-note">
-        <h2 className="mb-2 font-semibold text-foreground">
-          One model. Shared understanding.
-        </h2>
-        <p>
-          Domain modeling, event sourcing, and messaging for humans and coding
-          agents.
-        </p>
-        <a
-          className="mt-3 block"
-          href="https://github.com/elbLabs/rostfrei/tree/main/examples/bike-rental"
-        >
-          Browse the bike-rental example →
-        </a>
-      </div>
-      <div className="rail-note">
-        <p>
-          <strong className="text-foreground">Alpha</strong> · APIs are
-          evolving.
-        </p>
-        <p className="mt-1">Rust · NATS · EUPL-1.2</p>
-      </div>
     </>
   )
 }
@@ -99,7 +77,7 @@ export function SiteLayout({
             <SheetHeader>
               <SheetTitle>{navigationTitle}</SheetTitle>
               <SheetDescription className="sr-only">
-                Navigate the Rostfrei project and documentation.
+                Navigate the rostfrei project and documentation.
               </SheetDescription>
             </SheetHeader>
             <div
