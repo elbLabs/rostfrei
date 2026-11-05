@@ -17,6 +17,7 @@
   html {
     scroll-behavior: smooth;
     scroll-padding-top: 110px;
+    scroll-padding-bottom: 96px;
   }
   body {
     margin: 0;
@@ -41,6 +42,9 @@
 }
 
 .site-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
   width: min(1280px, calc(100% - 96px));
   margin-inline: auto;
 }
@@ -87,17 +91,17 @@
   color: var(--muted-foreground);
 }
 .site-body {
+  flex: 1 0 auto;
   display: grid;
   grid-template-columns: 208px minmax(0, 1fr);
   gap: 64px;
-  min-height: calc(100vh - 200px);
 }
 .site-rail {
   min-width: 0;
   position: sticky;
   top: 88px;
   align-self: start;
-  max-height: calc(100dvh - 104px);
+  max-height: calc(100dvh - 160px);
   overflow-y: auto;
   padding-block: 44px 24px;
   scrollbar-width: thin;
@@ -215,11 +219,6 @@
   margin-top: 28px;
   font-size: 14px;
 }
-.hero-actions [data-slot="button"] {
-  min-height: 42px;
-  padding-inline: 18px;
-  font-size: 14px;
-}
 
 .agent-prompt {
   min-width: 0;
@@ -320,12 +319,17 @@
   color: var(--muted-foreground);
 }
 .site-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  gap: 16px 24px;
-  padding-block: 24px;
+  gap: 8px 24px;
+  padding-block: 12px;
   border-top: 1px solid var(--border);
+  background: var(--background);
   font-size: 13px;
   color: var(--muted-foreground);
 }
@@ -505,9 +509,6 @@
   }
   .hero-actions {
     gap: 14px 20px;
-  }
-  .hero-actions [data-slot="button"] {
-    min-height: 40px;
   }
   .page-title {
     font-size: 34px;

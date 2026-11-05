@@ -67,7 +67,7 @@ credentials also apply to servers discovered by NATS.
 
 The pinned `async-nats` 0.50.0 dependency logs raw CONNECT fields, including
 credentials, at TRACE level. Keep `async_nats::connection` logging below TRACE
-when using authentication; Rostfrei's configuration redaction does not filter
+when using authentication; rostfrei's configuration redaction does not filter
 the dependency's protocol logs.
 
 ## Command execution metadata

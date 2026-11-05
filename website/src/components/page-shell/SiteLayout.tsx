@@ -17,7 +17,7 @@ import { SiteFooter } from "./SiteFooter"
 function SiteNavigation() {
   return (
     <>
-      <h2 className="rail-heading">Rostfrei</h2>
+      <h2 className="rail-heading">rostfrei</h2>
       <nav className="rail-links" aria-label="Project navigation">
         <Link to="/" activeOptions={{ exact: true }}>
           Overview
@@ -77,7 +77,7 @@ export function SiteLayout({
             <SheetHeader>
               <SheetTitle>{navigationTitle}</SheetTitle>
               <SheetDescription className="sr-only">
-                Navigate the Rostfrei project and documentation.
+                Navigate the rostfrei project and documentation.
               </SheetDescription>
             </SheetHeader>
             <div

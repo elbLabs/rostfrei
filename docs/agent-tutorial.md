@@ -1,4 +1,4 @@
-# Explore Rostfrei with an agent
+# Explore rostfrei with an agent
 
 Ask a coding agent to prepare a local bike-rental demo, run a successful rental
 and a business rejection, then explain the real Tracer evidence one step at a
@@ -6,7 +6,7 @@ time. The default experience is text in your agent conversation.
 
 Copy this prompt into an agent with terminal and file access:
 
-> Help me explore Rostfrei through its bike-rental example. Use https://github.com/elbLabs/rostfrei and read docs/agent-tutorial.md from the checkout before setup. Check my environment, prepare an isolated local demo, and guide me through a successful rental and a rejection using real Tracer evidence. Explain one step at a time and let me choose what to inspect next. Use text by default; use a richer display only when its adapter is explicitly available.
+> Help me explore rostfrei through its bike-rental example. Use https://github.com/elbLabs/rostfrei and read docs/agent-tutorial.md from the checkout before setup. Check my environment, prepare an isolated local demo, and guide me through a successful rental and a rejection using real Tracer evidence. Explain one step at a time and let me choose what to inspect next. Use text by default; use a richer display only when its adapter is explicitly available.
 
 This guide bootstraps the source-checkout experience. Select a checkout
 containing this guide; older installed kits do not gain references when online

@@ -7,7 +7,7 @@ import { GitHubStarButton } from "./GitHubStarButton"
 export function SiteHeader() {
   return (
     <header className="site-header">
-      <Link to="/" aria-label="Rostfrei home">
+      <Link to="/" aria-label="rostfrei home">
         <Brand compact />
       </Link>
       <nav aria-label="Main navigation">

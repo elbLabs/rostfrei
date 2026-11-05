@@ -2,7 +2,7 @@
 
 **A Rust framework for event-sourced applications.**
 
-Business rules stay in ordinary Rust. Rostfrei supplies history loading,
+Business rules stay in ordinary Rust. rostfrei supplies history loading,
 durable commands, atomic event transactions, NATS JetStream adapters, HTTP routes,
 read models, and behavioral tests you can inspect through Tracer.
 
@@ -19,7 +19,7 @@ Copy this prompt into your coding agent. It will guide you through the runnable
 bike-rental example, starting with an ordinary successful rental:
 
 ```text
-Help me explore Rostfrei through its bike-rental example. Use https://github.com/elbLabs/rostfrei and read docs/agent-tutorial.md from the checkout before setup. Check my environment, prepare an isolated local demo, and guide me through a successful rental and a rejection using real Tracer evidence. Explain one step at a time and let me choose what to inspect next. Use text by default; use a richer display only when its adapter is explicitly available.
+Help me explore rostfrei through its bike-rental example. Use https://github.com/elbLabs/rostfrei and read docs/agent-tutorial.md from the checkout before setup. Check my environment, prepare an isolated local demo, and guide me through a successful rental and a rejection using real Tracer evidence. Explain one step at a time and let me choose what to inspect next. Use text by default; use a richer display only when its adapter is explicitly available.
 ```
 
 The [tutorial entry guide](docs/agent-tutorial.md) connects setup to the
@@ -37,7 +37,7 @@ domain data, beyond simply recording an audit trail.
 
 Should a returned bicycle be available immediately or need an inspection first?
 That remains a domain decision. Modeling the rule is useful engineering work;
-Rostfrei handles the recurring persistence, concurrency, and delivery mechanics.
+rostfrei handles the recurring persistence, concurrency, and delivery mechanics.
 
 ## Use the framework
 

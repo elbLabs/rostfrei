@@ -76,7 +76,7 @@ export function documentationPlugin(): Plugin {
     configResolved(config) { base = config.base },
     generateBundle() {
       const index = [
-        "# Rostfrei documentation",
+        "# rostfrei documentation",
         "",
         "> Official documentation shared by developers and coding agents.",
         "> These Markdown/MDX sources also produce the website; examples are inline.",

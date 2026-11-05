@@ -1,4 +1,4 @@
-# Rostfrei documentation
+# rostfrei documentation
 
 This is the official documentation for developers and coding agents. The website
 renders these same files; read them here, in a checkout, or on the

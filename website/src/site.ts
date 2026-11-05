@@ -2,8 +2,8 @@ import { docsNavigation } from "./docs/navigation.ts"
 import type { DocsNavigationEntry } from "./docs/navigation.ts"
 
 export const site = {
-  name: "Rostfrei",
-  title: "Rostfrei: event-sourced applications in Rust",
+  name: "rostfrei",
+  title: "rostfrei: event-sourced applications in Rust",
   description:
     "Build event-sourced Rust applications with domain declarations, durable commands, NATS adapters, read models, and Tracer runtime inspection.",
   url: "https://elblabs.github.io/rostfrei/",
@@ -21,47 +21,47 @@ const introductions: Record<
   Pick<PageMetadata, "title" | "description">
 > = {
   "": {
-    title: "Rostfrei docs: Introduction",
+    title: "rostfrei docs: Introduction",
     description:
-      "The Rostfrei application framework: domain code, command execution, NATS messaging, HTTP routes, read models, and runtime tools.",
+      "The rostfrei application framework: domain code, command execution, NATS messaging, HTTP routes, read models, and runtime tools.",
   },
   "getting-started": {
-    title: "Rostfrei docs: Getting started",
+    title: "rostfrei docs: Getting started",
     description:
       "Use your coding agent to run an isolated bike-rental demo and inspect successful and rejected rentals through Tracer.",
   },
   "messaging/subjects": {
-    title: "Rostfrei docs: Subjects and streams",
+    title: "rostfrei docs: Subjects and streams",
     description:
       "Follow a bicycle rental through NATS subjects, durable commands, private domain-event history, public integration events, and isolated Test resources.",
   },
   "domain-macros": {
-    title: "Rostfrei docs: Domain macros",
+    title: "rostfrei docs: Domain macros",
     description:
-      "Declare domain types and behavior contracts in Rust with Rostfrei macros for aggregates, commands, events, policies, and model composition.",
+      "Declare domain types and behavior contracts in Rust with rostfrei macros for aggregates, commands, events, policies, and model composition.",
   },
   "project-structure": {
-    title: "Rostfrei docs: Project structure",
+    title: "rostfrei docs: Project structure",
     description:
-      "Learn how Rostfrei's checked project structure connects domain declarations, ownership, and behavior implementations.",
+      "Learn how rostfrei's checked project structure connects domain declarations, ownership, and behavior implementations.",
   },
   "read-models": {
-    title: "Rostfrei docs: Read models",
+    title: "rostfrei docs: Read models",
     description:
-      "Declare saved query views in Rust and register domain and integration event handlers. Rostfrei handles KV persistence, checkpoints, and concurrency retries.",
+      "Declare saved query views in Rust and register domain and integration event handlers. rostfrei handles KV persistence, checkpoints, and concurrency retries.",
   },
   "read-models/nats": {
-    title: "Rostfrei docs: Read-model NATS setup",
+    title: "rostfrei docs: Read-model NATS setup",
     description:
       "Provision scoped NATS KV storage, configure the read-model backend, and run ordered event consumers using the application's managed connection.",
   },
   "read-models/ordering": {
-    title: "Rostfrei docs: Read-model ordering and recovery",
+    title: "rostfrei docs: Read-model ordering and recovery",
     description:
       "Understand default broker ordering, optional business versions, duplicate delivery, quarantine recovery, and rebuilding read-model generations.",
   },
   "read-models/benchmarks": {
-    title: "Rostfrei docs: Read-model query benchmarks",
+    title: "rostfrei docs: Read-model query benchmarks",
     description:
       "Compare KV queries with replaying two connected aggregates using reproducible workloads and explicit timing boundaries.",
   },
@@ -79,12 +79,12 @@ function pagesForEntries(
       {
         path: entry.slug ? `/docs/${entry.slug}` : "/docs",
         ...(introductions[entry.slug] ?? {
-          title: `Rostfrei docs: ${entry.title}${isMacro ? " macro" : isStructure ? " structure" : ""}`,
+          title: `rostfrei docs: ${entry.title}${isMacro ? " macro" : isStructure ? " structure" : ""}`,
           description: isMacro
-            ? `Learn how ${entry.title} describes a Rust domain contract in Rostfrei, with authored code and a simplified view of the generated implementation.`
+            ? `Learn how ${entry.title} describes a Rust domain contract in rostfrei, with authored code and a simplified view of the generated implementation.`
             : isStructure
-              ? `Learn where ${entry.title.toLowerCase()} declarations and implementations belong in a Rostfrei project, with checked ownership conventions and examples.`
-              : `${entry.title}: official Rostfrei documentation for developers and coding agents.`,
+              ? `Learn where ${entry.title.toLowerCase()} declarations and implementations belong in a rostfrei project, with checked ownership conventions and examples.`
+              : `${entry.title}: official rostfrei documentation for developers and coding agents.`,
         }),
       },
     ]
@@ -101,9 +101,9 @@ export function metadataForPath(pathname: string): PageMetadata {
   return (
     sitePages.find((page) => page.path === path) ?? {
       path,
-      title: "Rostfrei: Page not found",
+      title: "rostfrei: Page not found",
       description:
-        "Find Rostfrei documentation, the getting-started guide, and domain-modeling references.",
+        "Find rostfrei documentation, the getting-started guide, and domain-modeling references.",
       noindex: true,
     }
   )

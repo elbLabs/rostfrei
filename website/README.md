@@ -1,6 +1,6 @@
-# Rostfrei website
+# rostfrei website
 
-The website publishes Rostfrei's landing page and shared documentation. It is a
+The website publishes rostfrei's landing page and shared documentation. It is a
 client-side React application built with Vite and TanStack Router.
 
 ## Explore the framework
@@ -20,6 +20,7 @@ Applications use one `rostfrei` dependency and enable the adapters they need.
 Keep claims tied to current capabilities and distinguish authoritative domain
 history from bounded runtime observations. Use descriptive headings and complete
 sentences rather than paired slogans or decorative middle-dot separators.
+Follow the lowercase brand spelling in the [terminology guide](../docs/glossary.md).
 
 - Landing-page content lives in `src/components/page-shell`.
 - The docs introduction explains the mental model; `getting-started.mdx` is a
@@ -91,6 +92,8 @@ Keep the duck branding, use self-hosted Signika Negative for headings, and use a
 readable system font for body text. Reference pages use ordinary headings and
 visible code examples. The rental flow belongs below the framework introduction
 and getting-started entry point.
+The footer stays at the viewport bottom while the document scrolls; its normal
+layout space and the sidebar height keep the final content and navigation accessible.
 
 The Latin variable font and its SIL Open Font License are served from
 `public/fonts/`. The same Signika Negative face is used by elbtech.ai; font files

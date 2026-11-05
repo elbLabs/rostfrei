@@ -66,8 +66,8 @@ export function GitHubStarButton() {
       : numberFormatter.format(starCount)
   const accessibleLabel =
     starCount === null
-      ? "Star Rostfrei on GitHub"
-      : `Star Rostfrei on GitHub. ${formattedCount} stars.`
+      ? "Star rostfrei on GitHub"
+      : `Star rostfrei on GitHub. ${formattedCount} stars.`
 
   return (
     <a

@@ -1,6 +1,6 @@
 # Agent Skills setup and use
 
-Rostfrei provides two project-local skills for coding agents:
+rostfrei provides two project-local skills for coding agents:
 
 - **`rostfrei-develop-feature`** turns agreed Given/When/Then behavior into real
   NATS-backed tests, then guides the red/green/refactor loop.
@@ -26,7 +26,7 @@ bike-rental runtime or register bicycle fixtures.
 
 ## Install and update
 
-Rostfrei is a Cargo library dependency. Install its setup CLI separately; adding
+rostfrei is a Cargo library dependency. Install its setup CLI separately; adding
 the library, building it or starting an application does not install skills.
 Install the 0.1.3 CLI from crates.io with Rust 1.98+, Cargo and a native linker.
 Git dependencies also need Git and source access. Consumer setup and execution
@@ -46,7 +46,7 @@ Use the CLI/kit matching the application's actual locked framework revision;
 the earlier 0.1.0 Git release and its kit retain their original identities.
 
 Setup uses `cargo metadata --locked` to select the application's exact resolved
-Rostfrei version and source revision, acquiring and caching its matching native
+rostfrei version and source revision, acquiring and caching its matching native
 tool when needed. Resolve a missing/stale lockfile through Cargo first. Ambiguous
 dependencies or unsupported revisions stop setup rather than selecting newer skills.
 For a workspace member, use `--manifest-path /path/to/Cargo.toml --package my-app`.

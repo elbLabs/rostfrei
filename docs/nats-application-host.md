@@ -243,6 +243,6 @@ python3 scripts/test_nats.py -- python3 scripts/check_bike_rental_host.py --stud
 ```
 
 The first uses an external package with Cargo Git dependencies pinned to the
-checkout's committed revision, and verifies all Rostfrei crates resolved from
+checkout's committed revision, and verifies all rostfrei crates resolved from
 that revision. Use `--working-tree` only for pre-commit development. The second
 needs the Studio dependencies, Node 24 and Chrome (`CHROME_BIN` if necessary).

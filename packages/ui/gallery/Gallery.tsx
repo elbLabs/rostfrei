@@ -130,7 +130,7 @@ export function Gallery() {
         <h1 className="page-title">A shared working language.</h1>
         <p className="mt-4 max-w-2xl text-sm leading-7 text-muted-foreground">
           The same components, steel surfaces, rust actions, and blue links used
-          by the Rostfrei website and Tracer Studio. Every control below is live.
+          by the rostfrei website and Tracer Studio. Every control below is live.
         </p>
         <div className="my-5 flex flex-wrap gap-3 text-xs">
           <a className="text-link" href="#themes">
@@ -644,7 +644,7 @@ export function Gallery() {
             <PanelContent className="flex flex-wrap items-center gap-6">
               <a
                 href="https://elblabs.github.io/rostfrei/"
-                aria-label="Rostfrei home"
+                aria-label="rostfrei home"
               >
                 <Brand />
               </a>
@@ -653,7 +653,7 @@ export function Gallery() {
                 className="hidden h-12 sm:block"
               />
               <Brand compact />
-              <DuckMascot className="w-28" alt="The Rostfrei duck mascot" />
+              <DuckMascot className="w-28" alt="The rostfrei duck mascot" />
             </PanelContent>
           </Panel>
           <CodeExample>

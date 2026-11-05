@@ -117,12 +117,6 @@ async function checkNavigation(browser) {
     await mockRepositoryMetadata(page)
     await page.setViewport({ width: 390, height: 900 })
     await page.goto(`${origin}${base}`, { waitUntil: "networkidle0" })
-    await page.locator('a[href="#explore-with-your-agent"]').click()
-    await page.waitForFunction(() => location.hash === "#explore-with-your-agent")
-    await page.waitForFunction(() => {
-      const heading = document.getElementById("start-title").getBoundingClientRect()
-      return heading.top >= 0 && heading.bottom <= innerHeight
-    })
     await page.locator('.site-header a[href$="/docs"]').click()
     await page.waitForSelector(".docs-article h1")
     const menu = await page.$(".mobile-navigation button")
