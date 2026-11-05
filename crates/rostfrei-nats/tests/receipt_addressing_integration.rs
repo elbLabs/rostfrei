@@ -4,11 +4,10 @@
     reason = "acceptance assertions retain native setup and transport errors through TestResult"
 )]
 
+mod terminal_puback_support;
+
 use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -23,6 +22,7 @@ use rostfrei_messaging_core::{ApplicationName, CausationId, CorrelationId, Traff
 use rostfrei_nats::{
     NatsConnectionConfig, NatsEventStore, NatsEventStoreConfig, connect, provision_event_store,
 };
+use terminal_puback_support::TerminalPubAckLossProxy;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 const EXPECTATION_SUBJECT: &str = "Nats-Expected-Last-Subject-Sequence-Subject";
@@ -522,85 +522,6 @@ async fn normal_scope_rejects_direct_fixture_injection_before_mutation() -> Test
     Ok(())
 }
 
-struct AckLossProxy {
-    task: tokio::task::JoinHandle<TestResult>,
-    address: std::net::SocketAddr,
-    dropped: Arc<AtomicU64>,
-}
-
-impl Drop for AckLossProxy {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
-impl AckLossProxy {
-    async fn start(stream: String) -> TestResult<Self> {
-        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-        let upstream: async_nats::ServerAddr =
-            rostfrei_testing::integration::nats_url()?.parse()?;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let address = listener.local_addr()?;
-        let dropped = Arc::new(AtomicU64::new(0));
-        let counter = Arc::clone(&dropped);
-        let task = tokio::spawn(async move {
-            let (client, _) = listener.accept().await?;
-            let upstream =
-                tokio::net::TcpStream::connect((upstream.host(), upstream.port())).await?;
-            client.set_nodelay(true)?;
-            upstream.set_nodelay(true)?;
-            let (mut client_read, mut client_write) = client.into_split();
-            let (upstream_read, mut upstream_write) = upstream.into_split();
-            let upload = async {
-                tokio::io::copy(&mut client_read, &mut upstream_write).await?;
-                TestResult::Ok(())
-            };
-            let download = async {
-                let mut reader = BufReader::new(upstream_read);
-                loop {
-                    let mut line = Vec::new();
-                    if reader.read_until(b'\n', &mut line).await? == 0 {
-                        return TestResult::Ok(());
-                    }
-                    let text = std::str::from_utf8(&line)?;
-                    if text.starts_with("MSG ") || text.starts_with("HMSG ") {
-                        let length: usize = text
-                            .split_whitespace()
-                            .last()
-                            .ok_or("missing frame length")?
-                            .parse()?;
-                        let mut body =
-                            vec![0; length.checked_add(2).ok_or("frame length overflow")?];
-                        reader.read_exact(&mut body).await?;
-                        let ack = format!("\"stream\":\"{stream}\"");
-                        if body
-                            .windows(ack.len())
-                            .any(|window| window == ack.as_bytes())
-                            && body
-                                .windows(b"\"batch\"".len())
-                                .any(|window| window == b"\"batch\"")
-                            && counter.load(Ordering::SeqCst) == 0
-                        {
-                            counter.fetch_add(1, Ordering::SeqCst);
-                            continue;
-                        }
-                        client_write.write_all(&line).await?;
-                        client_write.write_all(&body).await?;
-                    } else {
-                        client_write.write_all(&line).await?;
-                    }
-                }
-            };
-            tokio::select! { result = upload => result, result = download => result }
-        });
-        Ok(Self {
-            task,
-            address,
-            dropped,
-        })
-    }
-}
-
 #[tokio::test]
 #[allow(
     clippy::too_many_lines,
@@ -608,7 +529,8 @@ impl AckLossProxy {
 )]
 async fn fixture_reconciles_lost_terminal_ack_and_replays_after_later_writes() -> TestResult {
     let fixture = Fixture::new(TrafficScope::Test).await?;
-    let proxy = AckLossProxy::start(fixture.store.config().stream_name().to_owned()).await?;
+    let proxy =
+        TerminalPubAckLossProxy::start(fixture.store.config().stream_name().to_owned()).await?;
     let upstream: async_nats::ServerAddr = rostfrei_testing::integration::nats_url()?.parse()?;
     let options = upstream
         .username()
@@ -708,153 +630,6 @@ async fn fixture_reconciles_lost_terminal_ack_and_replays_after_later_writes() -
         "exact retries and refused writes add neither events nor manifests"
     );
     fixture.cleanup().await
-}
-
-struct Order;
-struct OrderChanged;
-
-impl rostfrei_core::Aggregate for Order {
-    type State = ();
-    type Event = OrderChanged;
-    const BOUNDED_CONTEXT: &'static str = "sales";
-    const AGGREGATE_TYPE: &'static str = "sales/order";
-    fn initial(_: &StreamId) {}
-    fn apply((): &mut (), _: &OrderChanged) {}
-}
-
-impl rostfrei_core::Event for OrderChanged {
-    fn event_type(&self) -> &'static str {
-        "order-changed"
-    }
-    fn schema_version(&self) -> u32 {
-        1
-    }
-    fn encode_json(&self) -> Result<Vec<u8>, rostfrei_core::EventCodecError> {
-        Ok(0_u32.to_be_bytes().to_vec())
-    }
-    fn decode_json(
-        event: &rostfrei_core::RecordedEvent,
-    ) -> Result<Self, rostfrei_core::EventCodecError> {
-        if event.payload().len() != 4 {
-            return Err(rostfrei_core::EventCodecError::new(
-                rostfrei_core::EventCodecErrorKind::MalformedPayload,
-                "expected four-byte order change",
-            ));
-        }
-        Ok(Self)
-    }
-}
-
-struct RecordingHandler(tokio::sync::mpsc::UnboundedSender<String>);
-
-#[async_trait::async_trait]
-impl rostfrei_core::DomainEventHandler<OrderChanged> for RecordingHandler {
-    async fn handle(
-        &self,
-        event: &rostfrei_core::CommittedDomainEvent<'_, OrderChanged>,
-    ) -> Result<(), rostfrei_core::DomainEventHandlerError> {
-        self.0
-            .send(event.recorded().operation_id().as_str().to_owned())
-            .map_err(|error| {
-                rostfrei_core::DomainEventHandlerError::new(
-                    rostfrei_core::DomainEventHandlerErrorKind::OperatorBlocking,
-                    error.to_string(),
-                )
-            })
-    }
-}
-
-#[tokio::test]
-async fn fresh_worker_suppresses_persisted_fixtures_without_registration() -> TestResult {
-    let fixture = Fixture::new(TrafficScope::Test).await?;
-    let stream = aggregate("worker-fixture")?;
-    fixture
-        .store
-        .append_fixture(
-            &stream,
-            ExpectedVersion::NoStream,
-            batch(&stream, "seed", 2, None, None)?,
-        )
-        .await?;
-    fixture
-        .store
-        .append_transaction(transaction(
-            &fixture.store,
-            &stream,
-            "application",
-            ExpectedVersion::Exact(StreamVersion::new(2)),
-            1,
-            "app-flow",
-            "app-cause",
-        )?)
-        .await?;
-    let scope = fixture
-        .store
-        .config()
-        .application()
-        .test_bounded_context("sales")?;
-    let config = rostfrei_nats::NatsDomainEventConsumerConfig::new(
-        scope.consumer_name("receipt-side-effects", 1)?,
-        scope.durable_name("receipt-side-effects", 1)?,
-        Duration::from_secs(10),
-        Duration::from_secs(5),
-        rostfrei_messaging_core::RetryDelay::new(Duration::from_millis(10))?,
-    )?;
-    rostfrei_nats::provision_domain_event_consumer(&fixture.js, fixture.store.config(), &config)
-        .await?;
-    let (sender, mut received) = tokio::sync::mpsc::unbounded_channel();
-    let mut dispatcher = rostfrei_core::DomainEventDispatcher::new();
-    dispatcher
-        .register::<Order, OrderChanged, _>("order-changed", Arc::new(RecordingHandler(sender)))?;
-    let worker = rostfrei_nats::NatsDomainEventConsumer::connect(
-        fixture.js.clone(),
-        fixture.store.config().clone(),
-        config.clone(),
-        Arc::new(dispatcher),
-    )
-    .await?;
-    let (shutdown, shutdown_requested) = tokio::sync::watch::channel(false);
-    let mut task = tokio::spawn(worker.run_until_shutdown(shutdown_requested));
-    let result = async {
-        let operation = tokio::time::timeout(Duration::from_secs(5), received.recv())
-            .await?
-            .ok_or("worker did not dispatch the application event")?;
-        assert_eq!(
-            operation, "application",
-            "fixtures must never trigger domain handlers"
-        );
-        let journal = fixture
-            .js
-            .get_stream(fixture.store.config().stream_name())
-            .await?;
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let consumer: jetstream::consumer::PullConsumer =
-                    journal.get_consumer(config.durable_name().as_str()).await?;
-                let info = consumer.cached_info();
-                if info.num_pending == 0 && info.num_ack_pending == 0 {
-                    return TestResult::Ok(());
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await??;
-        assert!(
-            received.try_recv().is_err(),
-            "fixture dispatch leaked through the durable worker"
-        );
-        TestResult::Ok(())
-    }
-    .await;
-    let _ = shutdown.send(true);
-    let stopped = tokio::time::timeout(Duration::from_secs(5), &mut task).await;
-    if stopped.is_err() {
-        task.abort();
-    }
-    fixture.cleanup().await?;
-    result?;
-    stopped???;
-    Ok(())
 }
 
 #[tokio::test]

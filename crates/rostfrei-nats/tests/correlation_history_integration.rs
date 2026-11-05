@@ -1,5 +1,6 @@
 #![allow(clippy::panic_in_result_fn)]
 
+#[allow(dead_code)]
 mod correlation_history_support;
 
 use std::{collections::BTreeSet, time::Duration};
@@ -13,7 +14,8 @@ use async_nats::{
 };
 use futures_util::StreamExt;
 use rostfrei_core::{
-    CorrelationHistory, CorrelationRef, DomainEventRef, EventStoreErrorKind, RecordedEvent,
+    ContentFingerprint, CorrelationHistory, CorrelationRef, DomainEventRef, EventStore,
+    EventStoreErrorKind, EventTransaction, OperationId, RecordedEvent,
 };
 use rostfrei_messaging_core::{CorrelationId, TrafficScope};
 use rostfrei_nats::{CORRELATION_ID_HEADER, NatsCorrelationHistory};
@@ -21,7 +23,7 @@ use serde_json::Value;
 
 use correlation_history_support::{
     Fixture, READ_TIMEOUT, TestResult, append_domain, chain, integration_envelope, new_connection,
-    stream_names, wait_for_consumer_count,
+    stream_names, unique_application, wait_for_consumer_count,
 };
 
 #[tokio::test]
@@ -59,10 +61,12 @@ async fn native_union_accepts_the_full_256_correlation_anchor_window() -> TestRe
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn native_union_reads_two_contexts_and_one_shared_integration_snapshot() -> TestResult {
-    let fixture = Fixture::new().await?;
+    let fixture = Fixture::in_scope(unique_application()?, TrafficScope::Test).await?;
     let escaped = "flow.*>%/~";
     let sales = append_domain(&fixture.sales, "order/one", escaped, "command.one", 2).await?;
-    let shipping = append_domain(&fixture.shipping, "shipment", "second", "command.two", 1).await?;
+    let shipping =
+        append_domain(fixture.shipping()?, "shipment", "second", "command.two", 1).await?;
+    let shared = append_domain(fixture.shipping()?, "shared", escaped, "command.one", 1).await?;
     let public_sales = fixture
         .publish("sales", "public-sales", escaped, Some("command.one"))
         .await?;
@@ -73,6 +77,20 @@ async fn native_union_reads_two_contexts_and_one_shared_integration_snapshot() -
     fixture
         .publish("shipping", "noise-public", "flow.x", None)
         .await?;
+    // The selected zero-event receipt is shipping's cutoff witness. Its subject
+    // is already covered by the union; adding an exact filter would overlap it.
+    fixture
+        .shipping()?
+        .append_transaction(
+            EventTransaction::new(
+                OperationId::new("filter-witness")?,
+                ContentFingerprint::digest("filter-witness"),
+                Vec::new(),
+            )
+            .with_bounded_context(fixture.shipping()?.config().bounded_context().clone())
+            .with_correlation_id(CorrelationId::new("decisions-only")?),
+        )
+        .await?;
     let expected_snapshot = fixture.snapshot().await?;
 
     let mut creates = fixture
@@ -82,18 +100,23 @@ async fn native_union_reads_two_contexts_and_one_shared_integration_snapshot() -
         .await?;
     fixture.connection.client().flush().await?;
     let reader = fixture.reader().await?;
-    let ids = [CorrelationId::new(escaped)?, CorrelationId::new("second")?];
+    let ids = [
+        CorrelationId::new(escaped)?,
+        CorrelationId::new("second")?,
+        CorrelationId::new("decisions-only")?,
+    ];
     let result = tokio::time::timeout(READ_TIMEOUT, reader.load_correlations(&ids)).await?;
     assert!(
         result.is_ok(),
         "retained domain and integration history must be readable: {result:?}"
     );
     let mut read = result?;
-    assert_eq!(read.chains.len(), 2);
+    assert_eq!(read.chains.len(), 3);
     let first = chain(&read, escaped)?;
     assert!(!first.truncated);
-    assert_eq!(first.refs.len(), 3);
+    assert_eq!(first.refs.len(), 4);
     assert_domain_refs(&first.refs, "sales", &sales)?;
+    assert_domain_refs(&first.refs, "shipping", &shared)?;
     assert!(
         first
             .refs
@@ -108,6 +131,16 @@ async fn native_union_reads_two_contexts_and_one_shared_integration_snapshot() -
             .refs
             .contains(&CorrelationRef::Integration(public_shipping))
     );
+    let empty = chain(&read, "decisions-only")?;
+    assert!(empty.refs.is_empty());
+    assert!(!empty.truncated);
+    for chain in &read.chains {
+        assert!(chain.refs.windows(2).all(|pair| match pair {
+            [left, right] =>
+                (left.occurred_at(), left.identity()) <= (right.occurred_at(), right.identity()),
+            _ => true,
+        }), "cross-source refs must have stable timestamp/identity ordering: {chain:?}");
+    }
     read.snapshot
         .sources
         .sort_by(|left, right| left.stream.cmp(&right.stream));
@@ -119,6 +152,13 @@ async fn native_union_reads_two_contexts_and_one_shared_integration_snapshot() -
             .await?
             .ok_or("native replay request subscription ended")?;
         let request: Value = serde_json::from_slice(&message.payload)?;
+        assert_eq!(request["config"]["ack_policy"], "none");
+        assert_eq!(request["config"]["deliver_policy"], "all");
+        assert!(
+            request
+                .pointer("/config/durable_name")
+                .is_none_or(Value::is_null)
+        );
         let stream = request
             .get("stream_name")
             .and_then(Value::as_str)
@@ -147,6 +187,8 @@ async fn native_union_reads_two_contexts_and_one_shared_integration_snapshot() -
             format!("{prefix}.fixture.*.receipt.flow%2E%2A%3E%25%2F%7E.*"),
             format!("{prefix}.transaction.*.receipt.second.*"),
             format!("{prefix}.fixture.*.receipt.second.*"),
+            format!("{prefix}.transaction.*.receipt.decisions-only.*"),
+            format!("{prefix}.fixture.*.receipt.decisions-only.*"),
         ]);
         if config.stream_name() == fixture.sales.config().stream_name() {
             let journal = fixture.js().get_stream(config.stream_name()).await?;
@@ -175,8 +217,9 @@ async fn native_union_reads_two_contexts_and_one_shared_integration_snapshot() -
             .as_str()
             .to_owned(),
         BTreeSet::from([
-            format!("{application}.integration.*.*.flow%2E%2A%3E%25%2F%7E.*"),
-            format!("{application}.integration.*.*.second.*"),
+            format!("{application}.test.integration.*.*.flow%2E%2A%3E%25%2F%7E.*"),
+            format!("{application}.test.integration.*.*.second.*"),
+            format!("{application}.test.integration.*.*.decisions-only.*"),
             witness.subject.to_string(),
         ]),
     ));
@@ -196,7 +239,9 @@ async fn native_union_reads_two_contexts_and_one_shared_integration_snapshot() -
 async fn repeated_subjects_cross_native_batches_and_sparse_or_empty_matches_terminate() -> TestResult
 {
     let fixture = Fixture::new().await?;
-    let events = append_domain(&fixture.sales, "many", "selected", "same-cause", 501).await?;
+    // Integration discovery crosses the native 500-message batch here. Domain
+    // discovery paginates receipts, covered by the 501-receipt contract.
+    let events = append_domain(&fixture.sales, "many", "selected", "same-cause", 2).await?;
     for index in 0..501 {
         fixture
             .publish(
@@ -210,7 +255,7 @@ async fn repeated_subjects_cross_native_batches_and_sparse_or_empty_matches_term
     // Every physical cutoff is outside the requested filter, including a source
     // with no matches. Waiting for a filtered message at the global cutoff hangs.
     append_domain(&fixture.sales, "tail", "noise", "noise", 1).await?;
-    append_domain(&fixture.shipping, "only-noise", "noise", "noise", 1).await?;
+    append_domain(fixture.shipping()?, "only-noise", "noise", "noise", 1).await?;
     fixture
         .publish("shipping", "tail-public", "noise", None)
         .await?;
@@ -222,7 +267,7 @@ async fn repeated_subjects_cross_native_batches_and_sparse_or_empty_matches_term
     let read = tokio::time::timeout(READ_TIMEOUT, reader.load_correlations(&ids)).await??;
     let selected = chain(&read, "selected")?;
     assert!(!selected.truncated);
-    assert_eq!(selected.refs.len(), 1002);
+    assert_eq!(selected.refs.len(), 503);
     assert_domain_refs(&selected.refs, "sales", &events)?;
     let public_ids: BTreeSet<_> = selected
         .refs
@@ -267,7 +312,7 @@ async fn retained_history_survives_reader_and_connection_recreation_without_a_pr
     let first = reader.load_correlations(&ids).await?;
     assert_eq!(chain(&first, "flow")?.refs.len(), 2);
     drop(reader);
-    append_domain(&fixture.shipping, "between-readers", "flow", "root", 1).await?;
+    append_domain(fixture.shipping()?, "between-readers", "flow", "root", 1).await?;
     fixture.connection.drain().await?;
     fixture.connection = new_connection().await?;
     let reader =
@@ -348,7 +393,7 @@ async fn a_missing_domain_or_integration_source_is_an_error_not_an_empty_chain()
         let fixture = Fixture::new().await?;
         let reader = fixture.reader().await?;
         let missing = if remove_domain {
-            fixture.shipping.config().stream_name()
+            fixture.shipping()?.config().stream_name()
         } else {
             fixture.topology.integration_event_stream().as_str()
         };
@@ -513,7 +558,7 @@ async fn normal_and_test_history_are_separate_and_application_durables_do_not_ad
     let test = Fixture::in_scope(normal.topology.application().clone(), TrafficScope::Test).await?;
     for (fixture, label) in [(&normal, "normal"), (&test, "test")] {
         append_domain(&fixture.sales, label, "same-flow", label, 1).await?;
-        append_domain(&fixture.shipping, label, "same-flow", label, 1).await?;
+        append_domain(fixture.shipping()?, label, "same-flow", label, 1).await?;
         fixture
             .publish("sales", label, "same-flow", Some(label))
             .await?;
@@ -659,32 +704,6 @@ async fn cancellation_during_native_consumer_creation_reclaims_the_created_consu
 }
 
 #[tokio::test]
-async fn retained_refs_are_ordered_by_timestamp_then_identity_across_sources() -> TestResult {
-    let fixture = Fixture::new().await?;
-    append_domain(&fixture.sales, "ordered", "ordered", "command", 1).await?;
-    append_domain(&fixture.shipping, "ordered", "ordered", "command", 1).await?;
-    fixture
-        .publish("sales", "ordered-integration", "ordered", Some("command"))
-        .await?;
-    let read = fixture
-        .reader()
-        .await?
-        .load_correlations(&[CorrelationId::new("ordered")?])
-        .await?;
-    let refs = &chain(&read, "ordered")?.refs;
-    assert_eq!(refs.len(), 3);
-    assert!(
-        refs.windows(2).all(|pair| match pair {
-            [left, right] =>
-                (left.occurred_at(), left.identity()) <= (right.occurred_at(), right.identity()),
-            _ => true,
-        }),
-        "cross-source refs must have stable timestamp/identity ordering: {refs:?}"
-    );
-    fixture.cleanup().await
-}
-
-#[tokio::test]
 async fn authoritative_domain_sources_reject_per_message_expiry() -> TestResult {
     let fixture = Fixture::new().await?;
     let mut config = fixture
@@ -758,7 +777,7 @@ async fn empty_id_queries_still_validate_sources_and_capture_their_cutoffs() -> 
     wait_for_consumer_count(&fixture, 0).await?;
     fixture
         .js()
-        .delete_stream(fixture.shipping.config().stream_name())
+        .delete_stream(fixture.shipping()?.config().stream_name())
         .await?;
     assert!(
         reader.load_correlations(&[]).await.is_err(),
@@ -792,7 +811,7 @@ async fn messages_published_after_capture_are_excluded_until_the_next_read() -> 
         }
     }).await??;
     // The read future is deliberately not polled while later records are stored.
-    append_domain(&fixture.shipping, "after", "flow", "root", 1).await?;
+    append_domain(fixture.shipping()?, "after", "flow", "root", 1).await?;
     fixture
         .publish("shipping", "public-after", "flow", None)
         .await?;
@@ -1044,8 +1063,8 @@ fn assert_domain_refs(
     let actual: Vec<_> = refs
         .iter()
         .filter_map(|reference| match reference {
-            CorrelationRef::Domain(reference) => Some(reference),
-            CorrelationRef::Integration(_) => None,
+            CorrelationRef::Domain(reference) if reference.context == context => Some(reference),
+            _ => None,
         })
         .collect();
     assert_eq!(actual.len(), events.len());

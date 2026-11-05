@@ -5,12 +5,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rostfrei_core::{
-    ActorRef, AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EnvelopeError,
-    EventBatch, EventHistory, EventStore, EventStoreError, EventStoreErrorKind, ExpectedVersion,
-    FixtureEventStore, InMemoryEventStore, NewEvent, OperationId, RecordedEvent, StreamId,
-    StreamVersion, derive_commit_id, derive_event_id,
+    AggregateId, AggregateType, AppendOutcome, ContentFingerprint, EventBatch, EventHistory,
+    EventStore, EventStoreError, ExpectedVersion, FixtureEventStore, InMemoryEventStore, NewEvent,
+    OperationId, RecordedEvent, StreamId, derive_commit_id, derive_event_id,
 };
-use rostfrei_messaging_core::{BoundedContextName, CausationId, CorrelationId};
+use rostfrei_messaging_core::BoundedContextName;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -88,154 +87,6 @@ async fn fixture_capability_is_object_safe_and_arc_forwarded_without_command_sto
         EventHistory::load(&store, &stream).await?,
         appended.events()
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn fixture_operation_ids_are_aggregate_scoped() -> TestResult {
-    let store = InMemoryEventStore::new();
-    let first = stream("one")?;
-    let second = stream("two")?;
-    let first_batch = batch(&first, "shared-fixture-operation", &[b"first account"])?;
-    let second_batch = batch(&second, "shared-fixture-operation", &[b"second account"])?;
-
-    let first_append = store
-        .append_fixture(&first, ExpectedVersion::NoStream, first_batch.clone())
-        .await?;
-    let second_append = store
-        .append_fixture(&second, ExpectedVersion::NoStream, second_batch.clone())
-        .await?;
-
-    assert!(!first_append.is_exact_replay());
-    assert!(!second_append.is_exact_replay());
-    assert_ne!(first_batch.commit_id(), second_batch.commit_id());
-    for (stream, batch, appended) in [
-        (&first, first_batch, first_append),
-        (&second, second_batch, second_append),
-    ] {
-        let replay = store
-            .append_fixture(stream, ExpectedVersion::NoStream, batch)
-            .await?;
-        assert!(replay.is_exact_replay());
-        assert_eq!(replay.events(), appended.events());
-        assert_eq!(store.load(stream).await?, appended.events());
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn fixture_retry_preserves_original_events_and_rejects_changed_content_or_provenance()
--> TestResult {
-    let store = InMemoryEventStore::new();
-    let stream = stream("retry")?;
-    let correlation = CorrelationId::new("fixture-correlation")?;
-    let causation = CausationId::new("fixture-parent")?;
-    let actor = ActorRef::new("test-authors", "alice")?;
-    let original = batch(&stream, "fixture-retry", &[b"first", b"second"])?
-        .with_correlation_id(correlation.clone())
-        .with_causation_id(causation.clone())
-        .with_actor(actor.clone());
-    let appended = store
-        .append_fixture(&stream, ExpectedVersion::NoStream, original.clone())
-        .await?;
-    store
-        .append_fixture(
-            &stream,
-            ExpectedVersion::Exact(StreamVersion::new(2)),
-            batch(&stream, "later-fixture", &[b"later"])?,
-        )
-        .await?;
-    let history = store.load(&stream).await?;
-
-    let replay = store
-        .append_fixture(&stream, ExpectedVersion::NoStream, original.clone())
-        .await?;
-    assert!(replay.is_exact_replay());
-    assert_eq!(replay.events(), appended.events());
-    assert_eq!(replay.events().len(), 2);
-    for event in replay.events() {
-        assert_eq!(event.correlation_id(), Some(&correlation));
-        assert_eq!(event.causation_id(), Some(&causation));
-        assert_eq!(event.actor(), Some(&actor));
-    }
-
-    let changed_payload = batch(&stream, "fixture-retry", &[b"changed", b"second"])?
-        .with_correlation_id(correlation.clone())
-        .with_causation_id(causation.clone())
-        .with_actor(actor.clone());
-    let changed_fingerprint = EventBatch::new(
-        original.commit_id().clone(),
-        original.operation_id().clone(),
-        ContentFingerprint::digest("different fixture document"),
-        original.events().to_vec(),
-    )?
-    .with_correlation_id(correlation)
-    .with_causation_id(causation)
-    .with_actor(actor);
-    for changed in [
-        changed_payload,
-        changed_fingerprint,
-        original
-            .clone()
-            .with_correlation_id(CorrelationId::new("different-correlation")?),
-        original
-            .clone()
-            .with_causation_id(CausationId::new("different-parent")?),
-        original.with_actor(ActorRef::new("test-authors", "bob")?),
-    ] {
-        let error = store
-            .append_fixture(&stream, ExpectedVersion::NoStream, changed)
-            .await
-            .err()
-            .ok_or("changed fixture evidence must not replay the original write")?;
-        assert_eq!(error.kind(), EventStoreErrorKind::IdentityConflict);
-        assert_eq!(store.load(&stream).await?, history);
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_fixture_batch_retains_the_full_hundred_domain_event_allowance() -> TestResult {
-    let store = InMemoryEventStore::new();
-    let stream = stream("maximum-batch")?;
-    let payloads: Vec<&[u8]> = vec![b"seed"; 100];
-    let maximum = batch(&stream, "fixture-maximum", &payloads)?;
-    let appended = store
-        .append_fixture(&stream, ExpectedVersion::NoStream, maximum.clone())
-        .await?;
-
-    assert_eq!(appended.events().len(), 100);
-    for (ordinal, event) in appended.events().iter().enumerate() {
-        assert_eq!(event.stream_version().value(), u64::try_from(ordinal)? + 1);
-        assert_eq!(event.commit_event_ordinal(), u32::try_from(ordinal)?);
-        assert_eq!(event.commit_event_count(), 100);
-    }
-    assert_eq!(store.load(&stream).await?, appended.events());
-    let replay = store
-        .append_fixture(&stream, ExpectedVersion::NoStream, maximum.clone())
-        .await?;
-    assert!(replay.is_exact_replay());
-    assert_eq!(replay.events(), appended.events());
-
-    let mut oversized = maximum.events().to_vec();
-    oversized.push(NewEvent::new(
-        derive_event_id(maximum.commit_id(), 100),
-        "account-seeded",
-        1,
-        b"seed".to_vec(),
-    )?);
-    assert!(matches!(
-        EventBatch::new(
-            maximum.commit_id().clone(),
-            maximum.operation_id().clone(),
-            maximum.operation_fingerprint(),
-            oversized,
-        ),
-        Err(EnvelopeError::BatchTooLarge {
-            actual: 101,
-            maximum: 100,
-        })
-    ));
     Ok(())
 }
 

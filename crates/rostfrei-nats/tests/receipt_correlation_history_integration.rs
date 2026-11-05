@@ -6,7 +6,7 @@ mod receipt_history_review_support;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -19,29 +19,24 @@ use rostfrei_core::{
     StreamId, StreamVersion, TransactionParticipant, TransactionReceipt, derive_commit_id,
     derive_event_id,
 };
-use rostfrei_messaging_core::{
-    ApplicationName, CausationId, CorrelationId, MessageTimestamp, TrafficScope,
-};
-use rostfrei_nats::{
-    ApplicationMessagingConfig, MessagingTopology, NatsConnection, NatsCorrelationHistory,
-    NatsEventStore, NatsEventStoreConfig, provision_event_store, provision_stream,
-};
+use rostfrei_messaging_core::{CausationId, CorrelationId, MessageTimestamp, TrafficScope};
+use rostfrei_nats::{NatsCorrelationHistory, NatsEventStore, provision_event_store};
 use serde_json::Value;
 
-use correlation_history_support::{READ_TIMEOUT, TestResult, chain, new_connection};
+use correlation_history_support::{Fixture, READ_TIMEOUT, TestResult, chain};
 
 #[tokio::test]
 async fn zero_pending_before_cutoff_delivery_is_not_complete_empty_history() -> TestResult {
-    let fixture = ReceiptFixture::new(TrafficScope::Normal).await?;
+    let fixture = Fixture::with_authority(TrafficScope::Normal, false).await?;
     let aggregate = StreamId::new(AggregateType::new("Order")?, AggregateId::new("pending")?);
-    append_command(&fixture.store, &aggregate, "pending", 0, "selected", 1).await?;
+    append_command(&fixture.sales, &aggregate, "pending", 0, "selected", 1).await?;
     let proxy = receipt_history_review_support::PendingEmptyProxy::start(
         fixture.connection.client().clone(),
     )
     .await?;
     let reader = NatsCorrelationHistory::connect(
         proxy.context.clone(),
-        vec![fixture.store.config().clone()],
+        fixture.configs(),
         &fixture.topology,
     )
     .await?;
@@ -77,9 +72,9 @@ async fn zero_pending_before_cutoff_delivery_is_not_complete_empty_history() -> 
 #[tokio::test]
 async fn attached_reader_rejects_replacement_between_reads_even_with_reused_event_ids() -> TestResult
 {
-    let mut fixture = ReceiptFixture::new(TrafficScope::Normal).await?;
+    let mut fixture = Fixture::with_authority(TrafficScope::Normal, false).await?;
     let aggregate = StreamId::new(AggregateType::new("Order")?, AggregateId::new("reused")?);
-    let original = append_command(&fixture.store, &aggregate, "reused", 0, "selected", 1).await?;
+    let original = append_command(&fixture.sales, &aggregate, "reused", 0, "selected", 1).await?;
     let reader = fixture.reader().await?;
     let ids = [CorrelationId::new("selected")?];
     assert_eq!(
@@ -88,16 +83,16 @@ async fn attached_reader_rejects_replacement_between_reads_even_with_reused_even
             .len(),
         1
     );
-    let config = fixture.store.config().clone();
+    let config = fixture.sales.config().clone();
     fixture
         .connection
         .jetstream()
         .delete_stream(config.stream_name())
         .await?;
     provision_event_store(fixture.connection.jetstream(), &config).await?;
-    fixture.store = NatsEventStore::connect(fixture.connection.jetstream().clone(), config).await?;
+    fixture.sales = NatsEventStore::connect(fixture.connection.jetstream().clone(), config).await?;
     let replacement =
-        append_command(&fixture.store, &aggregate, "reused", 0, "selected", 1).await?;
+        append_command(&fixture.sales, &aggregate, "reused", 0, "selected", 1).await?;
     assert_eq!(
         original, replacement,
         "replacement must exercise reused event identity and version"
@@ -136,7 +131,7 @@ async fn split_marker_rejects_test_scope_in_normal_history() -> TestResult {
 
 #[allow(clippy::too_many_lines)]
 async fn assert_foreign_receipt_scope(split: bool, test_scope: bool) -> TestResult {
-    let fixture = ReceiptFixture::with_authority(TrafficScope::Normal, split).await?;
+    let fixture = Fixture::with_authority(TrafficScope::Normal, split).await?;
     let fingerprint = ContentFingerprint::digest("scope-review");
     let proposal = |operation: &str, scope: Option<String>| -> TestResult<EventTransaction> {
         let operation = OperationId::new(operation)?;
@@ -148,22 +143,22 @@ async fn assert_foreign_receipt_scope(split: bool, test_scope: bool) -> TestResu
             .ok_or("command evidence missing")?;
         evidence.authority_scope = scope;
         Ok(EventTransaction::new(operation, fingerprint, Vec::new())
-            .with_bounded_context(fixture.store.config().bounded_context().clone())
+            .with_bounded_context(fixture.sales.config().bounded_context().clone())
             .with_correlation_id(CorrelationId::new("selected")?)
             .with_completion(CommandCompletion::new(Some(evidence), None)))
     };
     fixture
-        .store
+        .sales
         .commit_outcome(proposal("seed", None)?)
         .await?;
     let wrong_scope = if test_scope {
-        format!("{}:test", fixture.store.config().application().as_str())
+        format!("{}:test", fixture.sales.config().application().as_str())
     } else {
         "another-application:normal".to_owned()
     };
     let invalid = proposal("foreign", Some(wrong_scope.clone()))?;
     assert!(
-        fixture.store.commit_outcome(invalid.clone()).await.is_err(),
+        fixture.sales.commit_outcome(invalid.clone()).await.is_err(),
         "write-side scope validation must reject the same evidence"
     );
     let raw = fixture.journal().await?.get_raw_message(1).await?;
@@ -181,11 +176,11 @@ async fn assert_foreign_receipt_scope(split: bool, test_scope: bool) -> TestResu
     if split {
         let integrity =
             TransactionReceipt::new(invalid.operation_id().clone(), fingerprint, Vec::new())
-                .with_bounded_context(fixture.store.config().bounded_context().clone())
+                .with_bounded_context(fixture.sales.config().bounded_context().clone())
                 .with_correlation_id(CorrelationId::new("selected")?)
                 .with_completion(invalid.completion().cloned().ok_or("completion missing")?);
         let (marker, _) =
-            OutcomeMarker::prepare(fixture.store.authority().clone(), &invalid, integrity)?;
+            OutcomeMarker::prepare(fixture.sales.authority().clone(), &invalid, integrity)?;
         let old = wire
             .pointer("/receipt/manifest")
             .and_then(Value::as_str)
@@ -209,13 +204,13 @@ async fn assert_foreign_receipt_scope(split: bool, test_scope: bool) -> TestResu
     headers.insert(
         "Nats-Expected-Last-Subject-Sequence-Subject",
         fixture
-            .store
+            .sales
             .config()
             .transaction_receipt_subject_filter("foreign"),
     );
     let subject =
         fixture
-            .store
+            .sales
             .config()
             .transaction_receipt_subject("foreign", Some("selected"), None);
     let ack = fixture
@@ -250,7 +245,7 @@ async fn assert_foreign_receipt_scope(split: bool, test_scope: bool) -> TestResu
 
 #[tokio::test]
 async fn zero_event_decisions_exhaust_the_shared_examined_byte_budget() -> TestResult {
-    let fixture = ReceiptFixture::new(TrafficScope::Normal).await?;
+    let fixture = Fixture::with_authority(TrafficScope::Normal, false).await?;
     let journal = fixture.journal().await?;
     let mut receipt_bytes = 0_usize;
     let byte_limit = 4096;
@@ -265,14 +260,14 @@ async fn zero_event_decisions_exhaust_the_shared_examined_byte_budget() -> TestR
             None
         };
         let transaction = EventTransaction::new(operation, fingerprint, Vec::new())
-            .with_bounded_context(fixture.store.config().bounded_context().clone())
+            .with_bounded_context(fixture.sales.config().bounded_context().clone())
             .with_correlation_id(CorrelationId::new("decisions-only")?)
             .with_causation_id(CausationId::new("root")?)
             .with_completion(CommandCompletion::new(
                 metadata.outcome_evidence().cloned(),
                 rejection,
             ));
-        let committed = fixture.store.commit_outcome(transaction).await?;
+        let committed = fixture.sales.commit_outcome(transaction).await?;
         assert!(committed.outcome().record().events().is_empty());
         let raw = journal
             .get_raw_message(index.checked_add(1).ok_or("receipt position overflow")?)
@@ -311,96 +306,24 @@ async fn zero_event_decisions_exhaust_the_shared_examined_byte_budget() -> TestR
 }
 
 #[tokio::test]
-async fn native_domain_discovery_filters_both_receipt_families() -> TestResult {
-    let fixture = ReceiptFixture::new(TrafficScope::Test).await?;
-    // Nonempty journal, selected zero-event witness: both receipt families are
-    // still selected without adding an overlapping exact-subject filter.
-    fixture
-        .store
-        .append_transaction(
-            EventTransaction::new(
-                OperationId::new("filter-witness")?,
-                ContentFingerprint::digest("filter-witness"),
-                Vec::new(),
-            )
-            .with_bounded_context(fixture.store.config().bounded_context().clone())
-            .with_correlation_id(CorrelationId::new("flow.*>%/~")?),
-        )
-        .await?;
-    let stream_name = fixture.store.config().stream_name().to_owned();
-    let mut creates = fixture
-        .connection
-        .client()
-        .subscribe(format!("$JS.API.CONSUMER.CREATE.{stream_name}.>"))
-        .await?;
-    fixture.connection.client().flush().await?;
-    let read = fixture
-        .reader()
-        .await?
-        .load_correlations(&[CorrelationId::new("flow.*>%/~")?])
-        .await?;
-    assert!(chain(&read, "flow.*>%/~")?.refs.is_empty());
-    let request = tokio::time::timeout(READ_TIMEOUT, creates.next())
-        .await?
-        .ok_or("no native domain replay request")?;
-    let request: Value = serde_json::from_slice(&request.payload)?;
-    let filters = request
-        .pointer("/config/filter_subjects")
-        .and_then(Value::as_array)
-        .ok_or("native union filters missing")?
-        .iter()
-        .map(|value| value.as_str().map(str::to_owned).ok_or("non-string filter"))
-        .collect::<Result<BTreeSet<_>, _>>()?;
-    let prefix = fixture.store.config().subject_prefix();
-    let expected = BTreeSet::from([
-        format!("{prefix}.transaction.*.receipt.flow%2E%2A%3E%25%2F%7E.*"),
-        format!("{prefix}.fixture.*.receipt.flow%2E%2A%3E%25%2F%7E.*"),
-    ]);
-    assert_eq!(
-        request
-            .pointer("/config/ack_policy")
-            .and_then(Value::as_str),
-        Some("none")
-    );
-    assert_eq!(
-        request
-            .pointer("/config/deliver_policy")
-            .and_then(Value::as_str),
-        Some("all")
-    );
-    assert!(
-        request
-            .pointer("/config/durable_name")
-            .is_none_or(Value::is_null)
-    );
-    fixture.assert_no_consumers().await?;
-    fixture.cleanup().await?;
-    assert_eq!(
-        filters, expected,
-        "domain discovery must select permanent transaction and fixture receipts"
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn receipt_discovery_crosses_native_batches_before_a_sparse_event_and_unmatched_tail()
 -> TestResult {
-    let fixture = ReceiptFixture::new(TrafficScope::Normal).await?;
+    let fixture = Fixture::with_authority(TrafficScope::Normal, false).await?;
     for index in 0..501 {
         let operation = OperationId::new(format!("no-events-{index}"))?;
         let fingerprint = ContentFingerprint::digest(operation.as_str());
         fixture
-            .store
+            .sales
             .append_transaction(
                 EventTransaction::new(operation, fingerprint, Vec::new())
-                    .with_bounded_context(fixture.store.config().bounded_context().clone())
+                    .with_bounded_context(fixture.sales.config().bounded_context().clone())
                     .with_correlation_id(CorrelationId::new("selected")?),
             )
             .await?;
     }
     let aggregate = StreamId::new(AggregateType::new("Order")?, AggregateId::new("sparse")?);
-    let events = append_command(&fixture.store, &aggregate, "sparse", 0, "selected", 1).await?;
-    append_command(&fixture.store, &aggregate, "tail", 1, "unselected", 1).await?;
+    let events = append_command(&fixture.sales, &aggregate, "sparse", 0, "selected", 1).await?;
+    append_command(&fixture.sales, &aggregate, "tail", 1, "unselected", 1).await?;
     let reader = fixture.reader().await?;
     let read = tokio::time::timeout(
         READ_TIMEOUT,
@@ -437,29 +360,29 @@ async fn command_and_test_fixture_refs_resolve_original_event_positions_and_meta
 #[tokio::test]
 async fn split_history_uses_journal_authority_after_detail_expiry_and_state_replacement()
 -> TestResult {
-    let fixture = ReceiptFixture::with_authority(TrafficScope::Normal, true).await?;
+    let fixture = Fixture::with_authority(TrafficScope::Normal, true).await?;
     let aggregate = StreamId::new(AggregateType::new("Order")?, AggregateId::new("retained")?);
-    append_command(&fixture.store, &aggregate, "retained", 0, "selected", 2).await?;
+    append_command(&fixture.sales, &aggregate, "retained", 0, "selected", 2).await?;
     let ids = [CorrelationId::new("selected")?];
     let before = fixture.reader().await?.load_correlations(&ids).await?;
     assert_eq!(chain(&before, "selected")?.refs.len(), 2);
     let key = OutcomeKey::new(
-        fixture.store.authority().clone(),
-        fixture.store.config().bounded_context().clone(),
+        fixture.sales.authority().clone(),
+        fixture.sales.config().bounded_context().clone(),
         OperationId::new("retained")?,
     );
-    let OutcomeLookup::Completed(winner) = fixture.store.lookup_outcome(&key).await? else {
+    let OutcomeLookup::Completed(winner) = fixture.sales.lookup_outcome(&key).await? else {
         return Err("missing committed decision before explicit detail expiry".into());
     };
     fixture
-        .store
+        .sales
         .expire_details(&key, winner.marker().revision())
         .await?;
     assert_eq!(
         fixture.reader().await?.load_correlations(&ids).await?,
         before
     );
-    let state_name = fixture.store.config().outcome_state_stream_name();
+    let state_name = fixture.sales.config().outcome_state_stream_name();
     let state_config = fixture
         .connection
         .jetstream()
@@ -494,9 +417,9 @@ async fn split_history_uses_journal_authority_after_detail_expiry_and_state_repl
 
 #[tokio::test]
 async fn missing_or_forged_journal_authority_is_not_healthy_empty_history() -> TestResult {
-    let fixture = ReceiptFixture::with_authority(TrafficScope::Normal, true).await?;
+    let fixture = Fixture::with_authority(TrafficScope::Normal, true).await?;
     let aggregate = StreamId::new(AggregateType::new("Order")?, AggregateId::new("authority")?);
-    append_command(&fixture.store, &aggregate, "authority", 0, "selected", 1).await?;
+    append_command(&fixture.sales, &aggregate, "authority", 0, "selected", 1).await?;
     let reader = fixture.reader().await?;
     let journal = fixture.journal().await?;
     for binding in [None, Some(journal.cached_info().created.to_string())] {
@@ -523,7 +446,7 @@ async fn missing_or_forged_journal_authority_is_not_healthy_empty_history() -> T
 #[tokio::test]
 async fn rejection_guards_and_checkpoints_consume_bytes_without_becoming_event_refs() -> TestResult
 {
-    let fixture = ReceiptFixture::new(TrafficScope::Normal).await?;
+    let fixture = Fixture::with_authority(TrafficScope::Normal, false).await?;
     let aggregate = StreamId::new(AggregateType::new("Order")?, AggregateId::new("guarded")?);
     let operation = OperationId::new("seed")?;
     let fingerprint = ContentFingerprint::digest("seed");
@@ -541,7 +464,7 @@ async fn rejection_guards_and_checkpoints_consume_bytes_without_becoming_event_r
     )?
     .with_correlation_id(CorrelationId::new("unselected")?);
     fixture
-        .store
+        .sales
         .append_transaction(
             EventTransaction::new(
                 operation,
@@ -552,7 +475,7 @@ async fn rejection_guards_and_checkpoints_consume_bytes_without_becoming_event_r
                     Some(seed),
                 )],
             )
-            .with_bounded_context(fixture.store.config().bounded_context().clone())
+            .with_bounded_context(fixture.sales.config().bounded_context().clone())
             .with_correlation_id(CorrelationId::new("unselected")?),
         )
         .await?;
@@ -561,7 +484,7 @@ async fn rejection_guards_and_checkpoints_consume_bytes_without_becoming_event_r
     let metadata = CommandExecutionMetadata::new(operation.clone(), fingerprint)
         .with_default_outcome_evidence::<()>();
     fixture
-        .store
+        .sales
         .commit_outcome(
             EventTransaction::new(
                 operation,
@@ -572,7 +495,7 @@ async fn rejection_guards_and_checkpoints_consume_bytes_without_becoming_event_r
                     None,
                 )],
             )
-            .with_bounded_context(fixture.store.config().bounded_context().clone())
+            .with_bounded_context(fixture.sales.config().bounded_context().clone())
             .with_correlation_id(CorrelationId::new("selected")?)
             .with_completion(CommandCompletion::new(
                 metadata.outcome_evidence().cloned(),
@@ -610,17 +533,17 @@ async fn rejection_guards_and_checkpoints_consume_bytes_without_becoming_event_r
 }
 
 async fn assert_original_event_resolution(scope: TrafficScope) -> TestResult {
-    let fixture = ReceiptFixture::new(scope).await?;
+    let fixture = Fixture::with_authority(scope, false).await?;
     let aggregate = StreamId::new(AggregateType::new("Order")?, AggregateId::new("order/one")?);
     let mut selected =
-        append_command(&fixture.store, &aggregate, "first", 0, "selected", 2).await?;
-    append_command(&fixture.store, &aggregate, "noise", 2, "unselected", 1).await?;
+        append_command(&fixture.sales, &aggregate, "first", 0, "selected", 2).await?;
+    append_command(&fixture.sales, &aggregate, "noise", 2, "unselected", 1).await?;
     let mut version = 3;
     if scope == TrafficScope::Test {
         let batch = event_batch(&aggregate, "fixture", "selected", 2)?;
         selected.extend(
             fixture
-                .store
+                .sales
                 .append_fixture(
                     &aggregate,
                     ExpectedVersion::Exact(StreamVersion::new(version)),
@@ -632,7 +555,7 @@ async fn assert_original_event_resolution(scope: TrafficScope) -> TestResult {
         version = version.checked_add(2).ok_or("fixture version overflow")?;
     }
     selected
-        .extend(append_command(&fixture.store, &aggregate, "last", version, "selected", 1).await?);
+        .extend(append_command(&fixture.sales, &aggregate, "last", version, "selected", 1).await?);
     let journal = fixture.journal().await?;
     let cutoff = journal.cached_info().state.last_sequence;
     let mut expected = BTreeMap::new();
@@ -663,7 +586,7 @@ async fn assert_original_event_resolution(scope: TrafficScope) -> TestResult {
         .client()
         .subscribe(format!(
             "$JS.API.STREAM.MSG.GET.{}",
-            fixture.store.config().stream_name()
+            fixture.sales.config().stream_name()
         ))
         .await?;
     fixture.connection.client().flush().await?;
@@ -775,99 +698,4 @@ async fn append_command(
         .outcome()
         .record()
         .events())
-}
-
-struct ReceiptFixture {
-    connection: NatsConnection,
-    topology: MessagingTopology,
-    store: NatsEventStore,
-    split: bool,
-}
-
-impl ReceiptFixture {
-    async fn new(scope: TrafficScope) -> TestResult<Self> {
-        Self::with_authority(scope, false).await
-    }
-
-    async fn with_authority(scope: TrafficScope, split: bool) -> TestResult<Self> {
-        let application = ApplicationName::new(format!(
-            "receipt-history-{:x}-{:x}",
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-        ))?;
-        let connection = new_connection().await?;
-        let messaging = ApplicationMessagingConfig::new_in_scope(&application, scope)?
-            .with_max_bytes(32 * 1024 * 1024)?;
-        provision_stream(connection.jetstream(), messaging.integration_events()).await?;
-        let config = NatsEventStoreConfig::for_bounded_context(
-            &application.bounded_context_in_scope(scope, "sales")?,
-        )?;
-        let config = if split {
-            config
-                .with_fresh_split_outcome_epoch("receipt-history-fixture")?
-                .with_explicit_detail_expiry(true)?
-        } else {
-            config.with_fresh_completed_outcome_epoch("receipt-history-fixture")?
-        }
-        .with_storage_limits(32 * 1024 * 1024, 512 * 1024)?;
-        provision_event_store(connection.jetstream(), &config).await?;
-        let store = NatsEventStore::connect(connection.jetstream().clone(), config).await?;
-        Ok(Self {
-            connection,
-            topology: messaging.topology().clone(),
-            store,
-            split,
-        })
-    }
-
-    async fn journal(&self) -> TestResult<async_nats::jetstream::stream::Stream> {
-        Ok(self
-            .connection
-            .jetstream()
-            .get_stream(self.store.config().stream_name())
-            .await?)
-    }
-
-    async fn reader(&self) -> TestResult<NatsCorrelationHistory> {
-        Ok(NatsCorrelationHistory::connect(
-            self.connection.jetstream().clone(),
-            vec![self.store.config().clone()],
-            &self.topology,
-        )
-        .await?)
-    }
-
-    async fn assert_no_consumers(&self) -> TestResult {
-        for name in [
-            self.store.config().stream_name(),
-            self.topology.integration_event_stream().as_str(),
-        ] {
-            let stream = self.connection.jetstream().get_stream(name).await?;
-            assert_eq!(
-                stream.cached_info().state.consumer_count,
-                0,
-                "inspection leaked a consumer on {name}"
-            );
-        }
-        Ok(())
-    }
-
-    async fn cleanup(self) -> TestResult {
-        self.connection
-            .jetstream()
-            .delete_stream(self.store.config().stream_name())
-            .await?;
-        if self.split {
-            self.connection
-                .jetstream()
-                .delete_stream(self.store.config().outcome_state_stream_name())
-                .await?;
-        }
-        self.connection
-            .jetstream()
-            .delete_stream(self.topology.integration_event_stream().as_str())
-            .await?;
-        self.connection.drain().await?;
-        Ok(())
-    }
 }

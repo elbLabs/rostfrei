@@ -1,33 +1,14 @@
-#[path = "event_store/append_sessions.rs"]
 mod append_sessions;
-#[path = "../src/event_store.rs"]
-#[allow(
-    dead_code,
-    reason = "source-import fixture exercises private journal invariants; public lifecycle methods are tested by separate targets"
-)]
-mod event_store;
-#[path = "../src/event_store_config.rs"]
-#[allow(
-    dead_code,
-    reason = "source-import fixture; public lifecycle configuration is covered by separate targets"
-)]
-mod event_store_config;
-#[path = "../src/hex.rs"]
-mod hex;
-#[path = "event_store/history_cluster.rs"]
 mod history_cluster;
-#[path = "event_store/history_reads.rs"]
 mod history_reads;
+#[path = "../native_connection_support/mod.rs"]
 mod native_connection_support;
+#[path = "../transaction_support/mod.rs"]
 mod transaction_support;
 use rostfrei_core::FixtureEventStore;
 use transaction_support::AppendOneTransaction;
-#[path = "../src/stream_policy.rs"]
-mod stream_policy;
-#[path = "event_store/subject_correlations.rs"]
 mod subject_correlations;
-#[path = "../src/subject_tokens.rs"]
-mod subject_tokens;
+use crate::{event_store, event_store_config, hex};
 
 use std::sync::{
     Arc,
@@ -48,9 +29,6 @@ use rostfrei_core::{
     derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{ApplicationName, BoundedContext};
-// The source-importing store fixture uses the real retained-response reader for
-// its additive legacy-maintenance API; atomic store assertions remain unchanged.
-use rostfrei_nats::{MessagingTopology, NatsCommandResponseReader};
 use rostfrei_testing::event_store_contract;
 use sha2::{Digest, Sha256};
 use tokio::sync::Barrier;

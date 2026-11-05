@@ -183,8 +183,10 @@ export async function installScenario(page, scene, samples, diagnostics) {
             : catalog
     else if (correlationScene && method === "GET" && pathname === anchorPath) {
       const response = anchorResponse(new URL(request.url()).search)
-      status = response.status
-      body = response.body
+      if (response) {
+        status = response.status
+        body = response.body
+      }
     } else if (
       correlationScene &&
       method === "GET" &&

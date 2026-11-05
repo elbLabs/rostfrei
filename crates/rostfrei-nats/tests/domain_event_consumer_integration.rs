@@ -815,12 +815,21 @@ fn batch(stream: &StreamId, operation: &str, values: &[&str]) -> TestResult<Even
 }
 
 #[tokio::test]
+async fn fixture_manifests_suppress_handlers_but_command_transactions_still_dispatch()
+-> TestResult<()> {
+    for split_authority in [false, true] {
+        fixture_worker_suppression(split_authority)
+            .await
+            .map_err(|error| format!("fixture suppression (split={split_authority}): {error}"))?;
+    }
+    Ok(())
+}
+
 #[allow(
     clippy::panic_in_result_fn,
     reason = "assertions report fixture and transaction delivery contract violations"
 )]
-async fn fixture_manifests_suppress_handlers_but_command_transactions_still_dispatch()
--> TestResult<()> {
+async fn fixture_worker_suppression(split_authority: bool) -> TestResult<()> {
     let context = async_nats::jetstream::new(
         native_connection_support::client(rostfrei_testing::integration::nats_url()?).await?,
     );
@@ -831,6 +840,11 @@ async fn fixture_manifests_suppress_handlers_but_command_transactions_still_disp
         )?;
     let config = NatsEventStoreConfig::for_bounded_context(&bounded_context)?
         .with_storage_limits(64 * 1024 * 1024, 512 * 1024)?;
+    let config = if split_authority {
+        config.with_fresh_split_outcome_epoch("fixture-worker")?
+    } else {
+        config
+    };
     provision_event_store(&context, &config).await?;
     let store = NatsEventStore::connect(context.clone(), config.clone()).await?;
     let aggregate = stream("fixture-then-command")?;
@@ -842,6 +856,7 @@ async fn fixture_manifests_suppress_handlers_but_command_transactions_still_disp
             batch(&aggregate, "fixture", &given)?,
         )
         .await?;
+    assert_eq!(fixture.events().len(), 100);
     assert!(
         store
             .load_transaction_receipt(&OperationId::new("fixture")?)
@@ -870,22 +885,37 @@ async fn fixture_manifests_suppress_handlers_but_command_transactions_still_disp
     .await?;
     let (shutdown, stopping) = watch::channel(false);
     let mut task = tokio::spawn(worker.run_until_shutdown(stopping));
-    for expected in ["command-one", "command-two"] {
-        let delivery = tokio::select! {
-            delivery = receive(&mut receiver) => delivery?,
-            result = &mut task => return Err(format!("worker stopped before command dispatch: {result:?}").into()),
-        };
-        assert_eq!(delivery.value, expected);
+    let result = async {
+        for expected in ["command-one", "command-two"] {
+            let delivery = receive(&mut receiver).await?;
+            assert_eq!(delivery.value, expected, "split={split_authority}");
+        }
+        wait_for_ack(&context, &config, &consumer_config).await?;
+        assert_eq!(
+            handler.calls.load(Ordering::Relaxed),
+            2,
+            "split={split_authority}"
+        );
+        assert!(receiver.try_recv().is_err());
+        let mut expected = fixture.into_events();
+        expected.extend(command.receipt().events());
+        assert_eq!(store.load(&aggregate).await?, expected);
+        TestResult::Ok(())
     }
-    wait_for_ack(&context, &config, &consumer_config).await?;
-    assert_eq!(handler.calls.load(Ordering::Relaxed), 2);
-    assert!(receiver.try_recv().is_err());
-    let mut expected = fixture.into_events();
-    expected.extend(command.receipt().events());
-    assert_eq!(store.load(&aggregate).await?, expected);
-    shutdown.send(true)?;
-    task.await??;
+    .await;
+    let _ = shutdown.send(true);
+    let stopped = tokio::time::timeout(Duration::from_secs(5), &mut task).await;
+    if stopped.is_err() {
+        task.abort();
+    }
     context.delete_stream(config.stream_name()).await?;
+    if split_authority {
+        context
+            .delete_stream(config.outcome_state_stream_name())
+            .await?;
+    }
+    result?;
+    stopped???;
     Ok(())
 }
 

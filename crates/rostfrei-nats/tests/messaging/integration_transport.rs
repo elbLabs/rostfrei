@@ -163,10 +163,10 @@ async fn missing_and_duplicate_incoming_control_headers_are_quarantined() -> Tes
             headers.insert("Nats-Msg-Id", id);
         }
         if id != "no-correlation" {
-            headers.insert(publish::CORRELATION_ID_HEADER, "flow");
+            headers.insert(CORRELATION_ID_HEADER, "flow");
         }
         if id == "duplicate-correlation" {
-            headers.append(publish::CORRELATION_ID_HEADER, "flow");
+            headers.append(CORRELATION_ID_HEADER, "flow");
         }
         fixture
             .connection
