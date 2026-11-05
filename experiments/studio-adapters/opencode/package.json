@@ -1,0 +1,15 @@
+{
+  "name": "rostfrei-opencode-presentation-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@rostfrei/tracer-presentation": "file:../../../packages/tracer-presentation"
+  },
+  "exports": {
+    ".": "./server.js",
+    "./tui": "./tui.js",
+    "./rpc": "./rpc.js",
+    "./adapter": "./adapter.js"
+  }
+}
