@@ -26,7 +26,7 @@ impl rf::EntityDefinition for CatalogRoot {
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize, rf::DomainEvent)]
-#[domain(id = "catalog-opened", label = "Catalog opened")]
+#[domain(id = "catalog-opened", label = "Catalog opened", schema_version = 2)]
 struct CatalogOpened;
 
 #[derive(rf::AggregateEvents)]
@@ -72,6 +72,27 @@ fn assert_generated_contracts() {
     fn aggregate<A: rf::AggregateRuntime>() {}
     aggregate::<CatalogAggregate>();
     let _ = <CatalogStatus as rf::QueryDefinition>::descriptor();
+}
+
+#[derive(serde::Deserialize, rf::DomainEvent)]
+#[domain(id = "catalog-opened", label = "Historical catalog opened")]
+struct CatalogOpenedV1;
+
+struct CatalogCodec;
+
+#[rf::event_codec(aggregate = CatalogAggregate)]
+impl CatalogCodec {
+    #[upcast]
+    fn opened(_: CatalogOpenedV1) -> CatalogOpened {
+        CatalogOpened
+    }
+}
+
+fn assert_codec_bridge() {
+    let mut codecs = rf::AggregateCodecs::default();
+    codecs
+        .register::<CatalogAggregate, _>(CatalogCodec::builder().build().unwrap())
+        .unwrap();
 }
 
 // This consumer has only one (renamed) framework dependency. Each feature is

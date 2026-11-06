@@ -107,8 +107,11 @@ pub use rostfrei_core::{
     StreamVersion, TransactionAppendOutcome, TransactionParticipant, TransactionReceipt,
     TransactionStreamReceipt,
 };
-pub use rostfrei_domain_runtime::{AggregateEventRuntime, AggregateRuntime, Apply, Initialize};
-pub use rostfrei_macros::{QueryDefinition, ReadModel};
+pub use rostfrei_domain_runtime::{
+    AggregateEventRuntime, AggregateRuntime, Apply, EventCodecBuildError, EventCodecBuilder,
+    HistoricalEventCodec, Initialize,
+};
+pub use rostfrei_macros::{QueryDefinition, ReadModel, event_codec};
 pub use rostfrei_messaging_core::{
     ApplicationErrorCode, ApplicationName, BoundedContext, BoundedContextName, CallerMetadata,
     CausationId, CodecFailureKind, CommandAddress, CommandEnvelope, CommandPublisher,

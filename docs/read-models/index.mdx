@@ -94,6 +94,21 @@ does not repeat the aggregate ID, the key selector can use committed metadata:
 Handlers are synchronous and repeatable. Keep external calls outside the transformation:
 the runtime can invoke it again after a concurrency conflict or during a rebuild.
 
+## Decode historical domain events
+
+Domain events use the generated JSON codec by default. For custom or historical
+formats, install the same frozen `AggregateCodecs` registry used by
+`ApplicationBindings::with_event_codecs`:
+
+```rust
+let read_models = ReadModels::new(context, backend).with_event_codecs(codecs.clone());
+```
+
+Live delivery and history catch-up then decode through that registry. Registering
+a source aggregate without a codec in it is a configuration error; it never falls
+back to generated JSON. See [event schema evolution](../event-schema-evolution.md)
+for registration and compatibility tests.
+
 ## Declare the integration producer once
 
 An ordinary integration event needs no business-version field:

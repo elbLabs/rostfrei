@@ -1,0 +1,28 @@
+error[E0277]: the trait bound `model::InventoryEvents: EventVariant<Foreign>` is not satisfied
+  --> tests/ui/event_codec/fail/manual_foreign_output.rs:19:10
+   |
+19 |         .upcast(|_: AddedV1| Foreign)
+   |          ^^^^^^ unsatisfied trait bound
+   |
+help: the trait `EventVariant<Foreign>` is not implemented for `model::InventoryEvents`
+  --> tests/ui/event_codec/fail/../../event_codec_support.rs
+   |
+   | pub enum InventoryEvents {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+help: `model::InventoryEvents` implements trait `EventVariant<E>`
+  --> tests/ui/event_codec/fail/../../event_codec_support.rs
+   |
+   | #[derive(Clone, Debug, Eq, PartialEq, rostfrei::AggregateEvents)]
+   |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |                                       |
+   |                                       `EventVariant<Retired>`
+   |                                       `EventVariant<model::Added>`
+note: required by a bound in `EventCodecBuilder::<A>::upcast`
+  --> $WORKSPACE/crates/rostfrei-domain-runtime/src/event_codec.rs
+   |
+   |     pub fn upcast<Old, Current>(
+   |            ------ required by a bound in this associated function
+...
+   |         A::Event: Event + From<Current> + EventVariant<Current>,
+   |                                           ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EventCodecBuilder::<A>::upcast`
+   = note: this error originates in the derive macro `rostfrei::AggregateEvents` (in Nightly builds, run with -Z macro-backtrace for more info)

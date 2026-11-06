@@ -1,0 +1,5 @@
+error: event_codec does not support generic impls
+ --> tests/ui/event_codec/fail/generic_impl.rs:9:5
+  |
+9 | impl<T> Codec<T> {
+  |     ^^^

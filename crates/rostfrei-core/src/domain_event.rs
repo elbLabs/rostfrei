@@ -134,6 +134,7 @@ where
                 EventCodecErrorKind::UnknownEventType
                 | EventCodecErrorKind::UnsupportedSchemaVersion
                 | EventCodecErrorKind::MalformedPayload
+                | EventCodecErrorKind::ConversionFailed
                 | EventCodecErrorKind::InvalidEnvelope => {
                     DomainEventHandlerErrorKind::InvalidCommittedEvent
                 }

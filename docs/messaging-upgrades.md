@@ -52,6 +52,9 @@ not merely accepting a payload. Test with genuine historical records, then execu
 current commands and reload the mixed history. Historical decoders do not require
 parallel historical business implementations.
 
+See the [compatibility-release sequence](event-schema-evolution.md#compatibility-release)
+for rolling out new readers before switching the write format.
+
 ## Durable consumer versions
 
 Names follow `<application>[--test]--<context>--<purpose>--v<major>`. The suffix

@@ -1,0 +1,36 @@
+error[E0277]: the trait bound `OldPayload: rostfrei::DomainEvent` is not satisfied
+  --> tests/ui/event_codec/fail/missing_source_metadata.rs:15:21
+   |
+15 |     fn convert(old: OldPayload) -> Added {
+   |                     ^^^^^^^^^^     ----- required by a bound introduced by this call
+   |                     |
+   |                     unsatisfied trait bound
+   |
+help: the trait `rostfrei::DomainEvent` is not implemented for `OldPayload`
+  --> tests/ui/event_codec/fail/missing_source_metadata.rs:7:1
+   |
+ 7 | struct OldPayload {
+   | ^^^^^^^^^^^^^^^^^
+help: the following other types implement trait `rostfrei::DomainEvent`
+  --> tests/ui/event_codec/fail/../../event_codec_support.rs
+   |
+   | #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, rostfrei::DomainEvent)]
+   |                                                               ^^^^^^^^^^^^^^^^^^^^^ `model::Added`
+...
+   | #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, rostfrei::DomainEvent)]
+   |                                                               ^^^^^^^^^^^^^^^^^^^^^ `Retired`
+...
+   | #[derive(Deserialize, rostfrei::DomainEvent)]
+   |                       ^^^^^^^^^^^^^^^^^^^^^ `AddedV1`
+...
+   | #[derive(Deserialize, rostfrei::DomainEvent)]
+   |                       ^^^^^^^^^^^^^^^^^^^^^ `RetiredV1`
+note: required by a bound in `rostfrei::EventCodecBuilder::<A>::upcast`
+  --> $WORKSPACE/crates/rostfrei-domain-runtime/src/event_codec.rs
+   |
+   |     pub fn upcast<Old, Current>(
+   |            ------ required by a bound in this associated function
+...
+   |         Old: DomainEvent + DeserializeOwned,
+   |              ^^^^^^^^^^^ required by this bound in `EventCodecBuilder::<A>::upcast`
+   = note: this error originates in the derive macro `rostfrei::DomainEvent` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -12,6 +12,11 @@ use std::{
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout};
 
+// A load awaits the five-second next-message deadline and then a JetStream
+// DELETE (default request timeout: five seconds). Allow scheduling headroom for
+// both; assert the read-timeout error and eventual consumer cleanup separately.
+const READ_AND_CLEANUP_BUDGET: Duration = Duration::from_secs(12);
+
 struct Cluster {
     children: Vec<Child>,
     urls: Vec<String>,
@@ -135,7 +140,7 @@ impl Drop for Cluster {
 #[derive(Clone, Copy)]
 enum Fault {
     Initial(usize),
-    Always,
+    Always { delete_delay: Duration },
     AfterDelivery,
     AlwaysAfterDelivery,
     DelayedRecreation,
@@ -185,6 +190,9 @@ impl FetchRelay {
                 let mut destination = format!("$JS.API{suffix}");
                 if suffix.starts_with(".CONSUMER.DELETE.") {
                     recorded_deletes.fetch_add(1, Ordering::Relaxed);
+                    if let Fault::Always { delete_delay } = fault {
+                        tokio::time::sleep(delete_delay).await;
+                    }
                 }
                 if matches!(fault, Fault::DelayedRecreation) {
                     if suffix.starts_with(".CONSUMER.CREATE.") {
@@ -297,7 +305,7 @@ async fn fail_fetch(
     let mut fetches = recorded.lock().expect("fetch log");
     let failed = match fault {
         Fault::Initial(count) => fetches.len() < count,
-        Fault::Always | Fault::DelayedRecreation => true,
+        Fault::Always { .. } | Fault::DelayedRecreation => true,
         Fault::AfterDelivery => delivered > 0 && !fetches.iter().any(|fetch| fetch.failed),
         Fault::AlwaysAfterDelivery => delivered > 0 || fetches.iter().any(|fetch| fetch.failed),
     };
@@ -386,17 +394,24 @@ async fn initial_no_responders_stops_at_read_deadline() -> TestResult<()> {
             batch(&aggregate, "seed", "seed", &[b"one"])?,
         )
         .await?;
-    let relay = FetchRelay::start(&context, Fault::Always).await?;
+    // Delay real DELETEs during recreation and final cleanup. The five-second
+    // read timeout plus cleanup must exceed the former seven-second outer bound.
+    let delete_delay = Duration::from_secs(3);
+    let relay = FetchRelay::start(&context, Fault::Always { delete_delay }).await?;
     let reader = NatsEventStore::connect(relay.context.clone(), store.config().clone()).await?;
 
     let started = Instant::now();
-    let result = timeout(Duration::from_secs(7), reader.load(&aggregate)).await?;
+    let result = timeout(READ_AND_CLEANUP_BUDGET, reader.load(&aggregate))
+        .await
+        .map_err(|error| format!("initial read and cleanup exceeded their budget: {error}"))?;
     let elapsed = started.elapsed();
     eprintln!("initial persistent failure returned after {elapsed:?}");
-    assert!(matches!(result, Err(error) if error.kind() == EventStoreErrorKind::Unavailable));
+    let error = result.expect_err("persistent no-responders must time out");
+    assert_eq!(error.kind(), EventStoreErrorKind::Unavailable);
+    assert_eq!(error.message(), "history replay timed out");
     assert!(
-        elapsed >= Duration::from_secs(5),
-        "stopped retrying after {elapsed:?}"
+        elapsed >= Duration::from_secs(5).saturating_add(delete_delay),
+        "read deadline and delayed cleanup were not both exercised: {elapsed:?}"
     );
     relay.assert_recreated_cursor();
     let count = relay.fetches.lock().expect("fetch log").len();
@@ -453,11 +468,15 @@ async fn persistent_no_responders_after_delivery_stops_at_read_deadline() -> Tes
     let reader = NatsEventStore::connect(relay.context.clone(), store.config().clone()).await?;
 
     let started = Instant::now();
-    let result = timeout(Duration::from_secs(7), reader.load(&aggregate)).await?;
+    let result = timeout(READ_AND_CLEANUP_BUDGET, reader.load(&aggregate))
+        .await
+        .map_err(|error| format!("partial read and cleanup exceeded their budget: {error}"))?;
     let elapsed = started.elapsed();
     eprintln!("persistent failure after delivery returned after {elapsed:?}");
     relay.assert_recreated_cursor();
-    assert!(matches!(result, Err(error) if error.kind() == EventStoreErrorKind::Unavailable));
+    let error = result.expect_err("persistent no-responders after delivery must time out");
+    assert_eq!(error.kind(), EventStoreErrorKind::Unavailable);
+    assert_eq!(error.message(), "history replay timed out");
     assert!(
         elapsed >= Duration::from_secs(5),
         "persistent 503 after progress stopped recovery before the read deadline: {elapsed:?}"
@@ -536,7 +555,7 @@ async fn late_native_recreation(cancel: bool) -> TestResult<()> {
         task.abort();
         assert!(task.await.expect_err("cancelled replay").is_cancelled());
     } else {
-        let result = timeout(Duration::from_secs(7), task).await??;
+        let result = timeout(READ_AND_CLEANUP_BUDGET, task).await??;
         assert!(matches!(result, Err(error) if error.kind() == EventStoreErrorKind::Unavailable));
         assert!(started.elapsed() >= Duration::from_secs(5));
     }

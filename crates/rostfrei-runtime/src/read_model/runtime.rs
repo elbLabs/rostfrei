@@ -6,9 +6,9 @@ use std::{
 use async_trait::async_trait;
 use rostfrei_core::{
     Aggregate, CommittedDomainEvent, DomainEventDispatchOutcome, DomainEventDispatcher,
-    DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind, Event, EventCodec,
-    EventHistory, EventVariant, JsonEventCodec, ReadModel, ReadModelError, ReadModelErrorKind,
-    ReadModelKey, ReadModelStore, RecordedEvent,
+    DomainEventHandler, DomainEventHandlerError, DomainEventHandlerErrorKind, EventCodec,
+    EventHistory, EventVariant, ReadModel, ReadModelError, ReadModelErrorKind, ReadModelKey,
+    ReadModelStore, RecordedEvent,
 };
 use rostfrei_messaging_core::BoundedContext;
 
@@ -22,7 +22,8 @@ pub(super) trait DomainReducer<M>: Send + Sync {
     fn apply(&self, model: &mut M, event: &RecordedEvent) -> Result<(), ReadModelProcessingError>;
 }
 
-pub(super) struct TypedDomainReducer<M, A, E> {
+pub(super) struct TypedDomainReducer<M, A: Aggregate, E> {
+    pub codec: Arc<dyn EventCodec<A>>,
     pub key: DomainKey<E>,
     pub change: Change<M, E>,
     pub marker: std::marker::PhantomData<fn() -> A>,
@@ -31,10 +32,12 @@ pub(super) struct TypedDomainReducer<M, A, E> {
 impl<M, A, E> TypedDomainReducer<M, A, E>
 where
     A: Aggregate,
-    A::Event: Event + EventVariant<E>,
+    A::Event: EventVariant<E>,
 {
-    fn decode(event: &RecordedEvent) -> Result<E, ReadModelProcessingError> {
-        let value = <JsonEventCodec as EventCodec<A>>::decode(&JsonEventCodec, event)
+    fn decode(&self, event: &RecordedEvent) -> Result<E, ReadModelProcessingError> {
+        let value = self
+            .codec
+            .decode(event)
             .map_err(|error| ReadModelProcessingError::InvalidEvent(error.to_string()))?;
         value.into_event().ok_or_else(|| {
             ReadModelProcessingError::InvalidEvent("domain event variant mismatch".to_owned())
@@ -45,17 +48,17 @@ where
 impl<M, A, E> DomainReducer<M> for TypedDomainReducer<M, A, E>
 where
     A: Aggregate,
-    A::Event: Event + EventVariant<E>,
+    A::Event: EventVariant<E>,
 {
     fn key(&self, event: &RecordedEvent) -> Result<ReadModelKey, ReadModelProcessingError> {
         ReadModelKey::new((self.key)(&ReadModelDomainEvent {
-            event: &Self::decode(event)?,
+            event: &self.decode(event)?,
             recorded: event,
         }))
         .map_err(|error| ReadModelProcessingError::InvalidEvent(error.to_string()))
     }
     fn apply(&self, model: &mut M, event: &RecordedEvent) -> Result<(), ReadModelProcessingError> {
-        (self.change)(model, &Self::decode(event)?)
+        (self.change)(model, &self.decode(event)?)
     }
 }
 

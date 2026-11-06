@@ -124,7 +124,9 @@ workers, and retire their durable before provisioning its replacement. A new
 durable cannot replay commands already removed by acknowledgement. Stable names
 preserve progress but do not make incompatible payloads readable: register
 compatibility handlers for supported schemas. This example registers only its
-current schemas. See [durable consumer versions](../../docs/messaging-upgrades.md#durable-consumer-versions).
+current schemas; [`examples/event_evolution`](examples/event_evolution/main.rs)
+shows typed private-event upcasts and a dual-reader/v1-writer compatibility release
+([guide](../../docs/event-schema-evolution.md)). See [durable consumer versions](../../docs/messaging-upgrades.md#durable-consumer-versions).
 
 ## Quarantine walkthrough
 
