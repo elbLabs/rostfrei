@@ -1,6 +1,6 @@
 ---
 name: rostfrei-tracer
-license: EUPL-1.2
+license: Apache-2.0
 description: Use Rostfrei Tracer for a guided, text-first tutorial, runtime capability discovery, real isolated tests, external activity observation, operation or quarantine inspection, and evidence-based causal explanations. Also covers optional Mermaid, explicit handler simulation for rule diagnostics and authorized production dispatch.
 compatibility: Requires the release-matched cargo-rostfrei Rust CLI, a Tracer HTTP endpoint and capability credentials. Test acceptance needs application handlers, workers and event store on isolated real NATS 2.12.1 or newer. Direct HTTP examples require Bash and curl; no Python is required.
 ---

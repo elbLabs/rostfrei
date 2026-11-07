@@ -22,6 +22,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- License the project under the Apache License 2.0.
 - **Breaking (shared codecs):** with an installed `with_event_codecs` registry,
   `ApplicationBindings::register_aggregate` and read-model domain registration
   reject an aggregate without a codec in it instead of silently falling back to

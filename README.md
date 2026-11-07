@@ -179,4 +179,4 @@ dependency contract.
 
 Copyright (c) 2026 elbtech.dev.
 
-See [LICENSE](LICENSE) for the license terms.
+Licensed under the [Apache License 2.0](LICENSE).
