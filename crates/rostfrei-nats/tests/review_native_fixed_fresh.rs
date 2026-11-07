@@ -7,12 +7,14 @@
 #[allow(clippy::indexing_slicing, reason = "existing owned protocol relay")]
 mod modular_state_fault_support;
 mod release_contract_support;
+mod transaction_support;
 use async_trait::async_trait;
 use modular_state_fault_support::StateProxy;
 use release_contract_support::*;
 use rostfrei_runtime::{
     CommandAccess, CommandProcessingService, PrincipalId, TrustedCommandContext,
 };
+use transaction_support::AppendOneTransaction;
 rostfrei_runtime::install_macro_support!();
 
 fn transaction(f: &Fixture, op: &str) -> TestResult<EventTransaction> {
@@ -107,7 +109,7 @@ async fn challenge(fault: Fault) -> TestResult {
     let id = stream("retained")?;
     let seed = batch(&id, "seed")?;
     store
-        .append(&id, ExpectedVersion::NoStream, seed.clone())
+        .append_one_transaction(&id, ExpectedVersion::NoStream, seed.clone())
         .await?;
     let proposal = completed(&f, "winner")?;
     let winner = store
@@ -166,7 +168,7 @@ async fn challenge(fault: Fault) -> TestResult {
     refused(
         "direct append",
         store
-            .append(&id, ExpectedVersion::NoStream, seed.clone())
+            .append_one_transaction(&id, ExpectedVersion::NoStream, seed.clone())
             .await,
         expected,
     );
@@ -178,7 +180,7 @@ async fn challenge(fault: Fault) -> TestResult {
     refused(
         "open append",
         append
-            .append(&id, ExpectedVersion::NoStream, seed.clone())
+            .append_one_transaction(&id, ExpectedVersion::NoStream, seed.clone())
             .await,
         expected,
     );
@@ -192,7 +194,7 @@ async fn challenge(fault: Fault) -> TestResult {
         store
             .append_session()
             .await?
-            .append(&id, ExpectedVersion::NoStream, seed.clone())
+            .append_one_transaction(&id, ExpectedVersion::NoStream, seed.clone())
             .await,
         expected,
     );
@@ -309,7 +311,9 @@ async fn challenge(fault: Fault) -> TestResult {
             assert_eq!(history.load(&id).await?.len(), 1);
             proxy.faults.block_state_info.store(false, Ordering::SeqCst);
             assert!(matches!(
-                store.append(&id, ExpectedVersion::NoStream, seed).await?,
+                store
+                    .append_one_transaction(&id, ExpectedVersion::NoStream, seed)
+                    .await?,
                 AppendOutcome::ExactReplay(_)
             ));
             assert!(

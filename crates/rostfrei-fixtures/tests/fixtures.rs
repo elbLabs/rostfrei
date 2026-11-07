@@ -9,12 +9,12 @@ use async_trait::async_trait;
 use rostfrei_core::{
     Aggregate, AggregateId, AggregateType, AppendOutcome, CommandExecutionMetadata,
     ContentFingerprint, Event, EventBatch, EventCodecError, EventCodecErrorKind, EventHistory,
-    EventStore, EventStoreError, EventTransaction, ExpectedVersion, InMemoryEventStore, NewEvent,
-    OperationId, RecordedEvent, StreamId, StreamVersion, TransactionAppendOutcome,
-    TransactionReceipt, derive_commit_id, derive_event_id,
+    EventStore, EventStoreError, EventTransaction, ExpectedVersion, FixtureEventStore,
+    InMemoryEventStore, NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion,
+    TransactionParticipant, derive_commit_id, derive_event_id,
 };
 use rostfrei_fixtures::{Fixture, FixtureApplyError, FixtureEventSet, MessageSeriesEngine};
-use rostfrei_messaging_core::{BoundedContextName, CausationId};
+use rostfrei_messaging_core::CausationId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -716,23 +716,8 @@ impl EventHistory for OrderedEventStore {
 }
 
 #[async_trait]
-impl EventStore for OrderedEventStore {
-    async fn load_completed_outcome_in_context(
-        &self,
-        context: &BoundedContextName,
-        operation: &OperationId,
-    ) -> Result<Option<rostfrei_core::InlineCompletedOutcome>, EventStoreError> {
-        self.inner
-            .load_completed_outcome_in_context(context, operation)
-            .await
-    }
-    async fn commit_outcome(
-        &self,
-        transaction: EventTransaction,
-    ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
-        self.inner.commit_outcome(transaction).await
-    }
-    async fn append(
+impl FixtureEventStore for OrderedEventStore {
+    async fn append_fixture(
         &self,
         stream_id: &StreamId,
         expected_version: ExpectedVersion,
@@ -741,31 +726,9 @@ impl EventStore for OrderedEventStore {
         let index = self.append_count.fetch_add(1, Ordering::SeqCst);
         let expected_stream = ["account:z", "account:a"].get(index).copied();
         assert_eq!(expected_stream, Some(stream_id.to_string().as_str()));
-        self.inner.append(stream_id, expected_version, batch).await
-    }
-
-    async fn load_transaction_receipt(
-        &self,
-        operation_id: &OperationId,
-    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
-        self.inner.load_transaction_receipt(operation_id).await
-    }
-
-    async fn load_transaction_receipt_in_context(
-        &self,
-        bounded_context: &BoundedContextName,
-        operation_id: &OperationId,
-    ) -> Result<Option<TransactionReceipt>, EventStoreError> {
         self.inner
-            .load_transaction_receipt_in_context(bounded_context, operation_id)
+            .append_fixture(stream_id, expected_version, batch)
             .await
-    }
-
-    async fn append_transaction(
-        &self,
-        transaction: EventTransaction,
-    ) -> Result<TransactionAppendOutcome, EventStoreError> {
-        self.inner.append_transaction(transaction).await
     }
 }
 
@@ -787,7 +750,7 @@ async fn seed_conflicting_event(store: &InMemoryEventStore, stream_id: &StreamId
         vec![event],
     )?;
     let _outcome = store
-        .append(stream_id, ExpectedVersion::NoStream, batch)
+        .append_fixture(stream_id, ExpectedVersion::NoStream, batch)
         .await?;
     Ok(())
 }
@@ -815,11 +778,15 @@ async fn append_business_event(store: &InMemoryEventStore, stream_id: &StreamId)
         vec![event],
     )?;
     let _outcome = store
-        .append(
-            stream_id,
-            ExpectedVersion::Exact(StreamVersion::new(1)),
-            batch,
-        )
+        .append_transaction(EventTransaction::new(
+            metadata.operation_id().clone(),
+            fingerprint,
+            vec![TransactionParticipant::new(
+                stream_id.clone(),
+                ExpectedVersion::Exact(StreamVersion::new(1)),
+                Some(batch),
+            )],
+        ))
         .await?;
     Ok(())
 }

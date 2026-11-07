@@ -4,7 +4,7 @@ use async_nats::jetstream::{
     self,
     consumer::{self, AckPolicy, DeliverPolicy},
     message::AckKind,
-    stream::{RawMessageError, RawMessageErrorKind},
+    stream::{ConsumerCreateStrictErrorKind, RawMessageError, RawMessageErrorKind},
 };
 use futures_util::{StreamExt, TryStreamExt, stream};
 use rostfrei_core::{
@@ -161,10 +161,9 @@ impl NatsDomainEventConsumer {
         Self::connect_inner(context, event_store, config, dispatcher, None).await
     }
 
-    /// Connects a consumer that acknowledges exact fixture-generated direct
-    /// appends without dispatching them. The fixture set must be updated while
-    /// holding its write lock across fixture persistence so delivery cannot
-    /// observe partially registered fixture state.
+    /// Adds exact fixture registration for older event envelopes. Current fixture
+    /// writes carry a durable manifest and are suppressed without this registry.
+    /// Hold the registry write lock across persistence when registering older fixtures.
     pub async fn connect_with_fixture_events(
         context: jetstream::Context,
         event_store: NatsEventStoreConfig,
@@ -443,13 +442,30 @@ impl NatsDomainEventConsumer {
         let first = transaction
             .first()
             .ok_or_else(|| invalid_committed_event("committed transaction is empty"))?;
-        if transaction
-            .iter()
-            .any(|event| event.decoded.is_transactional != first.decoded.is_transactional)
-        {
+        if transaction.iter().any(|event| {
+            event.decoded.is_transactional != first.decoded.is_transactional
+                || event.decoded.is_fixture != first.decoded.is_fixture
+        }) {
             return Err(invalid_committed_event(
                 "committed event batch mixes transactional and direct event schemas",
             ));
+        }
+        if first.decoded.is_fixture {
+            let events: Vec<_> = transaction
+                .iter()
+                .map(|event| (&event.decoded, event.stream_sequence))
+                .collect();
+            return self
+                .event_store
+                .validate_fixture_batch(&events)
+                .await
+                .map_err(|error| {
+                    if error.kind() == EventStoreErrorKind::Unavailable {
+                        unavailable(error.to_string())
+                    } else {
+                        invalid_committed_event(error.to_string())
+                    }
+                });
         }
         if !first.decoded.is_transactional {
             return Ok(());
@@ -488,6 +504,14 @@ impl NatsDomainEventConsumer {
         &self,
         transaction: &BufferedEventTransaction,
     ) -> Result<(), DomainEventHandlerError> {
+        if transaction
+            .first()
+            .is_some_and(|event| event.decoded.is_fixture)
+        {
+            // The terminal manifest was checked before dispatch. This durable
+            // marker survives worker restarts and does not depend on fixture registration.
+            return Ok(());
+        }
         if let Some(fixture_events) = &self.fixture_events
             && !transaction.is_transactional()
         {
@@ -574,13 +598,30 @@ pub async fn provision_domain_event_consumer(
     event_store: &NatsEventStoreConfig,
     config: &NatsDomainEventConsumerConfig,
 ) -> Result<consumer::Info, DomainEventConsumerError> {
-    let consumer = context
-        .create_consumer_on_stream(
-            durable_domain_event_consumer_config(event_store, config)?,
-            event_store.stream_name(),
-        )
+    NatsEventStore::connect(context.clone(), event_store.clone())
         .await
-        .map_err(|error| unavailable(format!("failed to provision durable consumer: {error}")))?;
+        .map_err(|error| {
+            if error.kind() == EventStoreErrorKind::ConfigurationMismatch {
+                invalid_configuration(error.to_string())
+            } else {
+                unavailable(error.to_string())
+            }
+        })?;
+    let stream = context
+        .get_stream(event_store.stream_name())
+        .await
+        .map_err(|error| unavailable(error.to_string()))?;
+    let consumer = stream
+        .create_consumer_strict(durable_domain_event_consumer_config(event_store, config)?)
+        .await
+        .map_err(|error| {
+            if error.kind() == ConsumerCreateStrictErrorKind::AlreadyExists {
+                invalid_configuration("existing durable consumer configuration does not match")
+            } else {
+                unavailable(format!("failed to provision durable consumer: {error}"))
+            }
+        })?;
+    verify_consumer(&consumer, event_store, config)?;
     Ok(consumer.cached_info().clone())
 }
 
@@ -681,8 +722,10 @@ fn validate_acknowledged_member(
         || event.decoded.operation_id != first.decoded.operation_id
         || event.decoded.operation_fingerprint != first.decoded.operation_fingerprint
         || event.decoded.is_transactional != first.decoded.is_transactional
+        || event.decoded.is_fixture != first.decoded.is_fixture
         || event.decoded.recorded.correlation_id() != first.decoded.recorded.correlation_id()
         || event.decoded.recorded.causation_id() != first.decoded.recorded.causation_id()
+        || event.decoded.recorded.actor() != first.decoded.recorded.actor()
     {
         return Err(invalid_committed_event(
             "event does not belong to the acknowledged transaction",
@@ -726,8 +769,11 @@ fn validate_next_event(
         || next.decoded.batch_id != first.batch_id
         || next.decoded.operation_id != first.operation_id
         || next.decoded.operation_fingerprint != first.operation_fingerprint
+        || next.decoded.is_fixture != first.is_fixture
+        || next.decoded.is_transactional != first.is_transactional
         || next.decoded.recorded.correlation_id() != first.recorded.correlation_id()
         || next.decoded.recorded.causation_id() != first.recorded.causation_id()
+        || next.decoded.recorded.actor() != first.recorded.actor()
         || !stream_coordinates_valid
         || previous.stream_sequence.checked_add(1) != Some(next.stream_sequence)
     {
@@ -1081,6 +1127,7 @@ mod tests {
         BufferedDomainEvent {
             stream_sequence,
             decoded: DecodedEvent {
+                is_fixture: false,
                 batch_id: "transaction-batch".to_owned(),
                 commit_id,
                 operation_id,

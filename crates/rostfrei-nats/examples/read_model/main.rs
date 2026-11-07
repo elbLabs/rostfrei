@@ -7,8 +7,9 @@ use std::time::Duration;
 
 use application::{GetAccess, OrganizationAccess};
 use rostfrei_core::{
-    AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventStore, ExpectedVersion,
-    NewEvent, OperationId, StreamId, derive_commit_id, derive_event_id,
+    AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventStore,
+    EventTransaction, ExpectedVersion, NewEvent, OperationId, StreamId, TransactionParticipant,
+    derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{
     CallerMetadata, CorrelationId, EnvelopeContext, IntegrationEventEnvelope, MessageId,
@@ -48,6 +49,7 @@ async fn main() -> ExampleResult {
     let context = application.bounded_context("access")?;
     let billing = application.bounded_context("billing")?;
     let events = NatsEventStoreConfig::for_bounded_context(&context)?
+        .with_fresh_split_outcome_epoch("read-model-example")?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     let messaging =
         ApplicationMessagingConfig::new(&application)?.with_max_bytes(8 * 1024 * 1024)?;
@@ -155,7 +157,7 @@ async fn seed_organization(history: &NatsEventStore) -> ExampleResult {
     let commit = derive_commit_id(&stream, &operation);
     let batch = EventBatch::new(
         commit.clone(),
-        operation,
+        operation.clone(),
         ContentFingerprint::digest("example"),
         changes
             .iter()
@@ -171,7 +173,18 @@ async fn seed_organization(history: &NatsEventStore) -> ExampleResult {
             .collect::<ExampleResult<Vec<_>>>()?,
     )?;
     history
-        .append(&stream, ExpectedVersion::NoStream, batch)
+        .append_transaction(
+            EventTransaction::new(
+                operation,
+                batch.operation_fingerprint(),
+                vec![TransactionParticipant::new(
+                    stream,
+                    ExpectedVersion::NoStream,
+                    Some(batch),
+                )],
+            )
+            .with_bounded_context(history.config().bounded_context().clone()),
+        )
         .await?;
     Ok(())
 }

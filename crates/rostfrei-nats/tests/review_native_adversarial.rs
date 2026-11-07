@@ -10,11 +10,13 @@
 )]
 mod release_contract_support;
 mod review_native_support;
+mod transaction_support;
 use async_trait::async_trait;
 use release_contract_support::*;
 use rostfrei_runtime::{
     AllowAllCommands, CommandProcessingService, PrincipalId, TrustedCommandContext,
 };
+use transaction_support::AppendOneTransaction;
 rostfrei_runtime::install_macro_support!();
 
 fn caller() -> TestResult<TrustedCommandContext> {
@@ -74,7 +76,7 @@ async fn split_stale_low_level_writer_cannot_activate_a_recreated_unmarked_journ
         })?,
     )?;
     let event_result = store
-        .append(
+        .append_one_transaction(
             &id,
             ExpectedVersion::NoStream,
             EventBatch::new(

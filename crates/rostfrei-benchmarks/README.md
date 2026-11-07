@@ -36,7 +36,15 @@ target/release/rostfrei-benchmarks compare-history \
   --baseline-revision BASELINE_SHA --output target/benchmarks/history-comparison.json
 ```
 
-The comparison rotates execution order between five workloads: short direct
+Aggregate history kinds are `--history fixtures,commands` (the default). `fixtures`
+uses explicit Test-only event injection; `commands` executes real handlers with
+durable receipts. The old `direct` kind is rejected. Timed command writes remain
+coordinated for both history kinds.
+
+The read-model workload also uses Test fixture batches by default; `--transactional`
+selects coordinated transactions with receipts.
+
+The comparison rotates execution order between five workloads: short fixture
 histories, long grouped histories, short and long trusted transaction histories,
 and audited transactions. It rejects different policies, options, environments,
 payload/result sizes, paths or sample counts. Reports retain both inputs, request

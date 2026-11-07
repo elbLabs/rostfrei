@@ -2,7 +2,7 @@ use std::{error::Error, io, sync::Arc, time::Duration};
 
 use bike_rental::{
     BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime,
-    demo::{apply_demo_fixture, demo_fixture, demo_stream},
+    demo::{apply_demo_fixture, demo_stream, seed_demo},
     rental_fleet::{
         self, BicycleCondition, BicycleId, BicycleStatus, BicycleTransferRejectionReason,
         BicycleTransferredIn, BicycleTransferredOut, FleetId, RentalFleetAggregate,
@@ -209,7 +209,7 @@ async fn command_bus_to_nats_worker_transfers_bicycle_across_two_streams() -> Te
             BikeRentalNatsRuntime::provision_config(connection.clone(), config.clone()).await?,
         );
         let test_result = async {
-            runtime.apply_fixture(&demo_fixture()?).await?;
+            seed_demo(&runtime.store()).await?;
             runtime.start_workers().await?;
             dispatch_transfer_through_nats(&connection, &runtime).await
         }

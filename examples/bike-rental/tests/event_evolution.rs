@@ -18,8 +18,8 @@ use inventory::{
     RetirementReason, metadata, seed_v1_history, stream,
 };
 use rostfrei::core::{
-    ContentFingerprint, EventBatch, EventCodecErrorKind, EventHistory, EventStore, ExecutionStore,
-    NewEvent, OperationId, derive_commit_id, derive_event_id,
+    ContentFingerprint, EventBatch, EventCodecErrorKind, EventStore, ExecutionStore,
+    FixtureEventStore, NewEvent, OperationId, derive_commit_id, derive_event_id,
 };
 use rostfrei::fixtures::{Fixture, MessageSeriesEngine};
 use rostfrei::nats::{NatsEventStore, NatsEventStoreConfig, provision_event_store};
@@ -78,7 +78,7 @@ fn original_reader(history: &[rostfrei::RecordedEvent]) -> ExampleResult<Invento
 
 async fn rolling_release<S>(store: S) -> ExampleResult
 where
-    S: EventStore + EventHistory + ExecutionStore + Clone,
+    S: FixtureEventStore + EventStore + ExecutionStore + Clone,
 {
     let original = seed_v1_history(&store).await?;
     let compatibility =
@@ -274,7 +274,7 @@ fn state(active: &[(&str, Condition)], retired: &[(&str, RetirementReason)]) -> 
 /// v1 history -> current meaning -> v2 write -> mixed reload, on any store.
 async fn evolve<S>(store: S) -> ExampleResult
 where
-    S: EventStore + EventHistory + ExecutionStore + Clone,
+    S: FixtureEventStore + ExecutionStore + Clone,
 {
     let original = seed_v1_history(&store).await?;
     let executor = CommandExecutor::with_codecs(store.clone(), Arc::new(inventory::codecs()?));
@@ -369,7 +369,7 @@ async fn evolved_code_reconstructs_v1_history_and_reloads_mixed_history_on_nats(
         std::process::id(),
         SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ))?
-    .bounded_context(Inventory::BOUNDED_CONTEXT)?;
+    .test_bounded_context(Inventory::BOUNDED_CONTEXT)?;
     let config = NatsEventStoreConfig::for_bounded_context(&context)?
         .with_fresh_split_outcome_epoch("event-evolution")?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
@@ -469,7 +469,7 @@ async fn unsupported_history_fails_reconstruction_without_partial_state() -> Exa
     let operation = OperationId::new("future-history")?;
     let commit = derive_commit_id(&stream()?, &operation);
     store
-        .append(
+        .append_fixture(
             &stream()?,
             ExpectedVersion::Exact(rostfrei::core::StreamVersion::new(4)),
             EventBatch::new(

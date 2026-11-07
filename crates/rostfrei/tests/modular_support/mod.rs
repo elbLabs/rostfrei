@@ -179,12 +179,12 @@ pub fn bus(processor: Arc<CommandProcessor>) -> TestResult<CommandBus> {
         Arc::new(InMemoryMessagingAdapter::new(processor)),
     ))
 }
-pub async fn seed_v1(store: &impl EventStore) -> TestResult<Vec<RecordedEvent>> {
+pub async fn seed_v1(store: &impl FixtureEventStore) -> TestResult<Vec<RecordedEvent>> {
     let operation = OperationId::new("historical-operation")?;
     let commit = derive_commit_id(&stream()?, &operation);
     let event = derive_event_id(&commit, 0);
     Ok(store
-        .append(
+        .append_fixture(
             &stream()?,
             ExpectedVersion::NoStream,
             EventBatch::new(

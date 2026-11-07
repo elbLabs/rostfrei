@@ -7,6 +7,19 @@ use rostfrei_core::{EventHistory, TransactionReceipt};
 #[derive(Clone)]
 struct SessionStore(NatsEventStore);
 
+// Contract setup uses the fixture port directly; command sessions only transact.
+#[async_trait]
+impl FixtureEventStore for SessionStore {
+    async fn append_fixture(
+        &self,
+        stream: &StreamId,
+        expected: ExpectedVersion,
+        batch: EventBatch,
+    ) -> Result<AppendOutcome, EventStoreError> {
+        self.0.append_fixture(stream, expected, batch).await
+    }
+}
+
 #[async_trait]
 impl EventHistory for SessionStore {
     async fn load(&self, stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
@@ -35,17 +48,6 @@ impl EventStore for SessionStore {
         }
         session.commit_outcome(transaction).await
     }
-    async fn append(
-        &self,
-        stream_id: &StreamId,
-        expected_version: ExpectedVersion,
-        batch: EventBatch,
-    ) -> Result<AppendOutcome, EventStoreError> {
-        let session = self.0.append_session().await?;
-        session.load(stream_id).await?;
-        session.append(stream_id, expected_version, batch).await
-    }
-
     async fn append_transaction(
         &self,
         transaction: EventTransaction,
@@ -87,9 +89,8 @@ async fn setup(label: &str) -> TestResult<(async_nats::jetstream::Context, NatsE
 }
 
 #[tokio::test]
-async fn sessions_satisfy_direct_and_transaction_contracts() -> TestResult<()> {
+async fn sessions_satisfy_transaction_contracts() -> TestResult<()> {
     let (context, store) = setup("session-contract").await?;
-    event_store_contract::try_run(|| SessionStore(store.clone())).await?;
     event_store_contract::try_run_atomic_multi_stream_transactions(|| SessionStore(store.clone()))
         .await?;
     context.delete_stream(store.config().stream_name()).await?;
@@ -117,14 +118,15 @@ async fn session_load_rejects_malformed_history_on_every_attempt() -> TestResult
 }
 
 #[tokio::test]
-async fn session_direct_append_rejects_malformed_history_before_writing() -> TestResult<()> {
+async fn session_single_writer_transaction_rejects_malformed_history_before_writing()
+-> TestResult<()> {
     let (context, store) = setup("session-missing-receipt-append").await?;
     let aggregate = malformed_history(&context, store.config()).await?;
     let before = broker_position(&context, &store).await?;
     let session = store.append_session().await?;
     // Deliberately skip load: append must validate its lazily loaded history too.
     let result = session
-        .append(
+        .append_one_transaction(
             &aggregate,
             ExpectedVersion::Exact(StreamVersion::new(1)),
             batch(
@@ -233,7 +235,7 @@ async fn broker_position(
 async fn append_request_count_does_not_grow_with_loaded_history() -> TestResult<()> {
     let (context, store) = setup("session-read-cost").await?;
     let client = context.client();
-    let mut direct_costs = Vec::new();
+    let mut single_writer_costs = Vec::new();
     let mut transaction_costs = Vec::new();
     for size in [1_u32, 100] {
         let writer = stream(&format!("writer-{size}"))?;
@@ -242,7 +244,7 @@ async fn append_request_count_does_not_grow_with_loaded_history() -> TestResult<
         let seed_operation = format!("seed-{size}");
         for participant in [&writer, &guard, &secondary] {
             store
-                .append(
+                .append_fixture(
                     participant,
                     ExpectedVersion::NoStream,
                     repeated_batch(participant, &seed_operation, &seed_operation, size)?,
@@ -253,9 +255,9 @@ async fn append_request_count_does_not_grow_with_loaded_history() -> TestResult<
         assert_eq!(session.load(&writer).await?.len(), usize::try_from(size)?);
         client.flush().await?;
         let before = client.statistics().out_messages.load(Ordering::Relaxed);
-        let operation = format!("direct-{size}");
+        let operation = format!("single-writer-{size}");
         let outcome = session
-            .append(
+            .append_one_transaction(
                 &writer,
                 ExpectedVersion::Exact(StreamVersion::new(u64::from(size))),
                 batch(&writer, &operation, &operation, &[b"new"])?,
@@ -263,7 +265,7 @@ async fn append_request_count_does_not_grow_with_loaded_history() -> TestResult<
             .await?;
         assert!(matches!(outcome, AppendOutcome::Appended(_)));
         client.flush().await?;
-        direct_costs.push(
+        single_writer_costs.push(
             client
                 .statistics()
                 .out_messages
@@ -321,9 +323,9 @@ async fn append_request_count_does_not_grow_with_loaded_history() -> TestResult<
         ));
     }
     assert_eq!(
-        direct_costs.first(),
-        direct_costs.last(),
-        "direct costs: {direct_costs:?}"
+        single_writer_costs.first(),
+        single_writer_costs.last(),
+        "single-writer transaction costs: {single_writer_costs:?}"
     );
     assert_eq!(
         transaction_costs.first(),
@@ -331,15 +333,15 @@ async fn append_request_count_does_not_grow_with_loaded_history() -> TestResult<
         "transaction costs: {transaction_costs:?}"
     );
     assert!(
-        direct_costs.iter().all(|count| *count < 20),
-        "direct costs: {direct_costs:?}"
+        single_writer_costs.iter().all(|count| *count < 20),
+        "single-writer transaction costs: {single_writer_costs:?}"
     );
     assert!(
         transaction_costs.iter().all(|count| *count < 30),
         "transaction costs: {transaction_costs:?}"
     );
     eprintln!(
-        "append requests for histories of 1 / 100 events: direct {direct_costs:?}, transaction {transaction_costs:?}"
+        "append requests for histories of 1 / 100 events: single-writer {single_writer_costs:?}, multi-stream {transaction_costs:?}"
     );
     context.delete_stream(store.config().stream_name()).await?;
     Ok(())
@@ -360,10 +362,10 @@ async fn stale_sessions_reconcile_replays_and_preserve_read_guards() -> TestResu
     }
     assert!(stale_guard.load(&writer).await?.is_empty());
     store
-        .append(&guard, ExpectedVersion::NoStream, winning_batch.clone())
+        .append_one_transaction(&guard, ExpectedVersion::NoStream, winning_batch.clone())
         .await?;
     let conflict = stale_writer
-        .append(
+        .append_one_transaction(
             &guard,
             ExpectedVersion::NoStream,
             batch(&guard, "loser", "loser", &[b"two"])?,
@@ -372,11 +374,11 @@ async fn stale_sessions_reconcile_replays_and_preserve_read_guards() -> TestResu
         .expect_err("stale append must conflict");
     assert_eq!(conflict.kind(), EventStoreErrorKind::Conflict);
     let replay = stale_replay
-        .append(&guard, ExpectedVersion::NoStream, winning_batch)
+        .append_one_transaction(&guard, ExpectedVersion::NoStream, winning_batch)
         .await?;
     assert!(matches!(replay, AppendOutcome::ExactReplay(_)));
     let identity = stale_identity
-        .append(
+        .append_one_transaction(
             &guard,
             ExpectedVersion::NoStream,
             batch(&guard, "winner", "winner", &[b"changed"])?,
@@ -426,7 +428,7 @@ async fn stream_recreation_invalidates_loaded_sessions() -> TestResult<()> {
     provision_event_store(&context, store.config()).await?;
     let new_batch = batch(&stream_id, "write", "write", &[b"new"])?;
     let result = stale
-        .append(&stream_id, ExpectedVersion::NoStream, new_batch.clone())
+        .append_one_transaction(&stream_id, ExpectedVersion::NoStream, new_batch.clone())
         .await;
     assert!(
         matches!(result, Err(error) if error.kind() == EventStoreErrorKind::ConfigurationMismatch)
@@ -449,7 +451,7 @@ async fn stream_recreation_invalidates_loaded_sessions() -> TestResult<()> {
     assert!(fresh.load(&stream_id).await?.is_empty());
     assert!(matches!(
         fresh
-            .append(&stream_id, ExpectedVersion::NoStream, new_batch)
+            .append_one_transaction(&stream_id, ExpectedVersion::NoStream, new_batch)
             .await?,
         AppendOutcome::Appended(_)
     ));

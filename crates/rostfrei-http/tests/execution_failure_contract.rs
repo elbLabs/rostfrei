@@ -97,14 +97,6 @@ impl EventStore for FaultStore {
     ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
         self.inner.commit_outcome(transaction).await
     }
-    async fn append(
-        &self,
-        id: &StreamId,
-        version: ExpectedVersion,
-        batch: EventBatch,
-    ) -> Result<AppendOutcome, EventStoreError> {
-        self.inner.append(id, version, batch).await
-    }
     async fn append_transaction(
         &self,
         transaction: EventTransaction,

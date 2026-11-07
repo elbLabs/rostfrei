@@ -24,6 +24,7 @@ use tokio::time::{Instant, sleep, timeout};
 use crate::{
     error::NatsError,
     hex::encode_lower_hex,
+    integration_subject::{decode_message, logical_address},
     messaging_config::{MessagingTopology, StreamName},
     provisioning::durable_consumer_config,
     publish::{
@@ -251,24 +252,37 @@ impl MessageConsumerFactory<CommandResponseAddress> for NatsConsumerFactory {
 }
 
 trait ConsumableAddress: PublishableAddress {
-    fn parse_nats(value: String) -> Result<Self, NatsError>;
+    fn decode_nats(message: &jetstream::Message) -> Result<Self, NatsError>;
+
+    fn matches_route(subject: &str, expected: &Self) -> bool {
+        subject == expected.as_str()
+    }
 }
 
 impl ConsumableAddress for CommandAddress {
-    fn parse_nats(value: String) -> Result<Self, NatsError> {
-        Self::parse(value).map_err(|_| NatsError::InvalidMessage)
+    fn decode_nats(message: &jetstream::Message) -> Result<Self, NatsError> {
+        Self::parse(message.subject.to_string()).map_err(|_| NatsError::InvalidMessage)
     }
 }
 
 impl ConsumableAddress for CommandResponseAddress {
-    fn parse_nats(value: String) -> Result<Self, NatsError> {
-        Self::parse(value).map_err(|_| NatsError::InvalidMessage)
+    fn decode_nats(message: &jetstream::Message) -> Result<Self, NatsError> {
+        Self::parse(message.subject.to_string()).map_err(|_| NatsError::InvalidMessage)
     }
 }
 
 impl ConsumableAddress for IntegrationEventAddress {
-    fn parse_nats(value: String) -> Result<Self, NatsError> {
-        Self::parse(value).map_err(|_| NatsError::InvalidMessage)
+    fn decode_nats(message: &jetstream::Message) -> Result<Self, NatsError> {
+        let (subject, _) = decode_message(
+            message.subject.as_str(),
+            message.headers.as_ref(),
+            &message.payload,
+        )?;
+        Ok(subject.address().clone())
+    }
+
+    fn matches_route(subject: &str, expected: &Self) -> bool {
+        logical_address(subject).is_ok_and(|address| &address == expected)
     }
 }
 
@@ -423,7 +437,7 @@ where
         .map_err(|_| ConsumeError::new(ConsumeErrorKind::Unavailable))?;
     if raw_info.stream != source_stream.as_str()
         || raw_info.consumer != config.durable_name().as_str()
-        || message.subject.as_str() != config.address().as_str()
+        || !A::matches_route(message.subject.as_str(), config.address())
     {
         return apply_ack(&message, AckKind::Nak(Some(DEFAULT_QUARANTINE_RETRY_DELAY))).await;
     }
@@ -625,7 +639,7 @@ where
         .transpose()
         .map_err(|_| NatsError::InvalidMessage)?;
     let trace_context = trace_context(headers)?;
-    let address = A::parse_nats(message.subject.to_string())?;
+    let address = A::decode_nats(message)?;
     if &address != expected_address {
         return Err(NatsError::InvalidMessage);
     }
@@ -775,10 +789,13 @@ async fn quarantine_or_nak(
     quarantine_stream: &StreamName,
     publish_timeout: Duration,
     source: &jetstream::Message,
-    record: QuarantineRecord,
+    mut record: QuarantineRecord,
     attempt: u32,
     maximum_delivery_attempts: u32,
 ) -> Result<(), ConsumeError> {
+    // Application deliveries carry logical routes; inspection must retain the
+    // actual transport subject, including malformed suffixes.
+    record.address = source.subject.to_string();
     if publish_quarantine(context, quarantine_stream, publish_timeout, &record)
         .await
         .is_err()
@@ -840,8 +857,9 @@ fn encode_quarantine_record(record: &QuarantineRecord) -> Result<Vec<u8>, NatsEr
 }
 
 fn quarantine_subject(address: &str) -> Result<String, NatsError> {
-    let address =
-        MessageAddress::parse(address.to_owned()).map_err(|_| NatsError::InvalidMessage)?;
+    let address = MessageAddress::parse(address.to_owned())
+        .map_err(|_| NatsError::InvalidMessage)
+        .or_else(|_| logical_address(address).map(MessageAddress::from))?;
     let scope = address
         .traffic_scope()
         .subject_segment()

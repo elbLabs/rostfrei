@@ -1,7 +1,9 @@
 //! Legacy-only response evidence is imported or blocked, never silently reevaluated.
 #![allow(clippy::panic_in_result_fn, clippy::unwrap_used)]
 mod release_contract_support;
+mod transaction_support;
 use release_contract_support::*;
+use transaction_support::AppendOneTransaction;
 rostfrei_runtime::install_macro_support!();
 
 async fn legacy(
@@ -48,7 +50,7 @@ async fn legacy(
             .await?
             .is_none()
     );
-    // Repair via the legacy low-level event API using a DIFFERENT operation, before cutover.
+    // Repair with a distinct accepted transaction before cutover.
     let id = stream("target")?;
     let operation = OperationId::new("legacy-repair")?;
     let commit = derive_commit_id(&id, &operation);
@@ -62,7 +64,7 @@ async fn legacy(
         })?,
     )?;
     store
-        .append(
+        .append_one_transaction(
             &id,
             ExpectedVersion::NoStream,
             EventBatch::new(
