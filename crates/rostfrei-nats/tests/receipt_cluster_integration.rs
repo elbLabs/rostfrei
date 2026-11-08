@@ -287,15 +287,14 @@ impl Workload {
                 rejection,
             ));
         // Consumer creation and outcome reconciliation can be transiently
-        // unavailable after election. Retry only the identical operation and
-        // evidence; never turn an uncertain write into another transaction.
+        // unavailable after election. Retry for the bounded recovery window:
+        // several immediate 503s do not mean that window has elapsed. Reuse the
+        // identical operation and evidence after an uncertain write.
         let committed = timeout(Duration::from_secs(30), async {
-            for attempt in 0..4 {
+            loop {
                 match store.commit_outcome(transaction.clone()).await {
                     Ok(committed) => return Ok(committed),
-                    Err(error)
-                        if error.kind() == EventStoreErrorKind::Unavailable && attempt < 3 =>
-                    {
+                    Err(error) if error.kind() == EventStoreErrorKind::Unavailable => {
                         eprintln!(
                             "retrying {} after {error}",
                             transaction.operation_id().as_str()
@@ -305,10 +304,6 @@ impl Workload {
                     Err(error) => return Err(error),
                 }
             }
-            Err(rostfrei_core::EventStoreError::new(
-                EventStoreErrorKind::Unavailable,
-                "identical-transaction retry bound reached",
-            ))
         })
         .await??;
         let events = committed.outcome().record().events();
