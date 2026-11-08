@@ -25,9 +25,8 @@ use application::{GetAccess, OrganizationAccess};
 use async_nats::jetstream;
 use rostfrei_core::{
     AggregateCodecs, AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventCodec,
-    EventCodecError, EventCodecErrorKind, EventHistory, EventId, ExpectedVersion, JsonEventCodec,
-    NewEvent, OperationId, RecordedEvent, StreamId, StreamVersion, derive_commit_id,
-    derive_event_id,
+    EventCodecError, EventCodecErrorKind, EventId, ExpectedVersion, JsonEventCodec, NewEvent,
+    OperationId, RecordedEvent, StreamId, StreamVersion, derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{
     CallerMetadata, CorrelationId, DeliveryDisposition, DeliveryInfo, EnvelopeContext,

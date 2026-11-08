@@ -157,7 +157,8 @@ JSON codec.
 Compatibility tests start from the bytes the previous release wrote, not from
 current events re-encoded:
 
-1. Append v1 records with their original type, schema and payload (`seed_v1_history`).
+1. Seed v1 records with their original type, schema and payload (`seed_v1_history`)
+   through `FixtureEventStore::append_fixture`; NATS fixtures require Test scope.
 2. Reconstruct with the evolved codec and assert the expected state.
 3. In the compatibility release, assert that new writes remain readable by v1 code
    and that unrepresentable values fail before committing any event or outcome.
