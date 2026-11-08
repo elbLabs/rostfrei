@@ -5,9 +5,8 @@ export function MacroExplorerSection() {
     <section aria-labelledby="macro-explorer-title" className="content-section">
       <div className="mx-auto max-w-7xl">
         <div className="mb-5">
-          <p className="section-kicker">Domain macros</p>
           <h2 className="section-heading" id="macro-explorer-title">
-            What you write. What Rostfrei generates.
+            Domain declarations and generated code
           </h2>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
             Browse domain declarations and behavior attributes. Each example

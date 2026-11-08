@@ -1,4 +1,4 @@
-# Rostfrei duck
+# rostfrei duck
 
 Artwork supplied by the user on 15 October 2026, selected for the Reference ’15
 website and Tracer Studio identity. Copied from `website/public/brand` for shared

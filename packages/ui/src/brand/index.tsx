@@ -22,7 +22,7 @@ function Brand({ compact = false, className }: BrandProps) {
   )
 }
 
-function DuckMascot({ className, alt = "Rostfrei duck mascot" }: DuckMascotProps) {
+function DuckMascot({ className, alt = "rostfrei duck mascot" }: DuckMascotProps) {
   return (
     <span data-slot="duck-mascot" className={cn("inline-block w-42 max-w-full", className)}>
       <img className="rf-duck-light h-auto w-full" src={duck} width={512} height={469} alt={alt} />

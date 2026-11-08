@@ -293,7 +293,7 @@ KV decoding, revision/CAS, and error-mapping implementation with an injected
 The copy's essential operation is `new_store.create(&validated_key, &old.value)`;
 handle a conflicting destination through reconciliation, not unconditional overwrite.
 A custom codec can accept the old payload shape for a transitional import without
-putting entitlement/business rules into Rostfrei.
+putting entitlement/business rules into rostfrei.
 
 ## Deferred APIs
 

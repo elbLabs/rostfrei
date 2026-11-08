@@ -1,12 +1,12 @@
-# Migrating to Rostfrei 0.1
+# Migrating to rostfrei 0.1
 
-Rostfrei 0.1 combines the modular command runtime, application-linked NATS host,
+rostfrei 0.1 combines the modular command runtime, application-linked NATS host,
 Tracer handler diagnostics, continuous observation, read models and Agent Skills.
 It includes Rust API and native-authority changes from `v0.0.5-alpha`.
 
 ## Dependencies and tooling
 
-Use Rust 1.98 or newer. Rostfrei 0.1.3 exposes adapters through a single framework
+Use Rust 1.98 or newer. rostfrei 0.1.3 exposes adapters through a single framework
 dependency; follow [dependency setup and imports](getting-started.mdx#one-framework-dependency).
 Existing separate adapter dependencies remain supported; keep them on the same
 release as `rostfrei`.

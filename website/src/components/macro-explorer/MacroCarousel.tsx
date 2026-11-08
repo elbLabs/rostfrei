@@ -81,7 +81,7 @@ export function MacroCarousel() {
       </div>
 
       <Carousel
-        aria-label="Rostfrei macros"
+        aria-label="rostfrei macros"
         className="min-w-0"
         opts={{ loop: true }}
         setApi={setApi}

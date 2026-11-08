@@ -1,4 +1,7 @@
-//! Domain modeling, event sourcing, and typed messaging for Rust applications.
+//! A batteries-included Rust framework for event-sourced applications.
+//!
+//! Business rules stay in ordinary Rust. The framework provides durable command
+//! execution, persistence adapters, messaging, read models, and runtime inspection.
 //!
 //! Use `rostfrei` as your application's framework dependency. Domain macros,
 //! command/query buses, read models, and the in-memory runtime are always available

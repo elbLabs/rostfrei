@@ -19,10 +19,10 @@ export function CodePane({ code, label }: { code: string; label: string }) {
   }
 
   return (
-    <div className="min-w-0">
+    <div className="code-block min-w-0">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         <span
-          className="min-w-0 truncate font-mono text-[10px] text-muted-foreground"
+          className="min-w-0 truncate font-mono text-[13px] text-muted-foreground"
           title={label}
         >
           {label}
@@ -42,7 +42,7 @@ export function CodePane({ code, label }: { code: string; label: string }) {
         {({ className, getLineProps, getTokenProps, style, tokens }) => (
           <pre
             aria-label={`${label} Rust source code`}
-            className={`${className} h-96 max-w-full overflow-auto p-3 font-mono text-[11px] leading-6`}
+            className={`${className} code-source h-96 max-w-full overflow-auto p-5`}
             style={{ ...style, backgroundColor: "transparent" }}
             tabIndex={0}
           >

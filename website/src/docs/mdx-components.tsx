@@ -74,10 +74,7 @@ function mdxLink({
 
 function mdxTable({ className, ...props }: ComponentPropsWithoutRef<"table">) {
   return (
-    <div
-      className="my-5 max-w-full overflow-x-auto border border-border"
-      tabIndex={0}
-    >
+    <div className="my-6 max-w-full overflow-x-auto" tabIndex={0}>
       <table
         className={cn("w-full border-collapse text-left text-sm", className)}
         {...props}
@@ -103,7 +100,7 @@ export const mdxComponents = {
   code: ({ className, ...props }) => (
     <code
       className={cn(
-        "rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground",
+        "rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-foreground",
         className
       )}
       {...props}
@@ -112,7 +109,7 @@ export const mdxComponents = {
   h1: ({ className, ...props }) => (
     <h1
       className={cn(
-        "scroll-mt-6 text-[32px] leading-tight font-semibold tracking-tight text-foreground",
+        "scroll-mt-28 leading-tight font-semibold text-foreground",
         className
       )}
       {...props}
@@ -120,19 +117,13 @@ export const mdxComponents = {
   ),
   h2: ({ className, ...props }) => (
     <h2
-      className={cn(
-        "mt-8 scroll-mt-6 border-b border-border pb-2 text-xl font-semibold tracking-tight text-foreground",
-        className
-      )}
+      className={cn("scroll-mt-28 font-semibold text-foreground", className)}
       {...props}
     />
   ),
   h3: ({ className, ...props }) => (
     <h3
-      className={cn(
-        "mt-6 scroll-mt-6 text-lg font-semibold tracking-tight text-foreground",
-        className
-      )}
+      className={cn("scroll-mt-28 font-semibold text-foreground", className)}
       {...props}
     />
   ),
@@ -170,10 +161,7 @@ export const mdxComponents = {
   ),
   th: ({ className, ...props }) => (
     <th
-      className={cn(
-        "bg-muted/60 px-4 py-3 font-medium text-foreground",
-        className
-      )}
+      className={cn("px-4 py-3 font-semibold text-foreground", className)}
       {...props}
     />
   ),
