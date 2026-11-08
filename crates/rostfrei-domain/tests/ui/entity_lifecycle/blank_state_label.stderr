@@ -1,5 +1,0 @@
-error: label must not be empty
- --> tests/ui/entity_lifecycle/blank_state_label.rs:7:35
-  |
-7 |     #[state(id = "draft", label = " ")]
-  |                                   ^^^

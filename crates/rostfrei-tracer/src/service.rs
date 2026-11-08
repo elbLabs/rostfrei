@@ -3350,6 +3350,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deadline_retains_only_diagnostics_for_the_reported_evidence_revision() {
+        let tracer = TracerBuilder::new(
+            Arc::new(rostfrei_core::InMemoryEventStore::new()),
+            DomainRegistry::new(),
+        )
+        .build()
+        .unwrap();
+        let record = Arc::new(OperationRecord::new(NewOperation {
+            operation_id: "operation-1".to_owned(),
+            correlation_id: "correlation-1".to_owned(),
+            fingerprint: "fingerprint".to_owned(),
+            mode: OperationMode::Test,
+            command: "rent-bicycle",
+            schema_version: 1,
+            context: "rental",
+        }));
+        record
+            .fail_after_possible_publication("deadline", "deadline".to_owned())
+            .await;
+        let hub = &tracer.inner.correlations;
+        hub.register_command(
+            "correlation-1",
+            OperationMode::Test,
+            "operation-1".to_owned(),
+            "rental".to_owned(),
+            "rent-bicycle".to_owned(),
+            1,
+        )
+        .unwrap();
+        hub.observe_command(
+            "correlation-1",
+            "operation-1".to_owned(),
+            "command-1".to_owned(),
+            None,
+            false,
+            "rental".to_owned(),
+            "rent-bicycle".to_owned(),
+            1,
+            Some(json!({ "bicycleId": "observed" })),
+        )
+        .await
+        .unwrap();
+        let evidence = tracer
+            .observed_evidence_snapshot("correlation-1")
+            .await
+            .unwrap();
+        let definition =
+            command_series_definition(&json!({ "bicycleId": "expected" }), &json!("accepted"));
+        let comparison = compare_evidence_snapshot(
+            &definition.graphs()[0],
+            &evidence,
+            MessageSeriesComparisonContext::default(),
+        );
+        assert!(
+            comparison
+                .diagnostics
+                .iter()
+                .any(|d| d.code == "payload-mismatch")
+        );
+
+        // Exercise deadline finalization directly: a wall-clock budget cannot
+        // guarantee that spawn_blocking has finished the comparison under load.
+        for (revision, retains_mismatch) in
+            [(evidence.revision, true), (evidence.revision + 1, false)]
+        {
+            let evaluation = tracer
+                .timed_out_test_evaluation(
+                    &record,
+                    "operation-1",
+                    "correlation-1",
+                    false,
+                    false,
+                    Some((revision, comparison.clone())),
+                )
+                .await
+                .unwrap();
+            assert_eq!(evaluation.observed, evidence.observed);
+            assert_eq!(
+                evaluation.comparison.status,
+                MessageSeriesComparisonStatus::Failed
+            );
+            assert_eq!(
+                evaluation
+                    .comparison
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.code == "payload-mismatch"),
+                retains_mismatch
+            );
+            assert!(
+                evaluation
+                    .comparison
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.code == "timeout-before-expectations")
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn cancelled_operation_tasks_have_a_distinct_terminal_code() {
         let task = tokio::spawn(std::future::pending::<()>());
         task.abort();

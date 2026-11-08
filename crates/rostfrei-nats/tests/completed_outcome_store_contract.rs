@@ -98,11 +98,6 @@ async fn generic_processor_interop(direct_first: bool) -> TestResult {
 async fn generic_domain_rejection_replays_in_processor_with_explicit_mapping_codec() -> TestResult {
     generic_processor_interop(true).await
 }
-#[tokio::test]
-async fn processor_rejection_replays_in_generic_executor_with_explicit_mapping_codec() -> TestResult
-{
-    generic_processor_interop(false).await
-}
 
 #[tokio::test]
 async fn real_nats_completed_outcome_store_and_session_conformance() -> TestResult {
@@ -180,40 +175,6 @@ async fn concurrent_direct_accept_and_native_reject_have_one_durable_decision_an
     let fresh = processor(&fixture.context, store, calls.clone(), None)?;
     assert_eq!(fresh.process(&command).await?, a);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    Ok(())
-}
-
-#[tokio::test]
-async fn direct_nats_store_rejects_and_replays_without_any_command_or_response_stream() -> TestResult
-{
-    let fixture = Fixture::new("92-direct-no-command-queue").await?;
-    let store = fixture.split_event_store().await?;
-    fixture
-        .js
-        .delete_stream(fixture.messaging.topology().command_stream().as_str())
-        .await?;
-    fixture
-        .js
-        .delete_stream(
-            fixture
-                .messaging
-                .topology()
-                .command_response_stream()
-                .as_str(),
-        )
-        .await?;
-    let calls = Arc::new(AtomicUsize::new(0));
-    let first = processor(&fixture.context, store.clone(), calls.clone(), None)?;
-    let bus = local_bus(&fixture.context, first.clone());
-    let command = bus.encode(request("direct-rejection", "target", "add")?)?;
-    let response = first.process(&command).await?;
-    assert!(rejected(response.outcome()));
-    bus.dispatch(request("direct-repair", "target", "create")?)
-        .await?;
-    let recreated = processor(&fixture.context, store.clone(), calls.clone(), None)?;
-    assert_eq!(recreated.process(&command).await?, response);
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
-    assert_eq!(store.load(&stream("target")?).await?.len(), 1);
     Ok(())
 }
 

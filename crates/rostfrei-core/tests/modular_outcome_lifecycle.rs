@@ -1,4 +1,4 @@
-//! Future-API contracts for marker/details separation and independently implemented readers.
+//! Marker/details separation, cold recovery and admission-bound expiry.
 #![allow(clippy::panic_in_result_fn, clippy::unwrap_used)]
 use async_trait::async_trait;
 use rostfrei_core::*;
@@ -303,6 +303,88 @@ fn proposal(id: &str, rejection: &str) -> EventTransaction {
             bytes: rejection.as_bytes().to_vec(),
         }),
     ))
+}
+
+#[tokio::test]
+async fn cold_recovery_rejects_intact_details_from_another_authority() -> TestResult {
+    let store = InMemoryEventStore::new();
+    let foreign = InMemoryEventStore::new();
+    let handler = Decide {
+        calls: Arc::new(AtomicUsize::new(0)),
+        reject: true,
+    };
+    execute(store.clone(), &handler, "same-operation").await?;
+    execute(foreign.clone(), &handler, "same-operation").await?;
+    let (_, foreign_bytes) = detached_bytes(&foreign, "same-operation").await?;
+    let view = store.with_detail_readers(
+        Reader::new(Ok(DetailRead::AbsentHere)),
+        Some(Reader::new(Ok(DetailRead::Found(foreign_bytes)))),
+    );
+    assert_eq!(
+        view.lookup_outcome(&key(&view, "same-operation"))
+            .await
+            .unwrap_err()
+            .kind(),
+        EventStoreErrorKind::CorruptHistory
+    );
+    assert!(execute(view, &handler, "same-operation").await.is_err());
+    assert_eq!(handler.calls.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+struct PausedReader {
+    bytes: Vec<u8>,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    calls: AtomicUsize,
+}
+#[async_trait]
+impl OutcomeDetailReader for PausedReader {
+    async fn get(&self, _: &OutcomeDetailReference) -> Result<DetailRead, DetailReadError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.entered.notify_one();
+        self.release.notified().await;
+        Ok(DetailRead::Found(self.bytes.clone()))
+    }
+}
+
+#[tokio::test]
+async fn expiry_allows_only_the_already_admitted_read() -> TestResult {
+    let store = InMemoryEventStore::new();
+    let target = store
+        .begin_command()
+        .await?
+        .commit_outcome(proposal("race", "secret"))
+        .await?;
+    let (reference, bytes) = detached_bytes(&store, "race").await?;
+    let paused = Arc::new(PausedReader {
+        bytes,
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+        calls: AtomicUsize::new(0),
+    });
+    let view = store.clone().with_detail_readers(paused.clone(), None);
+    let expiry = async {
+        paused.entered.notified().await;
+        store
+            .expire_details(reference.key(), target.outcome().marker().revision())
+            .await
+            .unwrap();
+        paused.release.notify_one();
+    };
+    let (admitted, ()) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::join!(view.lookup_outcome(reference.key()), expiry)
+    })
+    .await?;
+    let OutcomeLookup::Completed(admitted) = admitted? else {
+        return Err("lost decision".into());
+    };
+    assert!(matches!(admitted.details(), OutcomeDetails::Available(_)));
+    let withdrawn = completed(&view, "race").await?;
+    assert!(matches!(withdrawn.details(), OutcomeDetails::Expired));
+    assert_eq!(withdrawn.marker(), target.outcome().marker());
+    assert_eq!(paused.calls.load(Ordering::SeqCst), 1);
+    Ok(())
 }
 #[tokio::test]
 async fn permanent_proposal_equality_remains_stricter_than_identity_after_expiry() -> TestResult {

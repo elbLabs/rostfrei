@@ -11,10 +11,12 @@ use std::{sync::Mutex, time::Duration};
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout};
 
-// A load awaits the five-second next-message deadline and then a JetStream
-// DELETE (default request timeout: five seconds). Allow scheduling headroom for
-// both; assert the read-timeout error and eventual consumer cleanup separately.
+// Start this budget at the injected fetch failure, after snapshot capture,
+// consumer creation and any initial delivery. A load then awaits the five-second
+// next-message deadline and a JetStream DELETE (default timeout: five seconds).
+// Assert the read-timeout error and eventual consumer cleanup separately.
 const READ_AND_CLEANUP_BUDGET: Duration = Duration::from_secs(12);
+const REPLAY_STARTUP_BUDGET: Duration = Duration::from_secs(30);
 const CLUSTER_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 
 impl Cluster {
@@ -92,6 +94,7 @@ struct FetchRelay {
     task: tokio::task::JoinHandle<TestResult<()>>,
     fetches: Arc<Mutex<Vec<Fetch>>>,
     context: jetstream::Context,
+    first_failure: oneshot::Receiver<()>,
     delayed_create: oneshot::Receiver<(String, async_nats::Message)>,
     missing_delete: oneshot::Receiver<()>,
     deletes: Arc<AtomicU64>,
@@ -107,11 +110,13 @@ impl FetchRelay {
         let context = context.clone();
         let fetches = Arc::new(Mutex::new(Vec::<Fetch>::new()));
         let recorded = Arc::clone(&fetches);
+        let (failure_tx, first_failure) = oneshot::channel();
         let (delayed_tx, delayed_create) = oneshot::channel();
         let (missing_tx, missing_delete) = oneshot::channel();
         let deletes = Arc::new(AtomicU64::new(0));
         let recorded_deletes = Arc::clone(&deletes);
         let task = tokio::spawn(async move {
+            let mut failure_tx = Some(failure_tx);
             let mut delayed_tx = Some(delayed_tx);
             let mut missing_tx = Some(missing_tx);
             let mut creates = 0_usize;
@@ -159,9 +164,12 @@ impl FetchRelay {
                         continue;
                     }
                 }
-                if let Some(cursor) = suffix.strip_prefix(".CONSUMER.MSG.NEXT.")
-                    && fail_fetch(&context, cursor, &request, fault, &recorded).await?
-                {
+                let failed = if let Some(cursor) = suffix.strip_prefix(".CONSUMER.MSG.NEXT.") {
+                    fail_fetch(&context, cursor, &request, fault, &recorded).await?
+                } else {
+                    false
+                };
+                if failed {
                     destination = format!("unrouted{prefix}");
                 }
                 client
@@ -171,6 +179,9 @@ impl FetchRelay {
                         request.payload,
                     )
                     .await?;
+                if failed && let Some(sender) = failure_tx.take() {
+                    let _ = sender.send(());
+                }
             }
             Ok(())
         });
@@ -178,10 +189,46 @@ impl FetchRelay {
             task,
             fetches,
             context: relay_context,
+            first_failure,
             delayed_create,
             missing_delete,
             deletes,
         })
+    }
+
+    async fn load_until_read_timeout(
+        &mut self,
+        reader: &NatsEventStore,
+        aggregate: &StreamId,
+    ) -> TestResult<Duration> {
+        let started = Instant::now();
+        let mut load = std::pin::pin!(reader.load(aggregate));
+        timeout(REPLAY_STARTUP_BUDGET, async {
+            tokio::select! {
+                failure = &mut self.first_failure => {
+                    failure.map_err(|error| format!("fetch relay stopped before injecting a failure: {error}"))
+                }
+                result = &mut load => {
+                    Err(format!("load completed before the injected fetch failure: {result:?}"))
+                }
+            }
+        })
+        .await
+        .map_err(|error| format!("replay did not reach the injected fetch failure: {error}"))??;
+        let startup = started.elapsed();
+        let result = timeout(READ_AND_CLEANUP_BUDGET, load)
+            .await
+            .map_err(|error| format!("read and cleanup exceeded their budget after the injected fetch failure (startup took {startup:?}): {error}"))?;
+        let elapsed = started.elapsed();
+        eprintln!("persistent failure returned after {elapsed:?} (startup: {startup:?})");
+        let error = result.expect_err("persistent no-responders must time out");
+        assert_eq!(error.kind(), EventStoreErrorKind::Unavailable);
+        assert_eq!(error.message(), "history replay timed out");
+        assert!(
+            elapsed >= Duration::from_secs(5),
+            "persistent 503 stopped recovery before the read deadline: {elapsed:?}"
+        );
+        Ok(elapsed)
     }
 
     fn assert_recreated_cursor(&self) {
@@ -331,18 +378,10 @@ async fn initial_no_responders_stops_at_read_deadline() -> TestResult<()> {
     // Delay real DELETEs during recreation and final cleanup. The five-second
     // read timeout plus cleanup must exceed the former seven-second outer bound.
     let delete_delay = Duration::from_secs(3);
-    let relay = FetchRelay::start(&context, Fault::Always { delete_delay }).await?;
+    let mut relay = FetchRelay::start(&context, Fault::Always { delete_delay }).await?;
     let reader = NatsEventStore::connect(relay.context.clone(), store.config().clone()).await?;
 
-    let started = Instant::now();
-    let result = timeout(READ_AND_CLEANUP_BUDGET, reader.load(&aggregate))
-        .await
-        .map_err(|error| format!("initial read and cleanup exceeded their budget: {error}"))?;
-    let elapsed = started.elapsed();
-    eprintln!("initial persistent failure returned after {elapsed:?}");
-    let error = result.expect_err("persistent no-responders must time out");
-    assert_eq!(error.kind(), EventStoreErrorKind::Unavailable);
-    assert_eq!(error.message(), "history replay timed out");
+    let elapsed = relay.load_until_read_timeout(&reader, &aggregate).await?;
     assert!(
         elapsed >= Duration::from_secs(5).saturating_add(delete_delay),
         "read deadline and delayed cleanup were not both exercised: {elapsed:?}"
@@ -400,23 +439,23 @@ async fn persistent_no_responders_after_delivery_stops_at_read_deadline() -> Tes
     let (context, store) = cluster.fixture().await?;
     let aggregate = stream("persistently-unavailable-history")?;
     history_reads::seed_history(&store, &aggregate).await?;
-    let relay = FetchRelay::start(&context, Fault::AlwaysAfterDelivery).await?;
+    let mut relay = FetchRelay::start(&context, Fault::AlwaysAfterDelivery).await?;
     let reader = NatsEventStore::connect(relay.context.clone(), store.config().clone()).await?;
 
-    let started = Instant::now();
-    let result = timeout(READ_AND_CLEANUP_BUDGET, reader.load(&aggregate))
-        .await
-        .map_err(|error| format!("partial read and cleanup exceeded their budget: {error}"))?;
-    let elapsed = started.elapsed();
-    eprintln!("persistent failure after delivery returned after {elapsed:?}");
+    // Setup is outside the next-message deadline. Hold the snapshot gate long
+    // enough that setup plus recovery exceeds a whole-load twelve-second budget.
+    let reached = Arc::new(tokio::sync::Barrier::new(2));
+    let release = Arc::new(tokio::sync::Barrier::new(2));
+    let reader = reader.with_history_snapshot_barriers(reached.clone(), release.clone());
+    let setup = tokio::spawn(async move {
+        reached.wait().await;
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        release.wait().await;
+    });
+
+    relay.load_until_read_timeout(&reader, &aggregate).await?;
+    setup.await?;
     relay.assert_recreated_cursor();
-    let error = result.expect_err("persistent no-responders after delivery must time out");
-    assert_eq!(error.kind(), EventStoreErrorKind::Unavailable);
-    assert_eq!(error.message(), "history replay timed out");
-    assert!(
-        elapsed >= Duration::from_secs(5),
-        "persistent 503 after progress stopped recovery before the read deadline: {elapsed:?}"
-    );
     {
         let fetches = relay.fetches.lock().expect("fetch log");
         assert!(

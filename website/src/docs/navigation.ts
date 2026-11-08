@@ -207,6 +207,7 @@ export const docsNavigation = [
     title: "Contributing",
     items: [
       { title: "Development and releases", slug: "development", file: "development.md" },
+      { title: "Framework testing", slug: "testing/strategy", file: "testing/strategy.md" },
       { title: "Skills qualification", slug: "release-01-kit", file: "release-01-kit.md" },
       { title: "Aggregate benchmarks", slug: "benchmarks/aggregate-loading", file: "benchmarks/aggregate-loading.md" },
     ],

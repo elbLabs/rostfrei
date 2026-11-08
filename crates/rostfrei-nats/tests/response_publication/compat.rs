@@ -1,18 +1,13 @@
 //! Independent checks of the changed response codec/storage and fresh-Ack compatibility.
 #![allow(clippy::panic_in_result_fn, clippy::unwrap_used)]
+#[path = "../release_contract_support/mod.rs"]
 mod release_contract_support;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use futures_util::StreamExt;
 use release_contract_support::*;
 use serde::Deserialize;
 
-// Exercise the private response-only helper unchanged, exactly as the existing source-importing
-// native fixture does. No other message family or production source is altered.
-mod error {
-    pub use rostfrei_nats::NatsError;
-}
-#[path = "../src/response_storage.rs"]
-mod response_storage;
+use crate::response_storage;
 
 #[derive(Deserialize)]
 struct LegacyEnvelope {
@@ -513,5 +508,3 @@ async fn fresh_ack_validates_its_exact_sequence_even_after_unrelated_and_termina
     drop(proxy);
     Ok(())
 }
-
-rostfrei_runtime::install_macro_support!();
