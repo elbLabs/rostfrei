@@ -7,7 +7,9 @@ use rostfrei_messaging_core::{AddressKind, ApplicationName, TrafficScope};
 use crate::error::NatsError;
 
 pub const MAX_STREAM_NAME_BYTES: usize = 255;
-pub const MAX_SUBJECT_FILTER_BYTES: usize = 512;
+// Covers the logical address plus maximum-length percent-encoded control IDs
+// (three subject bytes per identifier byte), including domain-event filters.
+pub const MAX_SUBJECT_FILTER_BYTES: usize = 4096;
 pub const MAX_QUEUE_GROUP_BYTES: usize = 255;
 pub const MAX_CLIENT_NAME_BYTES: usize = 255;
 pub const MINIMUM_NATS_SERVER_VERSION: ServerVersion = ServerVersion::new(2, 10, 0);
@@ -269,6 +271,22 @@ impl MessagingTopology {
 
     pub const fn integration_event_stream(&self) -> &StreamName {
         &self.integration_event
+    }
+
+    pub fn integration_correlation_filter(&self, correlation_id: &str) -> String {
+        format!(
+            "{}.integration.*.*.{}.*",
+            traffic_subject_prefix(self.application.as_str(), self.traffic_scope),
+            crate::subject_tokens::encode(correlation_id),
+        )
+    }
+
+    pub fn integration_causation_filter(&self, causation_id: &str) -> String {
+        format!(
+            "{}.integration.*.*.*.{}",
+            traffic_subject_prefix(self.application.as_str(), self.traffic_scope),
+            crate::subject_tokens::encode(causation_id),
+        )
     }
 
     pub const fn quarantine_stream(&self) -> &StreamName {

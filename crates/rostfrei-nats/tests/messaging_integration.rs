@@ -1,31 +1,5 @@
-#![allow(dead_code)]
-
-#[path = "../src/command_response.rs"]
-mod command_response;
-#[path = "../src/connection.rs"]
-mod connection;
-#[path = "../src/consumer.rs"]
-mod consumer;
-#[path = "../src/error.rs"]
-mod error;
-#[path = "../src/hex.rs"]
-mod hex;
-#[path = "../src/messaging_adapter.rs"]
-mod messaging_adapter;
-#[path = "../src/messaging_config.rs"]
-mod messaging_config;
-#[path = "../src/provisioning.rs"]
-mod provisioning;
-#[path = "../src/publish.rs"]
-mod publish;
-#[path = "../src/query.rs"]
-mod query;
-#[path = "../src/response_publication.rs"]
-mod response_publication;
-#[path = "../src/response_storage.rs"]
-mod response_storage;
-#[path = "../src/stream_policy.rs"]
-mod stream_policy;
+#[path = "messaging/subject_correlations.rs"]
+mod subject_correlations;
 
 use std::{
     collections::HashSet,
@@ -50,15 +24,17 @@ use rostfrei_messaging_core::{
 };
 use serde_json::{Value, json};
 
-use command_response::NatsCommandResponseReader;
-use connection::{NatsConnection, connect};
-use consumer::{NatsConsumerFactory, QuarantineRecord};
-use messaging_config::{MessagingTopology, NatsConnectionConfig, QueueGroup, StreamName};
-use provisioning::{
-    ApplicationMessagingConfig, provision_application_messaging, provision_durable_consumer,
+use rostfrei_nats::{
+    self as command_response, self as error, self as query, ApplicationMessagingConfig,
+    MessagingTopology, NatsConnection, NatsConnectionConfig, NatsConsumerFactory, NatsPublishAck,
+    NatsPublisher, NatsQueryServerConfig, QuarantineRecord, QueueGroup, StreamName, SubjectFilter,
+    connect, provision_application_messaging, provision_durable_consumer,
 };
-use publish::{CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE, NatsPublishAck, NatsPublisher};
-use query::{CORRELATION_ID_HEADER, NatsQueryServerConfig, REQUEST_ID_HEADER};
+
+const CONTENT_TYPE_HEADER: &str = "Content-Type";
+const JSON_CONTENT_TYPE: &str = "application/json";
+const CORRELATION_ID_HEADER: &str = "rostfrei-Control-Correlation-Id";
+const REQUEST_ID_HEADER: &str = "rostfrei-Control-Request-Id";
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -79,11 +55,18 @@ struct Fixture {
 
 impl Fixture {
     async fn new(url: String) -> TestResult<Self> {
+        Self::new_in_scope(url, rostfrei_messaging_core::TrafficScope::Normal).await
+    }
+
+    async fn new_in_scope(
+        url: String,
+        scope: rostfrei_messaging_core::TrafficScope,
+    ) -> TestResult<Self> {
         let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let application = ApplicationName::new(format!("test-{}-{sequence}", std::process::id()))?;
-        let context = application.bounded_context("messaging")?;
-        let messaging =
-            ApplicationMessagingConfig::new(&application)?.with_max_bytes(64 * 1024 * 1024)?;
+        let context = application.bounded_context_in_scope(scope, "messaging")?;
+        let messaging = ApplicationMessagingConfig::new_in_scope(&application, scope)?
+            .with_max_bytes(64 * 1024 * 1024)?;
         let topology = messaging.topology().clone();
         let connection = connect(&NatsConnectionConfig::new(
             format!("messaging-test-{sequence}"),
@@ -305,7 +288,19 @@ async fn durable_consumer_rejects_unsafe_delivery_configuration() -> TestResult<
             4,
             3,
         )?;
-        let mut actual = provisioning::durable_consumer_config(&config)?;
+        provision_durable_consumer(fixture.connection.jetstream(), &fixture.topology, &config)
+            .await?;
+        let stream = fixture
+            .connection
+            .jetstream()
+            .get_stream(fixture.topology.command_stream().as_str())
+            .await?;
+        let consumer: async_nats::jetstream::consumer::PullConsumer =
+            stream.get_consumer(config.durable_name().as_str()).await?;
+        let mut actual = consumer.cached_info().config.clone();
+        stream
+            .delete_consumer(config.durable_name().as_str())
+            .await?;
         match setting {
             "headers-only" => actual.headers_only = true,
             "memory-storage" => actual.memory_storage = true,

@@ -8,7 +8,10 @@
 )]
 
 use async_trait::async_trait;
-use rostfrei_core::{ConflictRetry, ConflictRetryDecision, ConflictRetryPolicy, EventStore};
+use rostfrei_core::{
+    ConflictRetry, ConflictRetryDecision, ConflictRetryPolicy, EventStore, EventTransaction,
+    TransactionParticipant,
+};
 use rostfrei_messaging_core::{CommandAddress, MessageDelivery};
 use rostfrei_nats::{NatsConnection, NatsConnectionConfig, TrustedCommandContextResolver, connect};
 use rostfrei_runtime::{
@@ -781,20 +784,27 @@ async fn configured_retry_reloads_a_real_native_conflict_before_and_after_reset(
         let commit = rostfrei_core::derive_commit_id(&stream()?, &competing_operation);
         runtime
             .store()
-            .append(
-                &stream()?,
-                ExpectedVersion::Exact(rostfrei_runtime::StreamVersion::new(1)),
-                EventBatch::new(
-                    commit.clone(),
-                    competing_operation,
+            .append_transaction(
+                EventTransaction::new(
+                    competing_operation.clone(),
                     ContentFingerprint::digest("competing-write"),
-                    vec![NewEvent::new(
-                        rostfrei_core::derive_event_id(&commit, 0),
-                        "changed",
-                        2,
-                        b"{\"minor\":900}".to_vec(),
-                    )?],
-                )?,
+                    vec![TransactionParticipant::new(
+                        stream()?,
+                        ExpectedVersion::Exact(rostfrei_runtime::StreamVersion::new(1)),
+                        Some(EventBatch::new(
+                            commit.clone(),
+                            competing_operation,
+                            ContentFingerprint::digest("competing-write"),
+                            vec![NewEvent::new(
+                                rostfrei_core::derive_event_id(&commit, 0),
+                                "changed",
+                                2,
+                                b"{\"minor\":900}".to_vec(),
+                            )?],
+                        )?),
+                    )],
+                )
+                .with_bounded_context(runtime.config().context.name().clone()),
             )
             .await?;
         witnesses.pause.resume.notify_one();

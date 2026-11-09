@@ -40,14 +40,6 @@ impl EventStore for AuthorityGate {
     ) -> Result<CompletedAppendOutcome, EventStoreError> {
         self.inner.commit_outcome(t).await
     }
-    async fn append(
-        &self,
-        id: &StreamId,
-        v: ExpectedVersion,
-        b: EventBatch,
-    ) -> Result<AppendOutcome, EventStoreError> {
-        self.inner.append(id, v, b).await
-    }
     async fn load_transaction_receipt(
         &self,
         id: &OperationId,

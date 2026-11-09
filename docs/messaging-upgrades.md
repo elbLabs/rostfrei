@@ -55,6 +55,9 @@ parallel historical business implementations.
 See the [compatibility-release sequence](event-schema-evolution.md#compatibility-release)
 for rolling out new readers before switching the write format.
 
+For physical event-subject changes, see the
+[deployment requirements](messaging/subjects.mdx#fresh-deployments).
+
 ## Durable consumer versions
 
 Names follow `<application>[--test]--<context>--<purpose>--v<major>`. The suffix

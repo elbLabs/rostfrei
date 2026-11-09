@@ -303,10 +303,14 @@ pub async fn run(options: Options) -> BenchResult {
     let cleanup = connection
         .delete_stream_if_exists(config.stream_name())
         .await;
+    let state_cleanup = connection
+        .delete_stream_if_exists(config.outcome_state_stream_name())
+        .await;
     let server_version = connection.client().server_info().version;
     let drain = connection.drain().await;
     let cases = measured?;
     cleanup?;
+    state_cleanup?;
     drain?;
     let rustc = command_output("rustc", &["--version"]).unwrap_or_else(|| "unavailable".to_owned());
     let report = Report {
@@ -342,7 +346,7 @@ fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
 }
 
 pub async fn smoke() -> BenchResult {
-    for kind in [HistoryKind::Direct, HistoryKind::Commands] {
+    for kind in [HistoryKind::Fixtures, HistoryKind::Commands] {
         for count in [0, 3, 131] {
             let store = InMemoryEventStore::new();
             seed::seed(store.clone(), "smoke", kind, count, 32).await?;

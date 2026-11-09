@@ -6,6 +6,7 @@ use rostfrei_messaging_core::{ApplicationName, BoundedContext, BoundedContextNam
 use sha2::{Digest, Sha256};
 
 use crate::hex::encode_lower_hex;
+use crate::subject_tokens;
 
 const MAX_STREAM_NAME_LEN: usize = 255;
 pub const MAX_SUPPORTED_EVENT_BYTES: usize = 64 * 1024 * 1024;
@@ -156,7 +157,8 @@ impl NatsEventStoreConfig {
     /// Operator assertion: this is a NEW isolated authority namespace, with old writers
     /// excluded by broker credentials/ACLs. Never use to activate an existing legacy store.
     /// Provisioning durably binds this epoch at stream creation. The default legacy
-    /// profile permits ordinary event writes but blocks unknown command outcomes.
+    /// profile permits coordinated acceptances and Test fixtures, but blocks unknown
+    /// completed command outcomes.
     pub fn with_fresh_completed_outcome_epoch(
         mut self,
         epoch: impl Into<String>,
@@ -227,7 +229,7 @@ impl NatsEventStoreConfig {
         self.explicit_detail_expiry
     }
     /// Connect a replay-only handle: all persistence mutations are refused, including
-    /// legacy event appends, append sessions, completed/import writes and detail expiry.
+    /// fixture injection, append sessions, completed/import writes and detail expiry.
     /// History and known-outcome reads remain available. Provisioning helpers are
     /// separate explicit operations; this setting grants no provisioning authority.
     #[must_use]
@@ -290,24 +292,121 @@ impl NatsEventStoreConfig {
         self.aggregate_subject_filter()
     }
 
-    pub fn aggregate_subject(&self, aggregate_type: &str, aggregate_id: &str) -> String {
-        let digest = digest_parts(&[aggregate_type.as_bytes(), aggregate_id.as_bytes()]);
-        format!("{}.aggregate.{digest}", self.subject_prefix)
+    pub fn event_subject(&self, aggregate_type: &str, aggregate_id: &str) -> String {
+        format!(
+            "{}.aggregate.{}.{}",
+            self.subject_prefix,
+            subject_tokens::encode(aggregate_type),
+            subject_tokens::encode(aggregate_id),
+        )
+    }
+
+    /// Used for both replay and native aggregate-wide concurrency checks.
+    pub fn aggregate_history_subject_filter(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: &str,
+    ) -> String {
+        self.event_subject(aggregate_type, aggregate_id)
+    }
+
+    pub fn correlation_receipt_subject_filters(&self, correlation: &str) -> [String; 2] {
+        ["transaction", "fixture"].map(|kind| {
+            format!(
+                "{}.{kind}.*.receipt.{}.*",
+                self.subject_prefix,
+                subject_tokens::encode(correlation)
+            )
+        })
+    }
+
+    pub fn causation_receipt_subject_filters(&self, causation: &str) -> [String; 2] {
+        ["transaction", "fixture"].map(|kind| {
+            format!(
+                "{}.{kind}.*.receipt.*.{}",
+                self.subject_prefix,
+                subject_tokens::encode(causation)
+            )
+        })
     }
 
     pub fn aggregate_subject_filter(&self) -> String {
-        format!("{}.aggregate.*", self.subject_prefix)
+        format!("{}.aggregate.*.*", self.subject_prefix)
     }
 
-    pub fn transaction_subject(&self, operation_id: &str) -> String {
+    fn transaction_subject_prefix(&self, operation_id: &str) -> String {
         let digest = digest_parts(&[operation_id.as_bytes()]);
         format!("{}.transaction.{digest}", self.subject_prefix)
     }
 
     pub fn transaction_guard_subject(&self, operation_id: &str, ordinal: usize) -> String {
-        format!("{}.guard.{ordinal}", self.transaction_subject(operation_id))
+        format!(
+            "{}.guard.{ordinal}",
+            self.transaction_subject_prefix(operation_id)
+        )
     }
 
+    pub fn transaction_receipt_subject(
+        &self,
+        operation_id: &str,
+        correlation: Option<&str>,
+        causation: Option<&str>,
+    ) -> String {
+        format!(
+            "{}.receipt.{}.{}",
+            self.transaction_subject_prefix(operation_id),
+            subject_tokens::optional(correlation),
+            subject_tokens::optional(causation)
+        )
+    }
+
+    pub fn transaction_receipt_subject_filter(&self, operation_id: &str) -> String {
+        format!(
+            "{}.receipt.*.*",
+            self.transaction_subject_prefix(operation_id)
+        )
+    }
+
+    fn fixture_subject_prefix(
+        &self,
+        stream: &rostfrei_core::StreamId,
+        operation_id: &str,
+    ) -> String {
+        let digest = digest_parts(&[
+            stream.aggregate_type().as_str().as_bytes(),
+            stream.aggregate_id().as_str().as_bytes(),
+            operation_id.as_bytes(),
+        ]);
+        format!("{}.fixture.{digest}", self.subject_prefix)
+    }
+
+    pub fn fixture_receipt_subject(
+        &self,
+        stream: &rostfrei_core::StreamId,
+        operation_id: &str,
+        correlation: Option<&str>,
+        causation: Option<&str>,
+    ) -> String {
+        format!(
+            "{}.receipt.{}.{}",
+            self.fixture_subject_prefix(stream, operation_id),
+            subject_tokens::optional(correlation),
+            subject_tokens::optional(causation)
+        )
+    }
+
+    pub fn fixture_receipt_subject_filter(
+        &self,
+        stream: &rostfrei_core::StreamId,
+        operation_id: &str,
+    ) -> String {
+        format!(
+            "{}.receipt.*.*",
+            self.fixture_subject_prefix(stream, operation_id)
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn legacy_primary_transaction_subject(
         &self,
         primary_stream_id: &rostfrei_core::StreamId,
@@ -321,6 +420,7 @@ impl NatsEventStoreConfig {
         format!("{}.transaction.{digest}", self.subject_prefix)
     }
 
+    #[cfg(test)]
     pub(crate) fn legacy_primary_transaction_guard_subject(
         &self,
         primary_stream_id: &rostfrei_core::StreamId,
@@ -343,6 +443,7 @@ impl NatsEventStoreConfig {
             subjects: vec![
                 self.aggregate_subject_filter(),
                 self.transaction_subject_filter(),
+                format!("{}.fixture.*.receipt.*.*", self.subject_prefix),
             ],
             retention: RetentionPolicy::Limits,
             storage: StorageType::File,
@@ -487,14 +588,15 @@ mod tests {
         );
         assert_eq!(
             config.subject_filter(),
-            "fast-inbox.domain.commercial-access.aggregate.*"
+            "fast-inbox.domain.commercial-access.aggregate.*.*"
         );
         assert_eq!(config.subject_filter(), config.aggregate_subject_filter());
         assert_eq!(
             config.stream_config().subjects,
             vec![
-                "fast-inbox.domain.commercial-access.aggregate.*",
+                "fast-inbox.domain.commercial-access.aggregate.*.*",
                 "fast-inbox.domain.commercial-access.transaction.>",
+                "fast-inbox.domain.commercial-access.fixture.*.receipt.*.*",
             ]
         );
     }
@@ -518,7 +620,7 @@ mod tests {
         );
         assert_eq!(
             config.aggregate_subject_filter(),
-            "fast-inbox.test.domain.commercial-access.aggregate.*"
+            "fast-inbox.test.domain.commercial-access.aggregate.*.*"
         );
     }
 
@@ -627,30 +729,45 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_subject_is_deterministic_and_opaque() {
+    fn event_subject_and_filters_preserve_separate_readable_identity_tokens() {
         let config =
             NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST").expect("valid config");
-        let subject = config.aggregate_subject("Account", "account-123");
-        assert_eq!(subject, config.aggregate_subject("Account", "account-123"));
+        let subject = config.event_subject("Account", "account-123");
+        assert_eq!(subject, config.event_subject("Account", "account-123"));
         assert_eq!(
             subject,
-            "fast-inbox.domain.commercial-access.aggregate.c747047da35490fdcc850f47802f98b07d5095ea8296688da589d8bf883b4246"
+            "fast-inbox.domain.commercial-access.aggregate.Account.account-123"
         );
-        assert!(!subject.contains("Account"));
-        assert!(!subject.contains("account-123"));
-        assert_ne!(subject, config.aggregate_subject("Account", "account-124"));
+        assert_eq!(
+            config.aggregate_history_subject_filter("Account", "account-123"),
+            subject
+        );
+        assert_eq!(
+            config.correlation_receipt_subject_filters("flow.1"),
+            [
+                "fast-inbox.domain.commercial-access.transaction.*.receipt.flow%2E1.*",
+                "fast-inbox.domain.commercial-access.fixture.*.receipt.flow%2E1.*"
+            ]
+        );
+        assert_eq!(
+            config.causation_receipt_subject_filters("cause.*"),
+            [
+                "fast-inbox.domain.commercial-access.transaction.*.receipt.*.cause%2E%2A",
+                "fast-inbox.domain.commercial-access.fixture.*.receipt.*.cause%2E%2A"
+            ]
+        );
     }
 
     #[test]
     fn transaction_subject_is_operation_scoped_and_opaque() {
         let config =
             NatsEventStoreConfig::new(&context(), "EVENT_STORE_TEST").expect("valid config");
-        let subject = config.transaction_subject("operation-123");
+        let subject = config.transaction_subject_prefix("operation-123");
 
-        assert_eq!(subject, config.transaction_subject("operation-123"));
+        assert_eq!(subject, config.transaction_subject_prefix("operation-123"));
         assert!(subject.starts_with("fast-inbox.domain.commercial-access.transaction."));
         assert!(!subject.contains("operation-123"));
-        assert_ne!(subject, config.transaction_subject("operation-124"));
+        assert_ne!(subject, config.transaction_subject_prefix("operation-124"));
         assert_eq!(
             config.transaction_guard_subject("operation-123", 2),
             format!("{subject}.guard.2")

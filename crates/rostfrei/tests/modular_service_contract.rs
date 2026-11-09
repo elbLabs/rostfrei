@@ -259,7 +259,7 @@ impl CommandHandler<Change> for RaceOnce {
             let commit = derive_commit_id(&stream().unwrap(), &operation);
             let event = derive_event_id(&commit, 0);
             self.store
-                .append(
+                .append_fixture(
                     &stream().unwrap(),
                     ExpectedVersion::NoStream,
                     EventBatch::new(
@@ -1045,7 +1045,7 @@ impl CommandHandler<Change> for AlwaysRace {
             ExpectedVersion::Exact(loaded.base_version())
         };
         self.store
-            .append(
+            .append_fixture(
                 &id,
                 expected,
                 EventBatch::new(

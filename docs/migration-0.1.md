@@ -81,6 +81,8 @@ legacy replay/import and rollback-reader boundaries; the
 [native authority](command-runtime.md#native-authority) is the current split-storage
 contract. Retained response caches are never completed-result authority.
 
+Event storage has separate [subject deployment requirements](messaging/subjects.mdx#fresh-deployments).
+
 ## Authorization and actor attribution
 
 `CommandProcessor::builder` takes the full bounded-context address and an
@@ -133,11 +135,11 @@ documented in [diagnostic limits](handler-simulation.md).
   its default remains local concurrency. Retain consumer/durable names independently
   of payload schemas and deliberately reconcile durable policy through provisioning.
   See [capacity sizing](consumer-concurrency.md).
-- History reads use bounded exact-subject batches. Reader ACLs need scoped ephemeral
-  consumer create/pull/delete rights. Ordinary reads validate local history; use
-  `audit_history`, `audit_streams` or `with_history_auditing(true)` for deep historical
-  receipt checks. Neither response-cache expiry nor a successful history read proves
-  that new writes are authorized.
+- History reads use bounded aggregate-wide subject-filtered batches. Reader ACLs
+  need scoped ephemeral consumer create/pull/delete rights. Ordinary reads validate
+  local history; use `audit_history`, `audit_streams` or `with_history_auditing(true)`
+  for deep historical receipt checks. Neither response-cache expiry nor a successful
+  history read proves that new writes are authorized.
 - Quarantine provides inspection and evidence. Redrive is explicit and preserves
   original identity; integration-event redrive UX remains deferred. Read-model
   generations, checkpoints and query cutover remain application-owned; follow the

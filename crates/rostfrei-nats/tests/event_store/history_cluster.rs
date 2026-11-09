@@ -1,14 +1,13 @@
 #![allow(clippy::expect_used, clippy::panic_in_result_fn)]
 
+#[path = "../cluster_support/mod.rs"]
+mod cluster_support;
+
 use super::*;
 use async_nats::jetstream;
+use cluster_support::Cluster;
 use futures_util::StreamExt as _;
-use std::{
-    net::TcpListener,
-    process::{Child, Command, Stdio},
-    sync::Mutex,
-    time::Duration,
-};
+use std::{sync::Mutex, time::Duration};
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout};
 
@@ -16,85 +15,37 @@ use tokio::time::{Instant, timeout};
 // DELETE (default request timeout: five seconds). Allow scheduling headroom for
 // both; assert the read-timeout error and eventual consumer cleanup separately.
 const READ_AND_CLEANUP_BUDGET: Duration = Duration::from_secs(12);
-
-struct Cluster {
-    children: Vec<Child>,
-    urls: Vec<String>,
-    directory: tempfile::TempDir,
-}
+const CLUSTER_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 
 impl Cluster {
-    fn start() -> TestResult<Self> {
-        let mut cluster = Self {
-            children: Vec::new(),
-            urls: Vec::new(),
-            directory: tempfile::tempdir()?,
-        };
-        let ports = (0..3)
-            .map(|_| {
-                Ok((
-                    TcpListener::bind("127.0.0.1:0")?,
-                    TcpListener::bind("127.0.0.1:0")?,
-                ))
-            })
-            .collect::<TestResult<Vec<_>>>()?;
-        let routes = ports
-            .iter()
-            .map(|(_, route)| Ok(format!("nats://{}", route.local_addr()?)))
-            .collect::<TestResult<Vec<_>>>()?
-            .join(",");
-        let binary =
-            std::env::var_os("ROSTFREI_NATS_SERVER").unwrap_or_else(|| "nats-server".into());
-        for (index, (client, route)) in ports.into_iter().enumerate() {
-            let client_address = client.local_addr()?;
-            let route_address = route.local_addr()?;
-            let config = cluster.directory.path().join(format!("node-{index}.conf"));
-            let storage = cluster.directory.path().join(format!("node-{index}"));
-            std::fs::write(
-                &config,
-                format!(
-                    "server_name: history-{index}\nlisten: {client_address}\n\
-                     jetstream {{ store_dir: \"{}\", max_file_store: 256MB, max_memory_store: 64MB }}\n\
-                     cluster {{ name: history, listen: {route_address}, routes: [{routes}] }}\n",
-                    storage.display(),
-                ),
-            )?;
-            let log =
-                std::fs::File::create(cluster.directory.path().join(format!("node-{index}.log")))?;
-            drop(client);
-            drop(route);
-            cluster.children.push(
-                Command::new(&binary)
-                    .arg("-c")
-                    .arg(config)
-                    .stdout(Stdio::from(log.try_clone()?))
-                    .stderr(Stdio::from(log))
-                    .spawn()?,
-            );
-            cluster.urls.push(format!("nats://{client_address}"));
-        }
-        Ok(cluster)
-    }
-
     async fn fixture(&self) -> TestResult<(jetstream::Context, NatsEventStore)> {
         let (bounded_context, stream_name) = unique_names("history-cluster")?;
         let config = NatsEventStoreConfig::new(&bounded_context, stream_name)?
             .with_replicas(1)?
             .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
-        let context = timeout(Duration::from_secs(15), async {
+        let mut last_error = String::from("no connection attempt completed");
+        let context = timeout(CLUSTER_STARTUP_TIMEOUT, async {
             loop {
-                if let Ok(client) =
-                    async_nats::connect(self.urls.first().expect("first node")).await
-                {
-                    let context = jetstream::new(client);
-                    if provision_event_store(&context, &config).await.is_ok() {
-                        break context;
+                match async_nats::connect(self.urls.first().expect("first node")).await {
+                    Ok(client) => {
+                        let context = jetstream::new(client);
+                        match provision_event_store(&context, &config).await {
+                            Ok(()) => break context,
+                            Err(error) => last_error = error.to_string(),
+                        }
                     }
+                    Err(error) => last_error = error.to_string(),
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         })
-        .await?;
+        .await
+        .map_err(|error| {
+            self.print_logs();
+            format!(
+                "cluster fixture provisioning exceeded {CLUSTER_STARTUP_TIMEOUT:?}: {error}; last error: {last_error}"
+            )
+        })?;
         let stream = context.get_stream(config.stream_name()).await?;
         let leader = stream
             .cached_info()
@@ -116,24 +67,6 @@ impl Cluster {
             }
         }
         Err("no remote client broker found".into())
-    }
-}
-
-impl Drop for Cluster {
-    fn drop(&mut self) {
-        for child in &mut self.children {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        if std::thread::panicking() {
-            for index in 0..3 {
-                if let Ok(log) =
-                    std::fs::read_to_string(self.directory.path().join(format!("node-{index}.log")))
-                {
-                    eprintln!("cluster node {index}:\n{log}");
-                }
-            }
-        }
     }
 }
 
@@ -355,7 +288,7 @@ async fn assert_eventually_clean(
 #[tokio::test]
 #[ignore = "requires native nats-server; owns a three-broker cluster"]
 async fn initial_no_responders_recovers_remote_history_in_order() -> TestResult<()> {
-    let cluster = Cluster::start()?;
+    let mut cluster = Cluster::start("history")?;
     let (context, store) = cluster.fixture().await?;
     let aggregate = stream("remote-history")?;
     let expected = history_reads::seed_history(&store, &aggregate).await?;
@@ -378,17 +311,18 @@ async fn initial_no_responders_recovers_remote_history_in_order() -> TestResult<
     assert_eq!(failures, 3);
     assert!(relay.fetches.lock().expect("fetch log").len() <= 10);
     assert_clean(&context, &store).await?;
+    cluster.succeeded = true;
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires native nats-server; owns a three-broker cluster"]
 async fn initial_no_responders_stops_at_read_deadline() -> TestResult<()> {
-    let cluster = Cluster::start()?;
+    let mut cluster = Cluster::start("history")?;
     let (context, store) = cluster.fixture().await?;
     let aggregate = stream("unavailable-history")?;
     store
-        .append(
+        .append_fixture(
             &aggregate,
             ExpectedVersion::NoStream,
             batch(&aggregate, "seed", "seed", &[b"one"])?,
@@ -417,13 +351,14 @@ async fn initial_no_responders_stops_at_read_deadline() -> TestResult<()> {
     let count = relay.fetches.lock().expect("fetch log").len();
     assert!(count > 1, "native recovery must retry: {count}");
     assert_eventually_clean(&context, &store).await?;
+    cluster.succeeded = true;
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires native nats-server; owns a three-broker cluster"]
 async fn transient_no_responders_after_delivery_recovers_batched_history() -> TestResult<()> {
-    let cluster = Cluster::start()?;
+    let mut cluster = Cluster::start("history")?;
     let (context, store) = cluster.fixture().await?;
     let aggregate = stream("partial-history")?;
     let expected = history_reads::seed_history(&store, &aggregate).await?;
@@ -454,13 +389,14 @@ async fn transient_no_responders_after_delivery_recovers_batched_history() -> Te
         assert!(!fetches.last().expect("recovered fetch").failed);
         drop(fetches);
     }
+    cluster.succeeded = true;
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires native nats-server; owns a three-broker cluster"]
 async fn persistent_no_responders_after_delivery_stops_at_read_deadline() -> TestResult<()> {
-    let cluster = Cluster::start()?;
+    let mut cluster = Cluster::start("history")?;
     let (context, store) = cluster.fixture().await?;
     let aggregate = stream("persistently-unavailable-history")?;
     history_reads::seed_history(&store, &aggregate).await?;
@@ -492,13 +428,14 @@ async fn persistent_no_responders_after_delivery_stops_at_read_deadline() -> Tes
         drop(fetches);
     }
     assert_eventually_clean(&context, &store).await?;
+    cluster.succeeded = true;
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires native nats-server; owns a three-broker cluster"]
 async fn cancelled_recovery_cleans_up_the_recreated_cursor() -> TestResult<()> {
-    let cluster = Cluster::start()?;
+    let mut cluster = Cluster::start("history")?;
     let (context, store) = cluster.fixture().await?;
     let aggregate = stream("cancelled-recovery")?;
     history_reads::seed_history(&store, &aggregate).await?;
@@ -519,6 +456,7 @@ async fn cancelled_recovery_cleans_up_the_recreated_cursor() -> TestResult<()> {
     task.abort();
     assert!(task.await.expect_err("cancelled replay").is_cancelled());
     assert_eventually_clean(&context, &store).await?;
+    cluster.succeeded = true;
     Ok(())
 }
 
@@ -535,11 +473,11 @@ async fn cancelled_read_cleans_up_late_native_recreation() -> TestResult<()> {
 }
 
 async fn late_native_recreation(cancel: bool) -> TestResult<()> {
-    let cluster = Cluster::start()?;
+    let mut cluster = Cluster::start("history")?;
     let (context, store) = cluster.fixture().await?;
     let aggregate = stream("late-native-recreation")?;
     store
-        .append(
+        .append_fixture(
             &aggregate,
             ExpectedVersion::NoStream,
             batch(&aggregate, "seed", "seed", &[b"one"])?,
@@ -607,18 +545,19 @@ async fn late_native_recreation(cancel: bool) -> TestResult<()> {
         "native inactivity must remove the late consumer without another DELETE"
     );
     assert!(!relay.task.is_finished(), "fetch relay failed");
+    cluster.succeeded = true;
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires native nats-server; owns a three-broker cluster"]
 async fn recovered_replay_still_rejects_corrupt_history() -> TestResult<()> {
-    let cluster = Cluster::start()?;
+    let mut cluster = Cluster::start("history")?;
     let (context, store) = cluster.fixture().await?;
     let aggregate = stream("corrupt-history")?;
     context
         .publish(
-            store.config().aggregate_subject(
+            store.config().event_subject(
                 aggregate.aggregate_type().as_str(),
                 aggregate.aggregate_id().as_str(),
             ),
@@ -633,5 +572,6 @@ async fn recovered_replay_still_rejects_corrupt_history() -> TestResult<()> {
     assert!(matches!(result, Err(error) if error.kind() == EventStoreErrorKind::CorruptHistory));
     relay.assert_recreated_cursor();
     assert_clean(&context, &store).await?;
+    cluster.succeeded = true;
     Ok(())
 }

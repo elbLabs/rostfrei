@@ -22,7 +22,7 @@ async fn large_fixture_payloads_cross_batch_boundaries_without_losing_events() -
     suite::seed::seed(
         store.clone(),
         "large-fixture",
-        suite::config::HistoryKind::Direct,
+        suite::config::HistoryKind::Fixtures,
         33,
         65536,
     )
@@ -37,6 +37,11 @@ async fn large_fixture_payloads_cross_batch_boundaries_without_losing_events() -
 
 #[test]
 fn benchmark_options_reject_ambiguous_cases_and_zero_samples() {
+    let retired = suite::Options::try_parse_from(["bench", "--history", "direct"])
+        .expect_err("the retired direct label must not imply unrestricted writes");
+    assert!(retired.to_string().contains("fixtures"));
+    let fixtures = suite::Options::try_parse_from(["bench", "--history", "fixtures"]).unwrap();
+    assert_eq!(fixtures.history, [suite::config::HistoryKind::Fixtures]);
     assert!(suite::Options::try_parse_from(["bench", "--samples", "0"]).is_err());
     assert!(suite::Options::try_parse_from(["bench", "--workers", "0"]).is_err());
     let duplicate = suite::Options::try_parse_from(["bench", "--events", "100,100"]).unwrap();

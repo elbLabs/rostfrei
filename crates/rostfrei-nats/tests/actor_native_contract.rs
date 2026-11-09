@@ -1,5 +1,4 @@
-//! ACT-14..16. Run only `actor_` tests: source import retains unrelated original unit tests.
-//! Future `ActorRef` API; real owned NATS, no production changes or replacement store.
+//! Native actor propagation, authorization, wire emission, and restart contracts.
 #![allow(
     dead_code,
     clippy::unwrap_used,
@@ -8,25 +7,6 @@
 )]
 mod modular_restart_support;
 mod release_contract_support;
-// Source import gives test-only access to existing serialization boundaries.
-#[path = "../src/event_store_config.rs"]
-mod event_store_config;
-#[path = "../src/hex.rs"]
-mod hex;
-#[path = "../src/stream_policy.rs"]
-mod stream_policy;
-use event_store_config::NatsEventStoreConfig;
-mod event_store {
-    pub fn actor_check_receipt(
-        config: &NatsEventStoreConfig,
-        sequence: u64,
-        headers: &HeaderMap,
-        bytes: &[u8],
-    ) -> Result<(), EventStoreError> {
-        decode_transaction_receipt(config, sequence, headers, bytes).map(|_| ())
-    }
-    include!("../src/event_store.rs");
-}
 use async_trait::async_trait;
 use release_contract_support::*;
 use rostfrei_runtime::{
@@ -104,6 +84,41 @@ impl TrustedCommandContextResolver for Resolver {
         Ok(caller("verified-worker"))
     }
 }
+
+async fn delivery_diagnostics(
+    f: &Fixture,
+    service: &dyn CommandProcessingService,
+    command: &rostfrei_runtime::EncodedCommand,
+    calls: &AtomicUsize,
+) -> TestResult<String> {
+    // Inspect only after failure; never execute or redeliver the command to diagnose it.
+    let response = NatsCommandResponseReader::new(f.js.clone(), f.messaging.topology().clone())
+        .find_command_response(
+            &command.response_address()?,
+            command.operation_id(),
+            command.message_id(),
+            WAIT,
+        )
+        .await;
+    let caller = caller("verified-worker");
+    let outcome = service
+        .lookup(&caller, command)
+        .await
+        .into_result()
+        .and_then(|outcome| match outcome {
+            OutcomeLookup::Missing => Ok("missing"),
+            OutcomeLookup::Completed(outcome) => {
+                rostfrei_runtime::ProcessedCommand::new(CompletionOrigin::Replayed, outcome)
+                    .admit(&caller, command)
+                    .map(|_| "completed and admitted")
+            }
+        });
+    Ok(format!(
+        "handler calls={}; retained response={response:?}; authoritative outcome={outcome:?}",
+        calls.load(Ordering::SeqCst)
+    ))
+}
+
 #[tokio::test]
 async fn actor_native_resolver_keeps_authenticated_principal_distinct_on_replay() -> TestResult {
     let f = Fixture::new("actor-resolver").await?;
@@ -113,7 +128,7 @@ async fn actor_native_resolver_keeps_authenticated_principal_distinct_on_replay(
     let service = service(&f, store.clone(), calls.clone(), policy.clone())?;
     let worker = f
         .adapter
-        .command_handler_with_resolver(service, Arc::new(Resolver));
+        .command_handler_with_resolver(service.clone(), Arc::new(Resolver));
     let bus = CommandBus::new(f.context.clone(), f.adapter.clone());
     let original =
         bus.encode(request("actor-worker", "one", "create")?.with_actor(actor("alice")))?;
@@ -145,11 +160,18 @@ async fn actor_native_resolver_keeps_authenticated_principal_distinct_on_replay(
         DeliveryDisposition::Acknowledge
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    for _ in 0..2 {
-        assert!(matches!(
-            worker.handle(delivery(&original, true)?).await,
-            DeliveryDisposition::Acknowledge
-        ));
+    for attempt in 0..2 {
+        let disposition = worker.handle(delivery(&original, true)?).await;
+        let diagnostics = if disposition == DeliveryDisposition::Acknowledge {
+            None
+        } else {
+            Some(delivery_diagnostics(&f, service.as_ref(), &original, &calls).await)
+        };
+        assert_eq!(
+            disposition,
+            DeliveryDisposition::Acknowledge,
+            "authenticated delivery attempt {attempt}; diagnostics={diagnostics:?}"
+        );
     }
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -166,7 +188,7 @@ async fn actor_native_resolver_keeps_authenticated_principal_distinct_on_replay(
 }
 
 #[tokio::test]
-async fn actor_native_event_and_receipt_wire_mutations_fail_integrity_checks() -> TestResult {
+async fn actor_native_command_and_fixture_writes_emit_attributed_wire_forms() -> TestResult {
     let f = Fixture::new("actor-wire").await?;
     let store = store(&f).await?;
     let service = service(
@@ -189,75 +211,54 @@ async fn actor_native_event_and_receipt_wire_mutations_fail_integrity_checks() -
         .get_raw_message(journal.cached_info().state.last_sequence)
         .await?;
     let raw_stream = stream("standalone")?;
+    let fixture_context = f.context.application().bounded_context_in_scope(
+        rostfrei_messaging_core::TrafficScope::Test,
+        f.context.name().as_str(),
+    )?;
+    let fixture_config = NatsEventStoreConfig::for_bounded_context(&fixture_context)?
+        .with_storage_limits(32 * 1024 * 1024, 524_288)?;
+    provision_event_store(&f.js, &fixture_config).await?;
+    let fixture_store = NatsEventStore::connect(f.js.clone(), fixture_config.clone()).await?;
     let raw_operation = OperationId::new("standalone")?;
     let raw_commit = derive_commit_id(&raw_stream, &raw_operation);
-    store
-        .append(
-            &raw_stream,
-            ExpectedVersion::NoStream,
-            EventBatch::new(
-                raw_commit.clone(),
-                raw_operation,
-                ContentFingerprint::digest("standalone"),
-                vec![NewEvent::new(
-                    derive_event_id(&raw_commit, 0),
-                    "changed",
-                    1,
-                    br#"{"created":true,"item":null}"#.to_vec(),
-                )?],
-            )?
-            .with_actor(actor("alice")),
-        )
-        .await?;
-    let journal = f.js.get_stream(store.config().stream_name()).await?;
+    rostfrei_core::FixtureEventStore::append_fixture(
+        &fixture_store,
+        &raw_stream,
+        ExpectedVersion::NoStream,
+        EventBatch::new(
+            raw_commit.clone(),
+            raw_operation,
+            ContentFingerprint::digest("standalone"),
+            vec![NewEvent::new(
+                derive_event_id(&raw_commit, 0),
+                "changed",
+                1,
+                br#"{"created":true,"item":null}"#.to_vec(),
+            )?],
+        )?
+        .with_actor(actor("alice")),
+    )
+    .await?;
+    let journal = f.js.get_stream(fixture_config.stream_name()).await?;
     let standalone = journal
-        .get_raw_message(journal.cached_info().state.last_sequence)
+        .get_last_raw_message_by_subject(&fixture_config.event_subject(
+            raw_stream.aggregate_type().as_str(),
+            raw_stream.aggregate_id().as_str(),
+        ))
         .await?;
-    let config = NatsEventStoreConfig::for_bounded_context(&f.context)?
-        .with_fresh_split_outcome_epoch("actor-contract")?
-        .with_explicit_detail_expiry(true)?
-        .with_storage_limits(32 * 1024 * 1024, 524_288)?;
     for (field, raw, expected_schema) in [
         ("event", &event, 6),
-        ("event", &standalone, 5),
+        ("event", &standalone, 8),
         ("receipt", &receipt, 5),
     ] {
-        let check = |bytes: &[u8]| {
-            if field == "event" {
-                event_store::decode_consumed_event(
-                    &config,
-                    raw.subject.as_str(),
-                    &raw.headers,
-                    bytes,
-                )
-                .map(|_| ())
-            } else {
-                event_store::actor_check_receipt(&config, raw.sequence, &raw.headers, bytes)
-            }
-        };
-        check(&raw.payload)?;
         let wire: serde_json::Value = serde_json::from_slice(&raw.payload)?;
         assert_eq!(wire["schemaVersion"], expected_schema);
         assert_eq!(wire[field]["actor"], serde_json::to_value(actor("alice"))?);
-        for mutation in ["replace", "strip", "null", "legacy-version"] {
-            let mut bad = wire.clone();
-            match mutation {
-                "replace" => bad[field]["actor"] = serde_json::to_value(actor("bob"))?,
-                "strip" => {
-                    bad[field].as_object_mut().unwrap().remove("actor");
-                }
-                "null" => bad[field]["actor"] = serde_json::Value::Null,
-                _ => bad["schemaVersion"] = serde_json::json!(4),
-            }
-            let bytes = serde_json::to_vec(&bad)?;
-            let result = check(&bytes);
-            assert_eq!(
-                result.unwrap_err().kind(),
-                EventStoreErrorKind::CorruptHistory,
-                "{field}: {mutation}"
-            );
-        }
     }
+    assert_eq!(
+        fixture_store.load(&raw_stream).await?[0].actor(),
+        Some(&actor("alice"))
+    );
     Ok(())
 }
 

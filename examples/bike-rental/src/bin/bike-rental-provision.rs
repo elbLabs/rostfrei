@@ -1,8 +1,7 @@
 use std::env;
 
 use bike_rental::{
-    APPLICATION_NAME, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
-    demo::{apply_fixture, demo_fixture},
+    APPLICATION_NAME, BikeRentalNatsConfig, BikeRentalNatsResourceLimits, demo::seed_demo,
 };
 use rostfrei::nats::{NatsConnectionConfig, ServerVersion, connect};
 
@@ -27,13 +26,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     config.provision(&connection).await?;
     let store = config.connect_store(&connection).await?;
-    let fixture = demo_fixture()?;
-    apply_fixture(&store, &fixture).await?;
+    seed_demo(&store).await?;
     connection.drain().await?;
 
-    println!(
-        "provisioned NATS application `{application}` with fixture `{}`",
-        fixture.id()
-    );
+    println!("provisioned NATS application `{application}` and command-seeded its demo fleet");
     Ok(())
 }

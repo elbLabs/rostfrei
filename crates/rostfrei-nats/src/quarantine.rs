@@ -19,6 +19,7 @@ use tokio::time::timeout;
 use crate::{
     consumer::{MAX_QUARANTINE_RECORD_BYTES, QuarantineRecord},
     hex::encode_lower_hex,
+    integration_subject::logical_address,
     messaging_config::{MessagingTopology, traffic_subject_prefix},
     stream_policy::is_stream_not_found,
 };
@@ -245,7 +246,14 @@ impl NatsQuarantineReader {
     }
 
     fn source_matches(&self, message: &QuarantinedMessage, subject: &str) -> bool {
-        let Ok(address) = MessageAddress::parse(message.address.clone()) else {
+        let address = MessageAddress::parse(message.address.clone())
+            .ok()
+            .or_else(|| {
+                logical_address(&message.address)
+                    .ok()
+                    .map(MessageAddress::from)
+            });
+        let Some(address) = address else {
             return false;
         };
         address.application() == self.topology.application().as_str()

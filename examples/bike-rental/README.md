@@ -46,8 +46,13 @@ ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
 
 Tracer listens at `http://127.0.0.1:1309`. Startup provisions local resources,
 verifies the NATS topology, and seeds `city-fleet` with serviceable `bike-42` and
-maintenance-required `bike-99`. Normal state persists across restarts; isolated
+maintenance-required `bike-99` through actual `AddBicycle` commands. Stable operation
+IDs replay their durable receipts on repeated startup, preserving later fleet changes.
+Normal state persists across restarts; isolated
 test state is recreated at startup when `--tracer` is enabled.
+
+Normal namespaces previously initialized by direct fixture injection need a fresh
+application namespace; command seeding does not adopt receiptless fixture events.
 
 Omit `--tracer` to start the same Normal command runtime without HTTP tokens,
 endpoints or correlation observers. Both modes reuse one executable binding
@@ -171,6 +176,17 @@ Studio's Observe panel follows externally triggered domain and integration
 events. See [continuous observation](../../docs/continuous-observation.md) for
 backend wiring, scope isolation, and retention.
 
+With `ROSTFREI_INSPECTION_TOKEN` configured, Studio's **Correlations** workspace
+can select the rental-fleet anchor (for example, `city-fleet`) or open a correlation
+ID. It reads retained Normal domain and integration events directly from NATS;
+source cutoffs describe each read. There is no projector to start. Integration
+events keep their 30-day default expiry. Includes and payload-field matches are
+described in [retained inspection](../../docs/continuous-observation.md#retained-correlation-inspection).
+
+This event-subject format requires a fresh application namespace. Changing only
+the completed-outcome epoch does not migrate older event subjects; see
+[fresh deployments](../../docs/messaging/subjects.mdx#fresh-deployments).
+
 ### Test state and reset
 
 The application has two traffic scopes:
@@ -187,7 +203,8 @@ events, and restarts the workers. A failed reset leaves Test, test
 instances, and dynamic inputs unavailable until a reset succeeds.
 
 The `demo-fleet` fixture builds `city-fleet` from two ordered `bicycle-added`
-events. There is no legacy event decoder; incompatible demo histories require a
+events through the Test-only fixture capability. Normal startup uses `demo::seed_demo`
+instead of fixture replay. There is no legacy event decoder; incompatible demo histories require a
 fresh `ROSTFREI_APPLICATION` namespace or deletion of disposable NATS streams.
 
 For example, renting `bike-42` once succeeds. A second rental with a new

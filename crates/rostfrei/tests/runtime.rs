@@ -9,8 +9,8 @@ use rostfrei::{
     CommandExecutionError, CommandExecutionMetadata, CommandExecutor, CommandHandler,
     CommandHandlingResult, CommandOutcome, CommittedDomainEvent, ContentFingerprint,
     DomainEventDispatchOutcome, DomainEventDispatcher, DomainEventHandler, DomainEventHandlerError,
-    DomainEventHandlerErrorKind, EventBatch, EventCodecErrorKind, EventStore, EventVariant,
-    ExpectedVersion, InMemoryEventStore, Initialize, NewEvent, OperationId, StreamAggregateId,
+    DomainEventHandlerErrorKind, EventBatch, EventCodecErrorKind, EventVariant, ExpectedVersion,
+    FixtureEventStore, InMemoryEventStore, Initialize, NewEvent, OperationId, StreamAggregateId,
     StreamId,
 };
 use rostfrei_core::{derive_commit_id, derive_event_id};
@@ -561,7 +561,7 @@ async fn replay_error(
     )
     .map_err(|error| fixture_error("raw replay batch", error))?;
     store
-        .append(&stream, ExpectedVersion::NoStream, batch)
+        .append_fixture(&stream, ExpectedVersion::NoStream, batch)
         .await
         .map_err(|error| TestError::UnexpectedFailure {
             context: "seed invalid history",

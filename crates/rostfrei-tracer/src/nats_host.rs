@@ -6,6 +6,7 @@
 
 mod backend;
 mod observation;
+mod retained_history;
 pub use backend::NatsExecutionProfile;
 use backend::{Backend, CurrentBackend};
 
@@ -282,6 +283,36 @@ impl CommandTransport for ScopedTransport {
 
 type Worker = JoinHandle<Result<(), NatsHostError>>;
 
+#[derive(Default)]
+struct RuntimeWorkers {
+    application: Vec<Worker>,
+    observation: Option<Worker>,
+}
+
+impl RuntimeWorkers {
+    const fn is_empty(&self) -> bool {
+        self.application.is_empty() && self.observation.is_none()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &Worker> {
+        self.application.iter().chain(self.observation.iter())
+    }
+
+    fn take_finished(&mut self) -> Option<Worker> {
+        if let Some(index) = self.application.iter().position(JoinHandle::is_finished) {
+            Some(self.application.swap_remove(index))
+        } else if self
+            .observation
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished)
+        {
+            self.observation.take()
+        } else {
+            None
+        }
+    }
+}
+
 /// Owns NATS workers, fixture suppression, submission/reset coordination and observation.
 /// `connect` verifies existing resources; it never provisions or resets them.
 pub struct NatsRuntime {
@@ -295,7 +326,7 @@ pub struct NatsRuntime {
     shutting_down: Arc<AtomicBool>,
     fixture_events: Arc<RwLock<FixtureEventSet>>,
     reset_required: AtomicBool,
-    workers: Mutex<Vec<Worker>>,
+    workers: Mutex<RuntimeWorkers>,
     observer: Mutex<Option<CorrelationObserver>>,
 }
 
@@ -343,7 +374,7 @@ impl NatsRuntime {
             shutting_down,
             fixture_events: Arc::new(RwLock::new(FixtureEventSet::default())),
             reset_required: AtomicBool::new(false),
-            workers: Mutex::new(Vec::new()),
+            workers: Mutex::new(RuntimeWorkers::default()),
             observer: Mutex::new(None),
         })
     }
@@ -373,10 +404,15 @@ impl NatsRuntime {
     /// Test backend across resets, while diagnostics remain history-only.
     pub fn tracer_builder(&self) -> crate::TracerBuilder {
         let current = Arc::new(self.backend.clone());
-        self.bindings
+        let builder = self
+            .bindings
             .tracer_builder(current.clone())
-            .with_test_event_store(current.clone())
-            .with_stream_directory(current)
+            .with_stream_directory(current.clone());
+        if self.config.context.traffic_scope() == TrafficScope::Test {
+            builder.with_test_event_store(current)
+        } else {
+            builder
+        }
     }
     pub fn transport(&self) -> Arc<dyn CommandTransport> {
         self.transport.clone()
@@ -388,7 +424,14 @@ impl NatsRuntime {
         ))
     }
     pub async fn has_correlation_observer(&self) -> bool {
-        self.available.load(Ordering::Acquire) && self.observer.lock().await.is_some()
+        self.available.load(Ordering::Acquire)
+            && self
+                .workers
+                .lock()
+                .await
+                .observation
+                .as_ref()
+                .is_some_and(|worker| !worker.is_finished())
     }
 
     pub async fn apply_fixture(
@@ -403,6 +446,11 @@ impl NatsRuntime {
         &self,
         fixture: &Fixture,
     ) -> Result<FixtureApplyReport, NatsHostError> {
+        if self.config.context.traffic_scope() != TrafficScope::Test {
+            return Err(NatsHostError::Configuration(
+                "fixture injection requires Test scope".into(),
+            ));
+        }
         let plan = FixtureEventSet::new(std::slice::from_ref(fixture))?;
         let mut events = self.fixture_events.write().await;
         events.extend(plan);
@@ -433,7 +481,7 @@ impl NatsRuntime {
         }
         let mut workers = self.workers.lock().await;
         if !workers.is_empty() {
-            if workers.iter().all(|w| !w.is_finished()) {
+            if self.available.load(Ordering::Acquire) && workers.iter().all(|w| !w.is_finished()) {
                 return Ok(());
             }
             return Err(NatsHostError::Worker(
@@ -505,17 +553,17 @@ impl NatsRuntime {
         };
         for consumer in commands {
             let handler = handler.clone();
-            workers.push(tokio::spawn(async move {
+            workers.application.push(tokio::spawn(async move {
                 consumer.run(handler).await.map_err(Into::into)
             }));
         }
         for (consumer, handler) in integrations {
-            workers.push(tokio::spawn(async move {
+            workers.application.push(tokio::spawn(async move {
                 consumer.run(handler).await.map_err(Into::into)
             }));
         }
         if let Some(consumer) = domain {
-            workers.push(tokio::spawn(async move {
+            workers.application.push(tokio::spawn(async move {
                 let (_keepalive, shutdown) = watch::channel(false);
                 consumer
                     .run_until_shutdown(shutdown)
@@ -524,7 +572,7 @@ impl NatsRuntime {
             }));
         }
         if let Some((subscription, handler)) = observation {
-            workers.push(tokio::spawn(async move {
+            workers.observation = Some(tokio::spawn(async move {
                 subscription.run(handler).await.map_err(Into::into)
             }));
         }
@@ -576,6 +624,9 @@ impl NatsRuntime {
         ))
     }
 
+    /// Attaches or replaces observation without interrupting application work.
+    /// A failed replacement leaves observation unattached; application workers
+    /// keep their deliveries and the caller can retry attachment explicitly.
     pub async fn attach_observer(
         &self,
         observer: CorrelationObserver,
@@ -586,9 +637,35 @@ impl NatsRuntime {
                 "Test remains unavailable until a successful reset".into(),
             ));
         }
-        self.stop_in_scope().await;
-        *self.observer.lock().await = Some(observer);
-        self.start_in_scope().await
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err(NatsHostError::Configuration(
+                "runtime is shutting down".into(),
+            ));
+        }
+        let mut workers = self.workers.lock().await;
+        if workers.is_empty() {
+            *self.observer.lock().await = Some(observer);
+            drop(workers);
+            return self.start_in_scope().await;
+        }
+        if !self.available.load(Ordering::Acquire) || workers.iter().any(JoinHandle::is_finished) {
+            return Err(NatsHostError::Worker(
+                "a worker has exited; stop the runtime before restarting".into(),
+            ));
+        }
+        // Release the old source guard before registering the same source again.
+        let mut configured = self.observer.lock().await;
+        *configured = None;
+        if let Some(worker) = workers.observation.take() {
+            worker.abort();
+            let _ = worker.await;
+        }
+        let worker = self.start_correlation_observer(observer.clone()).await?;
+        *configured = Some(observer);
+        drop(configured);
+        workers.observation = Some(worker);
+        drop(workers);
+        Ok(())
     }
 
     /// Compatibility entry point for applications owning their own supervisor.
@@ -605,13 +682,7 @@ impl NatsRuntime {
 
     pub async fn wait_for_worker_exit(&self) -> NatsHostError {
         loop {
-            let finished = {
-                let mut workers = self.workers.lock().await;
-                workers
-                    .iter()
-                    .position(JoinHandle::is_finished)
-                    .map(|index| workers.swap_remove(index))
-            };
+            let finished = self.workers.lock().await.take_finished();
             if let Some(worker) = finished {
                 self.available.store(false, Ordering::Release);
                 return match worker.await {
@@ -638,10 +709,10 @@ impl NatsRuntime {
     async fn stop_in_scope(&self) {
         self.available.store(false, Ordering::Release);
         let workers = std::mem::take(&mut *self.workers.lock().await);
-        for worker in &workers {
+        for worker in workers.iter() {
             worker.abort();
         }
-        for worker in workers {
+        for worker in workers.application.into_iter().chain(workers.observation) {
             let _ = worker.await;
         }
     }
@@ -689,7 +760,7 @@ impl NatsRuntime {
 impl Drop for NatsRuntime {
     fn drop(&mut self) {
         self.begin_shutdown();
-        for worker in self.workers.get_mut().drain(..) {
+        for worker in self.workers.get_mut().iter() {
             worker.abort();
         }
     }
@@ -711,6 +782,7 @@ pub struct TracerConfig {
     repository: Option<Arc<dyn TestRepository>>,
     payload_policy: Arc<dyn TracePayloadPolicy>,
     dispatch: Option<Arc<NatsRuntime>>,
+    production_event_stores: Vec<NatsEventStoreConfig>,
     observation: std::collections::BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
 }
 impl TracerConfig {
@@ -721,6 +793,7 @@ impl TracerConfig {
             repository: None,
             payload_policy: Arc::new(crate::RedactTracePayloads),
             dispatch: None,
+            production_event_stores: Vec::new(),
             observation: std::collections::BTreeMap::new(),
         }
     }
@@ -746,6 +819,14 @@ impl TracerConfig {
     #[must_use]
     pub fn with_dispatch_runtime(mut self, runtime: Arc<NatsRuntime>) -> Self {
         self.dispatch = Some(runtime);
+        self
+    }
+
+    /// Adds an existing Normal store for inspection without provisioning or starting workers.
+    /// The dispatch runtime's store is registered automatically.
+    #[must_use]
+    pub fn with_production_event_store(mut self, config: NatsEventStoreConfig) -> Self {
+        self.production_event_stores.push(config);
         self
     }
 
@@ -793,7 +874,7 @@ impl NatsApplicationBuilder {
         Ok(self)
     }
 
-    /// Explicit, idempotent initialization without deleting resources, also in Normal scope.
+    /// Explicit, idempotent Test initialization without deleting resources.
     #[must_use]
     pub fn with_initial_fixture(mut self, fixture: Fixture) -> Self {
         self.initial_fixture = Some(fixture);
@@ -832,7 +913,10 @@ impl NatsApplicationBuilder {
         reason = "startup preparation and rollback are kept together"
     )]
     async fn start(self, provision: bool) -> Result<NatsApplication, NatsHostError> {
-        if (self.fixture.is_some() || self.tracer.is_some())
+        if (self.fixture.is_some()
+            || self.initial_fixture.is_some()
+            || !self.fixtures.is_empty()
+            || self.tracer.is_some())
             && self.config.context.traffic_scope() != TrafficScope::Test
         {
             return Err(NatsHostError::Configuration("fixtures and Tracer require an explicitly isolated Test runtime; production dispatch is a separate attachment".into()));
@@ -840,9 +924,12 @@ impl NatsApplicationBuilder {
         if !provision && self.fixture.is_some() {
             return Err(NatsHostError::Configuration("connect does not reset fixtures; use explicit provision_and_start for the Test host".into()));
         }
-        if let Some(tracer) = &self.tracer {
+        let production_stores = if let Some(tracer) = &self.tracer {
             tracer.validate_observation(&self.config)?;
-        }
+            retained_history::sources(tracer, &self.config)?
+        } else {
+            Vec::new()
+        };
         let runtime = Arc::new(if provision {
             NatsRuntime::provision(self.connection, self.config, self.bindings.clone()).await?
         } else {
@@ -890,6 +977,13 @@ impl NatsApplicationBuilder {
                         .with_dispatch_transport(dispatch.transport())
                         .with_production_quarantine_reader(dispatch.quarantine_reader());
                 }
+                builder = retained_history::attach(
+                    builder,
+                    &runtime,
+                    dispatch.as_deref(),
+                    production_stores,
+                )
+                .await?;
                 let tracer = builder.build()?;
                 runtime
                     .attach_observer(tracer.correlation_observer(OperationMode::Test))

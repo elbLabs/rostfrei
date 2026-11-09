@@ -2,7 +2,10 @@
 
 use std::{error::Error, sync::Arc};
 
-use bike_rental::{demo::demo_fixture, tracer};
+use bike_rental::{
+    demo::{demo_fixture, seed_demo},
+    tracer,
+};
 use rostfrei::nats::{NatsConnectionConfig, connect};
 use rostfrei::tracer::{NatsApplication, NatsRuntime, NatsRuntimeConfig, TestScenarioReset};
 use rostfrei::{ApplicationName, OperationId, OutcomeKey, OutcomeReader, StreamId};
@@ -29,7 +32,7 @@ async fn paired_reset_reconnects_authority_preserves_normal_and_cannot_bypass_fa
             .with_fresh_completed_outcome_epoch("owned-test")?;
     let normal =
         NatsRuntime::provision(connection.clone(), normal_config, bindings.clone()).await?;
-    normal.apply_fixture(&demo_fixture()?).await?;
+    seed_demo(&normal.store()).await?;
     normal.start_workers().await?;
     let host = NatsApplication::builder(
         application.test_bounded_context("bike-rental")?,

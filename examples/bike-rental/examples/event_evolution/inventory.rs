@@ -7,7 +7,9 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use rostfrei::core::{AggregateId, AggregateType, EventStore, derive_commit_id, derive_event_id};
+use rostfrei::core::{
+    AggregateId, AggregateType, FixtureEventStore, derive_commit_id, derive_event_id,
+};
 use rostfrei::{
     Aggregate, AggregateCodecs, BoundedContextName, CommandDecision, CommandExecution,
     CommandExecutionMetadata, CommandHandler, CommandHandlingResult, ContentFingerprint,
@@ -245,8 +247,8 @@ pub fn stream() -> ExampleResult<StreamId> {
     ))
 }
 
-/// Genuine v1 history, as the previous release wrote it.
-pub async fn seed_v1_history<S: EventStore>(store: &S) -> ExampleResult<Vec<RecordedEvent>> {
+/// A fixture using genuine v1 payloads, as the previous release wrote them.
+pub async fn seed_v1_history<S: FixtureEventStore>(store: &S) -> ExampleResult<Vec<RecordedEvent>> {
     let operation = OperationId::new("v1-history")?;
     let commit = derive_commit_id(&stream()?, &operation);
     let events = [
@@ -282,7 +284,7 @@ pub async fn seed_v1_history<S: EventStore>(store: &S) -> ExampleResult<Vec<Reco
         events,
     )?;
     Ok(store
-        .append(&stream()?, ExpectedVersion::NoStream, batch)
+        .append_fixture(&stream()?, ExpectedVersion::NoStream, batch)
         .await?
         .into_events())
 }

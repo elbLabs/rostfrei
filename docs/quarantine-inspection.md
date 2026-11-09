@@ -43,6 +43,13 @@ proof of a valid envelope or causal relationship. The original message ID can be
 `missing-or-invalid` for malformed deliveries. The opaque record ID, not that
 message ID, identifies the quarantined delivery.
 
+The supported integration publisher requires a valid canonical envelope and
+consistent transport metadata before deriving the
+[stored event subject](messaging/subjects.mdx#stored-event-subjects). Malformed raw
+broker publications can still reach consumers and quarantine. Quarantine subjects
+retain their existing logical source-address shape; they do not acquire event
+correlation/causation suffixes.
+
 ## Lifecycle and errors
 
 Test reset removes retained quarantine evidence. Old IDs and cursors return
@@ -108,6 +115,10 @@ $JS.API.STREAM.MSG.GET.<APPLICATION>_QUARANTINE
 and subscribe/reply permissions on its client inbox namespace. Match the actual
 API prefix when using a JetStream domain. Business publication, consumer
 management, stream creation, purge, and deletion permissions are unnecessary.
+
+These grants cover quarantine only. [Retained correlation inspection](continuous-observation.md#retained-correlation-inspection)
+uses the same production inspection capability but reads configured event sources
+through ephemeral consumers and needs their separate NATS permissions.
 
 ## Payload policy
 

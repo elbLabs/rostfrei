@@ -3,6 +3,8 @@
 #[path = "../examples/read_model_storage/application.rs"]
 mod application;
 mod native_connection_support;
+mod transaction_support;
+use transaction_support::AppendOneTransaction;
 
 #[path = "read_model/recovery.rs"]
 mod recovery;
@@ -14,8 +16,8 @@ use application::{
     GetEntitlement, MemberJoined, OrganizationEvent, rebuild,
 };
 use rostfrei_core::{
-    AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventStore, ExpectedVersion,
-    NewEvent, OperationId, StreamId, derive_commit_id, derive_event_id,
+    AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, ExpectedVersion, NewEvent,
+    OperationId, StreamId, derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::{
     CallerMetadata, CorrelationId, DeliveryDisposition, DeliveryInfo, EnvelopeContext,
@@ -114,7 +116,7 @@ async fn multiple_handlers_merge_checkpoints_and_rebuild_from_authoritative_hist
             .collect::<ExampleResult<Vec<_>>>()?,
     )?;
     let recorded = history
-        .append(&stream, ExpectedVersion::NoStream, batch)
+        .append_one_transaction(&stream, ExpectedVersion::NoStream, batch)
         .await?
         .into_events();
     let second = recorded.get(1).ok_or("missing event")?;

@@ -156,18 +156,18 @@ async fn raw_batch_and_transaction_attribution_must_agree_before_any_write() -> 
             b = b.with_actor(actor);
         }
         let first = direct
-            .append(&stream(), ExpectedVersion::NoStream, b.clone())
+            .append_fixture(&stream(), ExpectedVersion::NoStream, b.clone())
             .await?;
         assert_eq!(first.events()[0].actor(), b.actor());
         assert!(
             direct
-                .append(&stream(), ExpectedVersion::NoStream, b.clone())
+                .append_fixture(&stream(), ExpectedVersion::NoStream, b.clone())
                 .await?
                 .is_exact_replay()
         );
         assert_eq!(
             direct
-                .append(
+                .append_fixture(
                     &stream(),
                     ExpectedVersion::NoStream,
                     b.with_actor(actor("bob"))

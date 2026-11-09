@@ -31,6 +31,10 @@ pub enum NatsErrorKind {
 pub enum NatsError {
     #[error("NATS adapter configuration is invalid")]
     Configuration,
+    #[error(
+        "integration subject layout is incompatible; select a fresh application namespace (in-place history migration is not supported)"
+    )]
+    IntegrationSubjectLayout,
     #[error("NATS connection failed")]
     Connection,
     #[error("NATS server does not satisfy minimum version {required}")]
@@ -76,7 +80,7 @@ pub enum NatsError {
 impl NatsError {
     pub const fn kind(&self) -> NatsErrorKind {
         match self {
-            Self::Configuration => NatsErrorKind::Configuration,
+            Self::Configuration | Self::IntegrationSubjectLayout => NatsErrorKind::Configuration,
             Self::Connection => NatsErrorKind::Connection,
             Self::MinimumServerVersion { .. } => NatsErrorKind::MinimumServerVersion,
             Self::Serialization => NatsErrorKind::Serialization,

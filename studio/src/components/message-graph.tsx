@@ -62,6 +62,7 @@ type MessageFlowNode = Node<
     message: MessageGraphNode
     view: FlowView
     selected: boolean
+    contextTone?: number
     onSelect: (id: string) => void
   },
   "message"
@@ -105,6 +106,14 @@ export function MessageGraph({
     MessageFlowEdge
   > | null>(null)
   const layout = useMemo(() => layoutMessageGraph(nodes), [nodes])
+  const contextTones = useMemo(() => {
+    const tones = new Map<string, number>()
+    if (view === "retained")
+      for (const node of nodes)
+        if (node.boundedContext && !tones.has(node.boundedContext))
+          tones.set(node.boundedContext, tones.size % 4)
+    return tones
+  }, [nodes, view])
   const selected =
     nodes.find((node) => node.id === selectedId) ??
     nodes.find((node) => node.subject === true) ??
@@ -122,9 +131,9 @@ export function MessageGraph({
           : null
       setSelectedId(id)
       setDetailsOpen(true)
-      if (canvas) setCanvasInspectorOpen(true)
+      if (canvas || view === "retained") setCanvasInspectorOpen(true)
     },
-    [canvas]
+    [canvas, view]
   )
   const flowNodes = useMemo<MessageFlowNode[]>(
     () =>
@@ -142,13 +151,16 @@ export function MessageGraph({
           message: node,
           view,
           selected: node.id === highlightedId,
+          contextTone: node.boundedContext
+            ? contextTones.get(node.boundedContext)
+            : undefined,
           onSelect: select,
         },
         draggable: false,
         selectable: false,
         focusable: false,
       })),
-    [layout.nodes, view, highlightedId, select]
+    [layout.nodes, view, highlightedId, select, contextTones]
   )
   const flowEdges = useMemo<MessageFlowEdge[]>(
     () =>
@@ -215,7 +227,9 @@ export function MessageGraph({
           ? "Incomplete execution"
           : view === "predicted"
             ? "Historical simulation (uncommitted)"
-            : "Observed flow"
+            : view === "retained"
+              ? "Retained correlation events"
+              : "Observed flow"
   const dismissInspector = () => {
     setDetailsOpen(false)
     setCanvasInspectorOpen(false)
@@ -292,12 +306,19 @@ export function MessageGraph({
                             ? "Root command"
                             : parent && node.edgeFidelity === "exact"
                               ? `${view === "expected" ? "Expected after" : "Caused by"} ${parent.name}`
-                              : "Associated message · no resolved cause"}
+                              : view === "retained"
+                                ? `${node.boundedContext ?? "Unknown context"} · ${node.causationId && node.causationId === node.messageId ? "origin" : "cause not returned"}`
+                                : "Associated message · no resolved cause"}
                     </p>
                     <MessageCard
                       node={node}
                       view={view}
                       selected={highlightedId === node.id}
+                      contextTone={
+                        node.boundedContext
+                          ? contextTones.get(node.boundedContext)
+                          : undefined
+                      }
                       onSelect={select}
                     />
                   </li>
@@ -341,7 +362,9 @@ export function MessageGraph({
               ? "Expected causation"
               : view === "predicted"
                 ? "Predicted causation"
-                : "Causal link"}
+                : view === "retained"
+                  ? "Recorded causation"
+                  : "Causal link"}
           </span>
           <span>
             <i />
@@ -349,7 +372,9 @@ export function MessageGraph({
           </span>
           {uncertain && (
             <span className="uncertain-note">
-              Some messages have no resolved cause
+              {view === "retained"
+                ? "Some causes are not in these retained events"
+                : "Some messages have no resolved cause"}
             </span>
           )}
           {capture && (
@@ -370,6 +395,15 @@ export function MessageGraph({
         closable={canvas || compact}
         node={selected}
         parent={nodes.find((node) => node.id === selected?.parentId)}
+        siblings={
+          selected?.causationId && !selected.parentId
+            ? nodes.filter(
+                (node) =>
+                  node.id !== selected.id &&
+                  node.causationId === selected.causationId
+              ).length
+            : 0
+        }
         view={view}
         onBack={dismissInspector}
       />
@@ -385,6 +419,8 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
       data-context={data.message.context}
       data-status={data.message.status}
       data-subject={data.message.subject}
+      data-bounded-context={data.message.boundedContext}
+      data-message-kind={data.message.kind}
     >
       <Handle
         type="target"
@@ -395,6 +431,7 @@ function MessageNode({ data }: NodeProps<MessageFlowNode>) {
         node={data.message}
         view={data.view}
         selected={data.selected}
+        contextTone={data.contextTone}
         onSelect={data.onSelect}
       />
       <Handle
@@ -410,11 +447,13 @@ function MessageCard({
   node,
   view,
   selected,
+  contextTone,
   onSelect,
 }: {
   node: MessageGraphNode
   view: FlowView
   selected: boolean
+  contextTone?: number
   onSelect: (id: string) => void
 }) {
   const Icon = kindIcons[node.kind]
@@ -436,12 +475,21 @@ function MessageCard({
         <Icon size={13} />
         {kindLabels[node.kind]}
         {node.context && <span className="fixture-tag">Fixture</span>}
+        {!node.context && view === "retained" && node.boundedContext && (
+          <span
+            className="context-tag"
+            data-context-tone={contextTone}
+            title={`Bounded context ${node.boundedContext}`}
+          >
+            {node.boundedContext}
+          </span>
+        )}
       </span>
       <strong className="message-card-name" title={node.name}>
         {node.name}
       </strong>
       <span className="message-card-facts">
-        {messageFacts(node).map(([key, value]) => (
+        {messageFacts(node, view).map(([key, value]) => (
           <span key={key} title={`${key}: ${value}`}>
             <span>{key}</span> <b>{value}</b>
           </span>
