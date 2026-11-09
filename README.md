@@ -22,7 +22,7 @@ bike-rental example, starting with an ordinary successful rental:
 Help me explore rostfrei through its bike-rental example. Use https://github.com/elbLabs/rostfrei and read docs/agent-tutorial.md from the checkout before setup. Check my environment, prepare an isolated local demo, and guide me through a successful rental and a rejection using real Tracer evidence. Explain one step at a time and let me choose what to inspect next. Use text by default; use a richer display only when its adapter is explicitly available.
 ```
 
-The [tutorial entry guide](docs/agent-tutorial.md) connects setup to the
+The [agent-guided tutorial](docs/agent-tutorial.md) connects setup to the
 checkout's Tracer skill. The text-based journey needs Git, Rust, and NATS
 (usually through Docker); Studio is optional. The agent checks what is available
 before setup. The [reference documentation](docs/README.md) remains directly
@@ -48,15 +48,15 @@ Use **`rostfrei` as your framework dependency**, enabling the adapters you need:
 rostfrei = { version = "0.1.3", features = ["nats", "tracer"] }
 ```
 
-See [Getting Started](docs/getting-started.mdx#one-framework-dependency) for
+See [Framework setup](docs/getting-started.mdx#one-framework-dependency) for
 features, imports, and test dependencies.
 
 Install the development CLI separately with
 `cargo install --locked --version 0.1.3 rostfrei-structure`; see
 [Agent Skills setup](docs/agent-skills-install.md) for dependency-aware installation.
 
-- [Getting started](https://elblabs.github.io/rostfrei/docs/getting-started):
-  explore with an agent or look up dependency setup.
+## Documentation and examples
+
 - [Bike-rental example](examples/bike-rental): run a NATS-backed application
   with rental, return, fleet-addition, and cross-fleet transfer commands.
 - [Official documentation](docs/README.md): shared by developers and agents,
