@@ -99,6 +99,8 @@ three ordinary malformed field values rarely justifies three broker scenarios.
   tests, even when they share fixture setup.
 - Use notifications, barriers, or the existing wire gate for synchronization.
   Poll a concrete state with a deadline instead of sleeping and assuming success.
+- Start fault-recovery deadlines at the observed fault; bound setup and initial
+  progress separately. A next-message timeout is not an end-to-end load limit.
 - Shorten configurable test timeouts. Verify the production default separately
   from whether timeouts preserve durable work.
 - A simulated error proves the caller's reaction to that error. A lost-PubAck
