@@ -2,6 +2,8 @@
 
 **A Rust framework for event-sourced applications.**
 
+[Website](https://elblabs.github.io/rostfrei/) | [Documentation](https://elblabs.github.io/rostfrei/docs) | [Getting started](https://elblabs.github.io/rostfrei/docs/getting-started)
+
 Business rules stay in ordinary Rust. rostfrei supplies history loading,
 durable commands, atomic event transactions, NATS JetStream adapters, HTTP routes,
 read models, and behavioral tests you can inspect through Tracer.
