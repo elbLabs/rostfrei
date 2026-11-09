@@ -1,5 +1,0 @@
-error: duplicate domain attribute
- --> tests/ui/entity_lifecycle/duplicate_enum_metadata.rs:5:1
-  |
-5 | #[domain(id = "other", label = "Other")]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

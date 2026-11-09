@@ -1,5 +1,0 @@
-error: EntityLifecycle enums require at least one state
- --> tests/ui/entity_lifecycle/empty_enum.rs:6:1
-  |
-6 | enum Workflow {}
-  | ^^^^

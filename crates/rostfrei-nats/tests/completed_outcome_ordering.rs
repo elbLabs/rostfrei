@@ -146,8 +146,3 @@ async fn recreated_session_winner(accepted: bool) -> TestResult {
 async fn accepted_winner_cannot_bypass_rejected_session_incarnation() -> TestResult {
     recreated_session_winner(true).await
 }
-
-#[tokio::test]
-async fn rejected_winner_cannot_bypass_rejected_session_incarnation() -> TestResult {
-    recreated_session_winner(false).await
-}

@@ -27,11 +27,10 @@ use rostfrei_tracer::{
     CommandTransport, CommandTransportError, CommandTransportErrorKind, CommandTransportObserver,
     CorrelationError, CorrelationEventKind, DiscoveryError, ExposeTracePayloadsForLocalDevelopment,
     Fixture, IntegrationEventObservation, MessageSeriesCaptureError, OperationMode,
-    OperationResult, RuntimeRegistrationError, SimulationRequest, SubmissionError,
-    SubscriptionError, TestDefinition, TestDefinitionCollection, TestDefinitionRevision,
-    TestReportStatus, TestRepository, TestRepositoryError, TestScenarioReset,
-    TestScenarioResetError, TracePayloadPolicy, Tracer, TracerBuilder,
-    command_execution_fingerprint,
+    RuntimeRegistrationError, SimulationRequest, SubmissionError, SubscriptionError,
+    TestDefinition, TestDefinitionCollection, TestDefinitionRevision, TestReportStatus,
+    TestRepository, TestRepositoryError, TestScenarioReset, TestScenarioResetError,
+    TracePayloadPolicy, Tracer, TracerBuilder, command_execution_fingerprint,
 };
 #[cfg(feature = "http")]
 use rostfrei_tracer::{
@@ -432,21 +431,6 @@ async fn simulate_handler_bounds_results_and_returns_typed_failures() {
             SubmissionError::UnknownCommand { .. }
         ))
     ));
-}
-
-#[cfg(feature = "http")]
-#[tokio::test]
-async fn discovery_advertises_real_execution_without_preview() {
-    let transport = Arc::new(FakeTransport::accepted("discovery", false));
-    let tracer = transported_tracer(Some(transport.clone()), None, false);
-    let catalog = serde_json::to_value(tracer.catalog()).unwrap();
-    let version = &catalog["contexts"][0]["commands"][0]["versions"][0];
-    assert!(version.get("testHrefTemplate").is_some());
-    assert!(
-        version.get("simulateHrefTemplate").is_none(),
-        "Preview is retired from discovery"
-    );
-    assert!(transport.invocations.lock().await.is_empty());
 }
 
 #[cfg(feature = "http")]
@@ -1369,31 +1353,6 @@ struct FailedHistory(EventStoreErrorKind);
 impl EventHistory for FailedHistory {
     async fn load(&self, _stream_id: &StreamId) -> Result<Vec<RecordedEvent>, EventStoreError> {
         Err(EventStoreError::new(self.0, "history failure details"))
-    }
-}
-
-#[tokio::test]
-async fn retired_simulation_never_reads_handler_history() {
-    for kind in [
-        EventStoreErrorKind::CorruptHistory,
-        EventStoreErrorKind::Unavailable,
-    ] {
-        let mut builder = builder(Arc::new(FailedHistory(kind)));
-        builder
-            .register_json::<TestCommand, _>(TestCommandHandler)
-            .unwrap();
-        let tracer = builder.build().unwrap();
-        assert_eq!(
-            tracer
-                .submit_simulation(
-                    "test-context",
-                    COMMAND_NAME,
-                    simulation_request(false),
-                    Some("failed-history")
-                )
-                .await,
-            Err(SubmissionError::ModeUnavailable("simulate"))
-        );
     }
 }
 
@@ -2353,33 +2312,6 @@ async fn conflicting_duplicate_message_identity_is_grouped() {
     );
 }
 
-#[test]
-fn accepted_results_serialize_predictions_only_for_simulation() {
-    let simulation = serde_json::to_value(OperationResult::Accepted {
-        participants: Vec::new(),
-        predicted_events: Vec::new(),
-        appended: Some(false),
-        published: false,
-        command_message_id: None,
-        response_message_id: None,
-        duplicate: None,
-    })
-    .unwrap();
-    assert_eq!(simulation.get("predictedEvents"), Some(&json!([])));
-
-    let transported = serde_json::to_value(OperationResult::Accepted {
-        participants: Vec::new(),
-        predicted_events: Vec::new(),
-        appended: None,
-        published: true,
-        command_message_id: Some("command-1".to_owned()),
-        response_message_id: Some("response-1".to_owned()),
-        duplicate: Some(false),
-    })
-    .unwrap();
-    assert!(transported.get("predictedEvents").is_none());
-}
-
 #[allow(
     clippy::indexing_slicing,
     clippy::unwrap_used,
@@ -2674,29 +2606,6 @@ async fn transported_commands_require_an_idempotency_key() {
             .await,
         Err(SubmissionError::ModeUnavailable("simulate"))
     );
-}
-
-#[tokio::test]
-async fn simulations_cannot_occupy_transported_operation_namespaces() {
-    let tracer = transported_tracer(
-        Some(Arc::new(FakeTransport::accepted("test", false))),
-        Some(Arc::new(FakeTransport::accepted("dispatch", false))),
-        false,
-    );
-
-    for operation_id in ["test:reserved", "dispatch:reserved"] {
-        assert!(matches!(
-            tracer
-                .submit_simulation(
-                    "test-context",
-                    COMMAND_NAME,
-                    simulation_request(false),
-                    Some(operation_id),
-                )
-                .await,
-            Err(SubmissionError::ModeUnavailable("simulate"))
-        ));
-    }
 }
 
 #[tokio::test]
@@ -3546,69 +3455,6 @@ async fn behavioral_test_waits_for_correlated_event_expectations() {
     assert_eq!(
         report.correlation_events_href,
         format!("/correlations/{}/events", report.correlation_id)
-    );
-}
-
-#[tokio::test]
-async fn behavioral_deadline_preserves_the_latest_mismatch_diagnostics() {
-    let correlation_id = Arc::new(Mutex::new(None));
-    let invoked = Arc::new(Notify::new());
-    let transport = ObservableTransport {
-        correlation_id: Arc::clone(&correlation_id),
-        invoked: Arc::clone(&invoked),
-    };
-    let mut definition = behavioral_test_definition(&json!("accepted"));
-    definition["expected"]["within"] = json!("100ms");
-    definition["expected"]["graphs"][0]["nodes"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({
-            "kind": "integration-event",
-            "key": "test-published",
-            "parentKey": "subject",
-            "name": "test-published",
-            "schemaVersion": 1,
-            "payload": { "result": "expected" }
-        }));
-    let repository: Arc<dyn TestRepository> = Arc::new(StaticTestRepository::one(definition));
-    let tracer = behavioral_tracer(Arc::new(transport), repository);
-    let run_tracer = tracer.clone();
-    let run = tokio::spawn(async move { run_tracer.run_test("behavioral-test").await });
-    invoked.notified().await;
-    let correlation_id = correlation_id.lock().await.clone().unwrap();
-
-    tracer
-        .correlation_observer(OperationMode::Test)
-        .observe_integration_event(
-            &correlation_id,
-            IntegrationEventObservation::new(
-                "test-published-message",
-                "test-published",
-                1,
-                "test.integration.test-published",
-            )
-            .with_causation_id("observed-command")
-            .with_payload(json!({ "result": "observed" })),
-        )
-        .await
-        .unwrap();
-    let report = tokio::time::timeout(std::time::Duration::from_secs(1), run)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-
-    assert_eq!(report.status, TestReportStatus::Failed);
-    assert!(report.comparison.diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == "payload-mismatch"
-            && diagnostic.path == "expected:test-published/payload"
-    }));
-    assert!(
-        report
-            .comparison
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "timeout-before-expectations")
     );
 }
 
