@@ -1,4 +1,4 @@
-//! `python3 scripts/test_nats.py -- cargo run --locked -p rostfrei-nats --example read_model`
+//! `cargo xtask test -- cargo run --locked -p rostfrei-nats --example read_model`
 
 mod application;
 mod source;

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "xtask",
     "crates/rostfrei",
     "crates/rostfrei-benchmarks",
     "crates/rostfrei-http",

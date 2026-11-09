@@ -1,2 +1,3 @@
 [alias]
+xtask = "run --locked -p xtask --"
 rostfrei-dev = "run --locked -p rostfrei-structure --bin cargo-rostfrei -- rostfrei"

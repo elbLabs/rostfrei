@@ -1,4 +1,4 @@
-//! Run with `scripts/test_nats.py`: its disposable broker also cleans up failed assertions.
+//! Run with `cargo xtask test`: its disposable broker also cleans up failed assertions.
 #![allow(
     clippy::panic_in_result_fn,
     reason = "acceptance assertions retain native setup and transport errors through TestResult"

@@ -139,7 +139,7 @@ Maintainers can build, check and export the kit from the repository root:
 
 ```sh
 cargo build --locked -p rostfrei-structure --bin cargo-rostfrei
-python3 scripts/check_agent_skills.py
-python3 scripts/check_agent_onboarding.py
-python3 scripts/package_agent_skills.py --output /path/to/artifacts
+cargo xtask acceptance skills
+cargo xtask acceptance onboarding
+cargo xtask skills package --output /path/to/artifacts
 ```

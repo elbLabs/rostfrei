@@ -26,9 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Install the repository Rust toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
       - name: Validate release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -42,23 +42,21 @@ jobs:
             exit 1
           fi
 
-          python3 scripts/versions.py check --tag "$RELEASE_TAG"
+          cargo xtask versions check --tag "$RELEASE_TAG"
 
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "::error::A GitHub release for $RELEASE_TAG already exists."
             exit 1
           fi
 
-      - name: Install the repository Rust toolchain
-        run: rustup show active-toolchain
       - name: Install the matching Rust CLI for kit qualification
         run: |
           cargo install --locked --path crates/rostfrei-structure --debug --root "$RUNNER_TEMP/skills-cli"
           echo "ROSTFREI_CLI=$RUNNER_TEMP/skills-cli/bin/cargo-rostfrei" >> "$GITHUB_ENV"
       - name: Qualify the installable Agent Skills kit
-        run: python3 scripts/check_agent_skills.py
+        run: cargo xtask acceptance skills
       - name: Build release-matched Agent Skills archive and checksum
-        run: python3 scripts/package_agent_skills.py --require-clean --output "$RUNNER_TEMP/agent-skills"
+        run: cargo xtask skills package --require-clean --output "$RUNNER_TEMP/agent-skills"
 
       - name: Create draft GitHub release
         env:

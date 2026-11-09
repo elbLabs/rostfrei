@@ -1,4 +1,4 @@
-//! Run using a disposable NATS: `python3 scripts/test_nats.py -- cargo run
+//! Run using a disposable NATS: `cargo xtask test -- cargo run
 //! --locked -p rostfrei-nats --example read_model_storage`.
 
 mod application;

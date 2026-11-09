@@ -23,16 +23,13 @@ jobs:
       CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       - name: Install the repository Rust toolchain
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
         with:
           key: external-starter
       - name: Check and test the unmodified external starter
-        run: python3 scripts/check_new_project.py
+        run: cargo xtask acceptance new-project
 
   rust:
     name: Rust and real NATS
@@ -40,9 +37,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       - name: Install the repository Rust toolchain
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
@@ -55,7 +49,7 @@ jobs:
       - name: Verify CLI package includes scaffolding templates
         run: cargo package --locked --offline -p rostfrei-structure
       - name: Check the test runner
-        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+        run: cargo test --locked -p xtask
       - name: Install the pinned native NATS authentication fixture
         run: |
           archive="$RUNNER_TEMP/nats-server.tar.gz"
@@ -65,9 +59,9 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP"
           echo "ROSTFREI_NATS_SERVER=$RUNNER_TEMP/nats-server-v2.12.15-linux-amd64/nats-server" >> "$GITHUB_ENV"
       - name: Test the workspace with an authenticated disposable broker and native restart fixtures
-        run: python3 scripts/test_nats.py --contracts
+        run: cargo xtask test --contracts
       - name: Qualify the standalone automatic Tracer host with a disposable broker
-        run: python3 scripts/test_nats.py -- python3 scripts/check_tracer_host.py
+        run: cargo xtask test -- cargo xtask acceptance tracer-host
       - name: Test native authentication and TLS lifecycle
         run: cargo test --locked -p rostfrei-nats --test connection_integration -- --include-ignored --test-threads=1
       - name: Test clustered history replay recovery
@@ -110,7 +104,8 @@ jobs:
           VITE_TRACER_TOKEN: ci-fixture-token
         run: pnpm test:ui
       - name: Run the application-linked host suite through real HTTP and Studio
-        run: python3 ../scripts/test_nats.py -- python3 scripts/check_bike_rental_host.py --studio
+        run: cargo xtask test -- cargo xtask acceptance bike-rental-host --studio
+        working-directory: .
       - name: Inspect desktop and mobile layouts
         run: |
           pnpm inspect:ui --scene all --theme light

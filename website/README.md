@@ -135,7 +135,6 @@ when Chrome is not in a standard location. Captures go to `artifacts/website/`.
 
 Open `/design-study/` on the development server to compare website and Tracer
 Studio design concepts in light and dark mode. These standalone studies are
-separate from the current website appearance described above. The static preview
-also runs with `python3 -m http.server 4178 --directory website/public` from the
-repository root. See [`packages/ui/README.md`](../packages/ui/README.md) for shared
+separate from the current website appearance described above. Run `pnpm dev:website`
+from the repository root. See [`packages/ui/README.md`](../packages/ui/README.md) for shared
 components and the local gallery.

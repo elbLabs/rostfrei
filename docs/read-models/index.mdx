@@ -166,7 +166,7 @@ deadlines belong in the application's contract.
 From the repository root, with Docker available:
 
 ```sh
-python3 scripts/test_nats.py -- cargo run --locked -p rostfrei-nats --example read_model
+cargo xtask test -- cargo run --locked -p rostfrei-nats --example read_model
 ```
 
 The example starts real consumers, combines domain and billing events, and queries:

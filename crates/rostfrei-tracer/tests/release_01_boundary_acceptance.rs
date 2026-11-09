@@ -1,5 +1,5 @@
 //! Independent release joins: real configured host, historical meanings, and current authority.
-//! Run with `scripts/test_nats.py`; never point this target at an application broker.
+//! Run with `cargo xtask test`; never point this target at an application broker.
 #![cfg(feature = "nats-host")]
 #![allow(
     clippy::panic_in_result_fn,

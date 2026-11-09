@@ -1,5 +1,5 @@
 //! Maintained private-event evolution example: genuine v1 history, evolved v2 code.
-//! The NATS case runs with `scripts/test_nats.py`.
+//! The NATS case runs with `cargo xtask test`.
 #![allow(clippy::panic_in_result_fn)]
 
 #[path = "../examples/event_evolution/inventory.rs"]
