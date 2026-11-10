@@ -164,7 +164,7 @@ current events re-encoded:
    and that unrepresentable values fail before committing any event or outcome.
 4. Switch the writer, reload mixed history with both the new and compatibility
    readers, and assert that earlier records are unchanged.
-5. Run the same scenario on real NATS with `scripts/test_nats.py`.
+5. Run the same scenario on real NATS with `cargo xtask test`.
 
 Successful deserialization alone is insufficient; assert state and subsequent
 command behavior. Historical message-series fixtures may keep their v1 payloads:

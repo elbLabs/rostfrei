@@ -1,4 +1,4 @@
-// Real HTTP/JetStream qualification. Launched only by check_bike_rental_host.py
+// Real HTTP/JetStream qualification. Launched only by cargo xtask acceptance bike-rental-host
 // inside the disposable NATS runner; there are no request mocks or redirects.
 import assert from "node:assert/strict"
 import { startStudioServer, launchStudioBrowser, closeStudioBrowser, observePage } from "../studio/scripts/browser.mjs"

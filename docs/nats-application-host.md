@@ -294,8 +294,8 @@ submissions, not independent processes or arbitrary broker publishers.
 ## Integration checks
 
 ```sh
-python3 scripts/test_nats.py -- python3 scripts/check_tracer_host.py
-python3 scripts/test_nats.py -- python3 scripts/check_bike_rental_host.py --studio
+cargo xtask test -- cargo xtask acceptance tracer-host
+cargo xtask test -- cargo xtask acceptance bike-rental-host --studio
 ```
 
 The first uses an external package with Cargo Git dependencies pinned to the

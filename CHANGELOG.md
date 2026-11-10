@@ -37,6 +37,10 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Replace repository Python scripts with the unpublished Rust `cargo xtask` tool:
+  isolated NATS tests, version/release tooling, skill archives and native format
+  validation, external-install/onboarding checks, and live Tracer acceptance.
+  CI and current development instructions use the Rust commands.
 - License the project under the Apache License 2.0.
 - **Breaking (shared codecs):** with an installed `with_event_codecs` registry,
   `ApplicationBindings::register_aggregate` and read-model domain registration

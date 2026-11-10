@@ -119,7 +119,7 @@ The same self-checking walkthrough runs as a regular test in the workspace's
 real-NATS CI suite. Run just that test with a disposable broker:
 
 ```sh
-python3 scripts/test_nats.py -- \
+cargo xtask test -- \
   cargo test --locked -p bike-rental --bin bike-rental-quarantine-demo -- --nocapture
 ```
 

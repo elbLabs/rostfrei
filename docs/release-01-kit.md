@@ -15,7 +15,7 @@ mkdir "$NEW_EVIDENCE/tmp"
 export TMPDIR="$NEW_EVIDENCE/tmp"
 git rev-parse HEAD > "$NEW_EVIDENCE/frozen-revision.txt"
 git status --porcelain > "$NEW_EVIDENCE/frozen-status.txt"
-python3 scripts/check_agent_candidate.py --output "$NEW_EVIDENCE/matched"
+cargo xtask skills candidate --output "$NEW_EVIDENCE/matched"
 export ROSTFREI_CLI="$NEW_EVIDENCE/matched/cli/bin/cargo-rostfrei"
 export ROSTFREI_TOOLS_DIR="$NEW_EVIDENCE/matched/tools"
 ```
@@ -32,18 +32,18 @@ hashes: **the HTTP catalog cannot attest a host's Git revision**.
 ## Component and three-mode live checks
 
 ```bash
-python3 scripts/test_agent_skill_candidate.py
+cargo test --locked -p xtask --test candidate --test capabilities
 cargo test --locked -p rostfrei-structure
 cargo clippy --locked -p rostfrei-structure --all-targets -- -D warnings
 cargo fmt --all --check
-python3 scripts/check_agent_skills.py
-python3 scripts/check_agent_onboarding.py
-python3 scripts/test_agent_skill_source.py
-python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py \
+cargo xtask acceptance skills
+cargo xtask acceptance onboarding
+cargo xtask acceptance source
+cargo xtask test -- cargo xtask skills live \
   --require-handler-simulation --output "$NEW_EVIDENCE/installed-live"
-python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py \
+cargo xtask test -- cargo xtask skills live \
   --source-checkout --require-handler-simulation --output "$NEW_EVIDENCE/source-live"
-python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py \
+cargo xtask test -- cargo xtask skills live \
   --external-app "$NEW_EVIDENCE/matched/external-bike-rental" \
   --require-handler-simulation \
   --host-build-provenance "$NEW_EVIDENCE/matched/external-host-build.json" \
@@ -52,7 +52,7 @@ python3 scripts/test_nats.py -- python3 scripts/check_agent_skills_live.py \
 ```
 
 Each live mode uses a unique app, fresh `ROSTFREI_COMPLETED_OUTCOME_EPOCH`, loopback
-port and distinct control/dispatch/inspection tokens; `test_nats.py` removes its
+port and distinct control/dispatch/inspection tokens; `cargo xtask test` removes its
 disposable broker. Source mode clones the exact commit. Installed mode removes the
 kit before empty-tools-PATH execution; onboarding also checks retained-runner routing.
 The epoch explicitly selects fresh split authority; existing legacy history remains
@@ -73,7 +73,7 @@ cannot establish that nothing was published.
 
 ```bash
 export TRIAL_APP="$(mktemp -d "$QUALIFICATION_PARENT/rostfrei-trial-XXXXXX")/app"
-python3 scripts/check_agent_candidate.py --prepare-app "$TRIAL_APP"
+cargo xtask skills candidate --prepare-app "$TRIAL_APP"
 cp clippy.toml "$TRIAL_APP/clippy.toml" # The helper omits the root Clippy policy.
 ```
 

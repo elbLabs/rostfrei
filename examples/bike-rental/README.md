@@ -311,7 +311,7 @@ distinct NATS credentials or accounts for Test and production dispatch.
 Run the example's tests with a disposable broker:
 
 ```sh
-python3 scripts/test_nats.py -- cargo test --locked -p bike-rental -- --test-threads=1
+cargo xtask test -- cargo test --locked -p bike-rental -- --test-threads=1
 ```
 
 Broker tests are enabled during normal Cargo test runs. To supply a disposable

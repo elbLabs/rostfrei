@@ -1,0 +1,37 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap.workspace = true
+flate2 = "1"
+glob = "0.3"
+nix = { version = "0.31", features = ["signal", "process"] }
+regex = "1"
+reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "rustls-tls"] }
+semver = "1"
+serde_json.workspace = true
+sha2.workspace = true
+signal-hook = "0.3"
+tar = "0.4"
+tempfile.workspace = true
+toml = "1.1"
+toml_edit = "0.25"
+unicode-normalization = "0.1"
+uuid = { workspace = true, features = ["v4"] }
+walkdir = "2"
+yaml-rust2 = "0.11"
+
+# Repository orchestration manipulates dynamic manifests, HTTP evidence and child
+# processes. Keep the general lint set; framework-specific pedantic API lints do
+# not apply to this unpublished developer tool.
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"

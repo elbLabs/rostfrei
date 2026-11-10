@@ -129,7 +129,7 @@ include:
 Run it against an isolated broker:
 
 ```sh
-python3 scripts/test_nats.py -- cargo run --locked -p rostfrei-nats --example read_model_storage
+cargo xtask test -- cargo run --locked -p rostfrei-nats --example read_model_storage
 ```
 
 Each handler reads the entire snapshot, checks its own source position, changes

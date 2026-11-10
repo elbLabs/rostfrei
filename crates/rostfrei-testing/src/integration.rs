@@ -16,7 +16,7 @@ fn configured_nats_url(value: Option<&str>) -> io::Result<String> {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "ROSTFREI_NATS_URL must be set and nonempty for real-NATS tests; \
-                 run `python3 scripts/test_nats.py` to provision a disposable broker",
+                 run `cargo xtask test` to provision a disposable broker",
             )
         })
 }
