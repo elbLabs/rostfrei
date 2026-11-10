@@ -83,7 +83,8 @@ to stream-name suffixes. For Test use `bike-rental.test.` and `BIKE_RENTAL__TEST
 instead. On the website, switch between **Normal** and **Test** to see the complete
 names. The table and rental walkthrough use the current **split outcome authority**:
 an append-only journal plus a separate result-state stream, selected with a fresh
-completed-outcome epoch. `<epoch-digest>` is derived from that configured epoch.
+completed-outcome epoch. Stream names include the exact readable `<epoch>` label;
+subjects use its derived `<epoch-digest>`.
 
 <SubjectExplorer>
 
@@ -91,8 +92,8 @@ completed-outcome epoch. `<epoch-digest>` is derived from that configured epoch.
 | --- | --- | --- | --- | --- |
 | Command | Ask a bounded context to make a decision. | `command.bike-rental.rent-bicycle` | `command.>` | `_COMMANDS` |
 | Command response | Retain the accepted or rejected outcome for one operation. | `command-response.bike-rental.<response-digest>` | `command-response.>` | `_COMMAND_RESPONSES` |
-| Private domain event | Append BicycleRented and permanent decision evidence to the journal. | `domain.bike-rental.split.<epoch-digest>.aggregate.bike-rental%2Frental-fleet.city-fleet` | `domain.bike-rental.split.<epoch-digest>.aggregate.*.*`, `domain.bike-rental.split.<epoch-digest>.transaction.>`, `domain.bike-rental.split.<epoch-digest>.fixture.*.receipt.*.*` | `__BIKE_RENTAL_DOMAIN_EVENTS__SPLIT_<epoch-digest>` |
-| Completed-outcome state | Retain active result details or terminal expiry; the journal owns the decision. | `domain.bike-rental.split.<epoch-digest>.outcome.<candidate-digest>` | `domain.bike-rental.split.<epoch-digest>.outcome.*` | `__BIKE_RENTAL_DOMAIN_EVENTS__SPLIT_<epoch-digest>_STATE` |
+| Private domain event | Append BicycleRented and permanent decision evidence to the journal. | `domain.bike-rental.split.<epoch-digest>.aggregate.bike-rental%2Frental-fleet.city-fleet` | `domain.bike-rental.split.<epoch-digest>.aggregate.*.*`, `domain.bike-rental.split.<epoch-digest>.transaction.>`, `domain.bike-rental.split.<epoch-digest>.fixture.*.receipt.*.*` | `__BIKE_RENTAL__JOURNAL__<epoch>` |
+| Command results | Retain active result details or terminal expiry; the journal owns the decision. | `domain.bike-rental.split.<epoch-digest>.outcome.<candidate-digest>` | `domain.bike-rental.split.<epoch-digest>.outcome.*` | `__BIKE_RENTAL__COMMAND_RESULTS__<epoch>` |
 | Integration event | Publish the public BicycleRentalStarted contract after commit. | `integration.bike-rental.bicycle-rental-started.<correlation>.<causation>` | `integration.>` | `_INTEGRATION_EVENTS` |
 | Query (illustrative) | Read state with Core NATS request/reply; the example does not mount a NATS responder. | `query.bike-rental.bicycle-availability` | None | None |
 | Quarantine | Retain a delivery needing inspection, preserving its source kind and business address. | `quarantine.command.bike-rental.rent-bicycle` | `quarantine.>` | `_QUARANTINE` |
@@ -104,9 +105,18 @@ rostfrei derives the digests and encodes event identities from their envelopes.
 
 rostfrei derives four messaging streams per application and traffic scope, plus
 the journal/state pair per bounded context, scope, and epoch. Human-readable
-stream-name components use uppercase and underscores; the epoch's hex digest
-retains its encoded case. Logical address tokens are lowercase kebab-case; encoded
+application/context components use uppercase and underscores; the epoch label
+retains its exact case, hyphens, and underscores. Logical address tokens are lowercase kebab-case; encoded
 identity tokens preserve case.
+
+For example, epoch `rental-v1` produces
+`BIKE_RENTAL__BIKE_RENTAL__JOURNAL__rental-v1` and
+`BIKE_RENTAL__BIKE_RENTAL__COMMAND_RESULTS__rental-v1`.
+With a custom base name from `NatsEventStoreConfig::new`, the pair is
+`<base>__JOURNAL__<epoch>` and `<base>__COMMAND_RESULTS__<epoch>`.
+Both names must fit JetStream's 255-byte limit.
+Split epochs must not contain the reserved `__` separator; this prevents epoch
+labels from aliasing another context, traffic scope, or stream role.
 
 - Commands use **WorkQueue** retention for durable work delivery.
 - Command responses, integration events, and quarantine use **Limits** retention.
@@ -301,7 +311,7 @@ there is not a commit; the atomic journal decision selects the winner. See
 ### Legacy layout
 
 Legacy **outcome authority** omits `.split.<epoch-digest>` from subjects and
-`__SPLIT_<epoch-digest>` from the journal name, with no separate outcome-state
+uses the original `DOMAIN_EVENTS` stream name, with no separate command-results
 stream. In a fresh namespace its aggregate filter is
 `bike-rental.domain.bike-rental.aggregate.*.*` and stream is
 `BIKE_RENTAL__BIKE_RENTAL_DOMAIN_EVENTS`. That filter does **not** match split
@@ -317,6 +327,14 @@ stream and consumer configurations are rejected; older event subjects are not re
 Update publishers, NATS ACLs and external subscriptions to use the current filters.
 Changing an outcome epoch does not rewrite stored subjects or create a new shared
 integration stream.
+
+Version 0.2.1 changes split-authority stream names from
+`<app>__<context>_DOMAIN_EVENTS__SPLIT_<epoch-digest>` and its `_STATE` companion
+to `JOURNAL` and `COMMAND_RESULTS` names with the readable epoch. Subject derivation,
+stored outcome formats, and expiry policy are unchanged. Existing 0.2.0 pairs are
+not automatically renamed or adopted. Plan the physical-name and authority-binding
+mapping as part of retained-data migration; copying records into a new pair does
+not preserve its authority identity. Changing only names does not migrate 0.1 subjects.
 
 ### Subject visibility
 
@@ -343,10 +361,10 @@ Separate stream names use the unambiguous `__TEST` marker:
 Normal commands: BIKE_RENTAL_COMMANDS
 Test commands:   BIKE_RENTAL__TEST_COMMANDS
 
-Normal journal: BIKE_RENTAL__BIKE_RENTAL_DOMAIN_EVENTS__SPLIT_<epoch-digest>
-Normal state:   BIKE_RENTAL__BIKE_RENTAL_DOMAIN_EVENTS__SPLIT_<epoch-digest>_STATE
-Test journal:   BIKE_RENTAL__TEST__BIKE_RENTAL_DOMAIN_EVENTS__SPLIT_<epoch-digest>
-Test state:     BIKE_RENTAL__TEST__BIKE_RENTAL_DOMAIN_EVENTS__SPLIT_<epoch-digest>_STATE
+Normal journal: BIKE_RENTAL__BIKE_RENTAL__JOURNAL__<epoch>
+Normal results: BIKE_RENTAL__BIKE_RENTAL__COMMAND_RESULTS__<epoch>
+Test journal:   BIKE_RENTAL__TEST__BIKE_RENTAL__JOURNAL__<epoch>
+Test results:   BIKE_RENTAL__TEST__BIKE_RENTAL__COMMAND_RESULTS__<epoch>
 ```
 
 Normal is not a literal `.normal` or `.prod` token. Naming another application

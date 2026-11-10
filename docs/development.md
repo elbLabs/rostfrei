@@ -168,7 +168,7 @@ cargo xtask versions check
 To prepare a version:
 
 ```sh
-cargo xtask versions bump 0.2.0
+cargo xtask versions bump 0.2.1
 ```
 
 The command updates the root manifest and both Cargo lockfiles, including the
@@ -181,7 +181,7 @@ The **Prepare GitHub release** workflow runs from `main` with a tag matching the
 shared version, including the `v` prefix. Validate it locally with:
 
 ```sh
-cargo xtask versions check --tag v0.2.0
+cargo xtask versions check --tag v0.2.1
 ```
 
 The workflow creates a draft GitHub release; it does not publish crates.
@@ -222,7 +222,7 @@ and checksum and build an external application using registry-only dependencies.
 Install the registry CLI and qualify its dependency-aware Skills setup as well.
 
 Registry consumers use [`rostfrei` with adapter features](getting-started.mdx#one-framework-dependency)
-and install the CLI with `cargo install --locked --version 0.2.0 rostfrei-structure`.
+and install the CLI with `cargo install --locked --version 0.2.1 rostfrei-structure`.
 The GitHub workflow is a separate publication step for the matching kit and checksum.
 
 ## Starter dependency contract

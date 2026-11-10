@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-10
+
+### Changed
+
+- **Breaking (split-authority stream names):** use
+  `<APP>__<CONTEXT>__JOURNAL__<epoch>` and
+  `<APP>__<CONTEXT>__COMMAND_RESULTS__<epoch>`, including the readable epoch label.
+  Test scope retains its `__TEST` boundary; custom stream bases remain intact.
+  Split epoch labels reject the reserved `__` separator to prevent name collisions.
+  Existing pairs require an explicit storage migration; startup does not rename
+  or adopt them. Include the names in the planned 0.1-to-0.2 migration. See
+  [deployment compatibility](docs/messaging/subjects.mdx#fresh-deployments).
+  Subjects, stored outcome formats and durable retry semantics are unchanged;
+  detail expiry remains disabled by default, with no automatic TTL or archival.
+
 ## [0.2.0] - 2026-11-10
 
 This release includes breaking fixture-write APIs, shared-codec registration and

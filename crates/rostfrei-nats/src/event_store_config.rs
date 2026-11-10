@@ -64,6 +64,7 @@ pub struct NatsEventStoreConfig {
     explicit_detail_expiry: bool,
     read_only_outcomes: bool,
     legacy_security_scope: Option<rostfrei_core::SecurityScope>,
+    split_stream_prefix: String,
     outcome_state_stream_name: String,
     application: ApplicationName,
     traffic_scope: TrafficScope,
@@ -79,13 +80,16 @@ pub struct NatsEventStoreConfig {
 impl NatsEventStoreConfig {
     pub fn for_bounded_context(context: &BoundedContext) -> Result<Self, EventStoreError> {
         let stream_name = domain_event_stream_name(context);
-        Self::new(context, stream_name)
+        let mut config = Self::new(context, stream_name)?;
+        config.split_stream_prefix = bounded_context_stream_prefix(context);
+        Ok(config)
     }
 
     pub fn new(
         context: &BoundedContext,
         stream_name: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
+        let stream_name = stream_name.into();
         let subject_prefix = format!(
             "{}.domain.{}",
             scoped_subject_prefix(context.application().as_str(), context.traffic_scope()),
@@ -97,11 +101,12 @@ impl NatsEventStoreConfig {
             explicit_detail_expiry: false,
             read_only_outcomes: false,
             legacy_security_scope: None,
+            split_stream_prefix: stream_name.clone(),
             outcome_state_stream_name: String::new(),
             application: context.application().clone(),
             traffic_scope: context.traffic_scope(),
             bounded_context: context.name().clone(),
-            stream_name: stream_name.into(),
+            stream_name,
             subject_prefix,
             max_stream_bytes: DEFAULT_EVENT_STORE_MAX_STREAM_BYTES,
             max_event_bytes: EventByteLimit::DEFAULT,
@@ -182,6 +187,9 @@ impl NatsEventStoreConfig {
 
     /// Explicit fenced cutover. Derives disjoint journal and state subjects; original
     /// identities stay unchanged and old outcomes must be routed to their old authority.
+    /// Stream names use `__JOURNAL__<epoch>` and `__COMMAND_RESULTS__<epoch>`;
+    /// the epoch label is preserved exactly while subjects retain its digest.
+    /// Epochs must not contain the reserved `__` stream-name separator.
     pub fn with_fresh_split_outcome_epoch(
         self,
         epoch: impl Into<String>,
@@ -194,14 +202,20 @@ impl NatsEventStoreConfig {
             .completed_outcome_epoch
             .as_deref()
             .ok_or_else(|| invalid("missing epoch"))?;
+        if epoch.contains("__") {
+            return Err(invalid(
+                "split outcome epoch contains the reserved __ separator",
+            ));
+        }
         let token = digest_parts(&[epoch.as_bytes()]);
-        config.stream_name = format!("{}__SPLIT_{}", config.stream_name, token);
+        config.stream_name = format!("{}__JOURNAL__{epoch}", config.split_stream_prefix);
         config.subject_prefix = format!("{}.split.{token}", config.subject_prefix);
-        config.outcome_state_stream_name = format!("{}_STATE", config.stream_name);
+        config.outcome_state_stream_name =
+            format!("{}__COMMAND_RESULTS__{epoch}", config.split_stream_prefix);
         config.split_outcomes = true;
         config.validate()?;
         if !valid_stream_name(&config.outcome_state_stream_name) {
-            return Err(invalid("state stream name is too long"));
+            return Err(invalid("command results stream name is too long"));
         }
         Ok(config)
     }
@@ -504,8 +518,12 @@ impl NatsEventStoreConfig {
 }
 
 fn domain_event_stream_name(context: &BoundedContext) -> String {
+    format!("{}_DOMAIN_EVENTS", bounded_context_stream_prefix(context))
+}
+
+fn bounded_context_stream_prefix(context: &BoundedContext) -> String {
     format!(
-        "{}__{}_DOMAIN_EVENTS",
+        "{}__{}",
         scoped_stream_prefix(context.application().as_str(), context.traffic_scope()),
         stream_token(context.name().as_str())
     )
@@ -638,6 +656,81 @@ mod tests {
         assert_ne!(
             domain_event_stream_name(&first),
             domain_event_stream_name(&second)
+        );
+    }
+
+    #[test]
+    fn split_names_preserve_custom_prefixes_and_exact_epochs() {
+        for epoch in ["nexus-v1", "NEXUS-V1", "nexus_v1"] {
+            let config = NatsEventStoreConfig::new(&context(), "CUSTOM_DOMAIN_EVENTS")
+                .unwrap()
+                .with_fresh_split_outcome_epoch(epoch)
+                .unwrap();
+            assert_eq!(
+                config.stream_name(),
+                format!("CUSTOM_DOMAIN_EVENTS__JOURNAL__{epoch}")
+            );
+            assert_eq!(
+                config.outcome_state_stream_name(),
+                format!("CUSTOM_DOMAIN_EVENTS__COMMAND_RESULTS__{epoch}")
+            );
+        }
+    }
+
+    #[test]
+    fn split_epoch_cannot_alias_another_scope_or_custom_prefix() {
+        let application = ApplicationName::new("app").unwrap();
+        let test_context = application.test_bounded_context("journal").unwrap();
+        let test = NatsEventStoreConfig::for_bounded_context(&test_context)
+            .unwrap()
+            .with_fresh_split_outcome_epoch("v1")
+            .unwrap();
+        assert_eq!(test.stream_name(), "APP__TEST__JOURNAL__JOURNAL__v1");
+
+        let normal_context = application.bounded_context("test").unwrap();
+        for config in [
+            NatsEventStoreConfig::for_bounded_context(&normal_context).unwrap(),
+            NatsEventStoreConfig::new(&normal_context, "APP__TEST").unwrap(),
+        ] {
+            let error = config
+                .with_fresh_split_outcome_epoch("JOURNAL__v1")
+                .expect_err("epoch must not introduce another stream-name boundary");
+            assert_eq!(error.kind(), EventStoreErrorKind::InvalidRequest);
+        }
+    }
+
+    #[test]
+    fn split_names_keep_test_scope_and_validate_both_name_lengths() {
+        let context = ApplicationName::new("fast-inbox")
+            .unwrap()
+            .test_bounded_context("commercial-access")
+            .unwrap();
+        let config = NatsEventStoreConfig::for_bounded_context(&context)
+            .unwrap()
+            .with_fresh_split_outcome_epoch("nexus-v1")
+            .unwrap();
+        assert_eq!(
+            config.stream_name(),
+            "FAST_INBOX__TEST__COMMERCIAL_ACCESS__JOURNAL__nexus-v1"
+        );
+        assert_eq!(
+            config.outcome_state_stream_name(),
+            "FAST_INBOX__TEST__COMMERCIAL_ACCESS__COMMAND_RESULTS__nexus-v1"
+        );
+        let maximum_prefix = MAX_STREAM_NAME_LEN - "__COMMAND_RESULTS__x".len();
+        let config = NatsEventStoreConfig::new(&context, "A".repeat(maximum_prefix))
+            .unwrap()
+            .with_fresh_split_outcome_epoch("x")
+            .unwrap();
+        assert_eq!(
+            config.outcome_state_stream_name().len(),
+            MAX_STREAM_NAME_LEN
+        );
+        assert!(
+            NatsEventStoreConfig::new(&context, "A".repeat(maximum_prefix + 1))
+                .unwrap()
+                .with_fresh_split_outcome_epoch("x")
+                .is_err()
         );
     }
 

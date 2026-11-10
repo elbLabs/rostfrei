@@ -7,7 +7,7 @@ repository scripts; development and CI require no Python interpreter or packages
 cargo xtask --help
 cargo test --locked -p xtask
 cargo xtask versions check
-cargo xtask versions bump 0.2.0
+cargo xtask versions bump 0.2.1
 cargo xtask test
 cargo xtask test -- cargo xtask acceptance tracer-host --working-tree
 cargo xtask test -- cargo xtask acceptance bike-rental-host --studio

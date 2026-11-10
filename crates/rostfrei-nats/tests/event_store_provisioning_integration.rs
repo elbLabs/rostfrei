@@ -7,7 +7,10 @@ use std::{
 
 use async_nats::jetstream;
 use futures_util::StreamExt as _;
-use rostfrei_core::EventStoreErrorKind;
+use rostfrei_core::{
+    CommandCompletion, CommandExecutionMetadata, ContentFingerprint, EventStoreErrorKind,
+    EventTransaction, ExecutionStore, OperationId, OutcomeLifecycle, OutcomeLifecycleError,
+};
 use rostfrei_messaging_core::ApplicationName;
 use rostfrei_nats::{
     NatsEventStore, NatsEventStoreConfig, provision_event_store, update_event_store,
@@ -26,6 +29,71 @@ async fn fixture() -> TestResult<(jetstream::Context, NatsEventStoreConfig)> {
     let config = NatsEventStoreConfig::for_bounded_context(&context)?
         .with_storage_limits(32 * 1024 * 1024, 512 * 1024)?;
     Ok((jetstream::new(client), config))
+}
+
+#[tokio::test]
+#[allow(clippy::panic_in_result_fn)]
+async fn split_authority_uses_readable_names_and_retains_results_after_reconnect() -> TestResult<()>
+{
+    let (context, config) = fixture().await?;
+    let prefix = config
+        .application()
+        .as_str()
+        .replace('-', "_")
+        .to_uppercase();
+    let journal_name = format!("{prefix}__POLICY__JOURNAL__nexus-v1");
+    let results_name = format!("{prefix}__POLICY__COMMAND_RESULTS__nexus-v1");
+    let config = config.with_fresh_split_outcome_epoch("nexus-v1")?;
+    provision_event_store(&context, &config).await?;
+    assert_eq!(config.stream_name(), journal_name);
+    assert_eq!(config.outcome_state_stream_name(), results_name);
+    for name in [&journal_name, &results_name] {
+        let stream = context.get_stream(name).await?;
+        assert_eq!(stream.cached_info().config.name, *name);
+        assert!(stream.cached_info().config.max_age.is_zero());
+    }
+
+    let operation = OperationId::new("remembered-noop")?;
+    let fingerprint = ContentFingerprint::digest("remembered-noop");
+    let evidence = CommandExecutionMetadata::new(operation.clone(), fingerprint)
+        .with_default_outcome_evidence::<()>()
+        .outcome_evidence()
+        .cloned();
+    let proposal = EventTransaction::new(operation, fingerprint, vec![])
+        .with_bounded_context(config.bounded_context().clone())
+        .with_completion(CommandCompletion::new(evidence, None));
+    let store = NatsEventStore::connect(context.clone(), config.clone()).await?;
+    let original = store
+        .begin_command()
+        .await?
+        .commit_outcome(proposal.clone())
+        .await?;
+    let marker = original.outcome().marker();
+    assert!(matches!(
+        store
+            .expire_details(marker.detail_reference().key(), marker.revision())
+            .await,
+        Err(OutcomeLifecycleError::Unsupported)
+    ));
+    drop(store);
+
+    provision_event_store(&context, &config).await?;
+    let reconnected = NatsEventStore::connect(context.clone(), config).await?;
+    let replay = reconnected
+        .begin_command()
+        .await?
+        .commit_outcome(proposal)
+        .await?;
+    assert!(replay.is_exact_replay());
+    assert_eq!(replay.outcome(), original.outcome());
+    for name in [&journal_name, &results_name] {
+        assert_eq!(
+            context.get_stream(name).await?.cached_info().state.messages,
+            1
+        );
+        context.delete_stream(name).await?;
+    }
+    Ok(())
 }
 
 #[tokio::test]
