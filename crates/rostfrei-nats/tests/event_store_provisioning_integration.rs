@@ -32,6 +32,7 @@ async fn fixture() -> TestResult<(jetstream::Context, NatsEventStoreConfig)> {
 }
 
 #[tokio::test]
+#[allow(clippy::panic_in_result_fn)]
 async fn split_authority_uses_readable_names_and_retains_results_after_reconnect() -> TestResult<()>
 {
     let (context, config) = fixture().await?;
