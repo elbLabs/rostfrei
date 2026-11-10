@@ -54,7 +54,7 @@ and [the framework testing policy](docs/testing/strategy.md).
 - Import compiled crates in integration tests. Keep private tests colocated;
   importing production `.rs` modules also duplicates their nested unit tests.
 - Use deterministic gates for races, bounded waits for observations, and a
-  disposable broker through `scripts/test_nats.py`. Missing test infrastructure
+  disposable broker through `cargo xtask test`. Missing test infrastructure
   is a setup failure. Restart and fault tests must control their own resources.
 - Preserve focused regressions for duplicate execution, partial commits,
   authority/scope confusion, expired-result disclosure, and ACK-before-durability.

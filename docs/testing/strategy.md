@@ -154,24 +154,24 @@ evidence that an unrun gate passed.
 ## Commands available today
 
 Run from the repository root with its pinned Rust toolchain. The standard NATS
-runner needs Python 3.11+ and Docker. **Its default workspace command and
+runner uses `cargo xtask` and Docker. **Its default workspace command and
 `--contracts` also require a cached native NATS 2.12.15 binary** for private
 restart/fault fixtures, supplied on PATH or through `ROSTFREI_NATS_SERVER`.
 
 ```sh
 # Full Rust workspace gate: authenticated broker plus restart fixture setup.
-ROSTFREI_NATS_SERVER=/path/to/nats-server python3 scripts/test_nats.py --contracts
+ROSTFREI_NATS_SERVER=/path/to/nats-server cargo xtask test --contracts
 
 # Ordinary broker-backed target.
-python3 scripts/test_nats.py -- cargo test --locked -p rostfrei-nats --test messaging_integration -- --test-threads=1
+cargo xtask test -- cargo test --locked -p rostfrei-nats --test messaging_integration -- --test-threads=1
 
 # Fault contracts that require authenticated/native fixture variables.
-ROSTFREI_NATS_SERVER=/path/to/nats-server python3 scripts/test_nats.py --contracts -- cargo test --locked -p rostfrei-nats --test completed_outcome_faults -- --test-threads=1
+ROSTFREI_NATS_SERVER=/path/to/nats-server cargo xtask test --contracts -- cargo test --locked -p rostfrei-nats --test completed_outcome_faults -- --test-threads=1
 
 # Broker-free owning suites.
 cargo test --locked -p rostfrei-core
 cargo test --locked -p rostfrei-tracer --features http
-python3 -m unittest discover -s scripts -p 'test_*.py'
+cargo test --locked -p xtask
 
 # Native authentication/TLS lifecycle; also requires OpenSSL.
 ROSTFREI_NATS_SERVER=/path/to/nats-server cargo test --locked -p rostfrei-nats --test connection_integration -- --include-ignored --test-threads=1
@@ -180,11 +180,11 @@ ROSTFREI_NATS_SERVER=/path/to/nats-server cargo test --locked -p rostfrei-nats -
 ROSTFREI_NATS_SERVER=/path/to/nats-server cargo test --locked -p rostfrei-nats --lib event_store_integration::history_cluster -- --ignored --test-threads=1
 
 # Working-tree application-linked host, then the standard bike-rental host.
-python3 scripts/test_nats.py -- python3 scripts/check_tracer_host.py --working-tree
-python3 scripts/test_nats.py -- python3 scripts/check_bike_rental_host.py
+cargo xtask test -- cargo xtask acceptance tracer-host --working-tree
+cargo xtask test -- cargo xtask acceptance bike-rental-host
 ```
 
-Without `--working-tree`, `check_tracer_host.py` qualifies the committed HEAD
+Without `--working-tree`, `cargo xtask acceptance tracer-host` qualifies the committed HEAD
 through Git dependencies. Use that mode for committed-source acceptance; it does
 not establish that uncommitted framework edits work.
 

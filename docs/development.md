@@ -4,6 +4,9 @@ Run these commands from the repository root. The pinned Rust toolchain includes
 Clippy, rustfmt, and `rust-src`; standard-library sources keep compile-failure
 diagnostics consistent across local machines and CI.
 
+Repository tooling runs through [`cargo xtask`](../xtask/README.md). Its command
+reference includes native broker evidence, skill packaging and acceptance checks.
+
 ## Debugging
 
 For full debugger support, override the default `debug = 1`:
@@ -18,11 +21,11 @@ CARGO_PROFILE_TEST_DEBUG=2 cargo test
 Follow the [framework testing policy](testing/strategy.md) when choosing or
 adding tests. Repository coding-agent guidance lives in [`AGENTS.md`](../AGENTS.md).
 
-With Python 3.11+, a running Docker engine, and native NATS 2.12.15 on PATH (or
-configured through `ROSTFREI_NATS_SERVER`), run the Rust workspace suite:
+With the repository Rust toolchain, a running Docker engine, and native NATS
+2.12.15 on PATH (or configured through `ROSTFREI_NATS_SERVER`), run the Rust workspace suite:
 
 ```sh
-python3 scripts/test_nats.py
+cargo xtask test
 ```
 
 The runner fetches separately locked dependencies for offline macro tests,
@@ -36,7 +39,7 @@ exit, and prints broker logs on failure.
 To run a narrower suite:
 
 ```sh
-python3 scripts/test_nats.py --contracts -- cargo test --locked -p rostfrei-nats -p bike-rental -- --test-threads=1
+cargo xtask test --contracts -- cargo test --locked -p rostfrei-nats -p bike-rental -- --test-threads=1
 ```
 
 For selections containing authenticated fault or native restart contracts, add
@@ -52,13 +55,13 @@ Broker-free checks include:
 
 ```sh
 cargo test --locked -p rostfrei-tracer --features http
-python3 -m unittest discover -s scripts -p 'test_*.py'
+cargo test --locked -p xtask
 ```
 
 Check that a generated application builds outside this checkout:
 
 ```sh
-python3 scripts/check_new_project.py
+cargo xtask acceptance new-project
 ```
 
 This requires GitHub and crates.io access. It generates a hyphenated starter in
@@ -102,7 +105,7 @@ ROSTFREI_NATS_SERVER=/path/to/nats-server \
 Run the [domain-event worker pool](domain-event-workers.md) checks with:
 
 ```sh
-python3 scripts/test_nats.py -- cargo test --locked -p rostfrei-nats --test domain_event_consumer_integration
+cargo xtask test -- cargo test --locked -p rostfrei-nats --test domain_event_consumer_integration
 ```
 
 ### Frontends and CI
@@ -159,16 +162,16 @@ including renamed dependencies, inherit paths and version requirements from
 `[workspace.dependencies]`. Check this with:
 
 ```sh
-python3 scripts/versions.py check
+cargo xtask versions check
 ```
 
 To prepare a version:
 
 ```sh
-python3 scripts/versions.py bump 0.1.3
+cargo xtask versions bump 0.1.3
 ```
 
-The script updates the root manifest and both Cargo lockfiles, including the
+The command updates the root manifest and both Cargo lockfiles, including the
 standalone macro dependency-matrix fixture. Cargo runs offline and retains locked
 registry versions, so dependencies must be cached. Failure restores the manifest
 and lockfiles. Review and commit the diff together; private fixture packages
@@ -178,7 +181,7 @@ The **Prepare GitHub release** workflow runs from `main` with a tag matching the
 shared version, including the `v` prefix. Validate it locally with:
 
 ```sh
-python3 scripts/versions.py check --tag v0.1.3
+cargo xtask versions check --tag v0.1.3
 ```
 
 The workflow creates a draft GitHub release; it does not publish crates.
@@ -186,7 +189,7 @@ The workflow creates a draft GitHub release; it does not publish crates.
 ### crates.io publication
 
 All 15 public library/tooling packages have registry metadata. The benchmark and
-bike-rental packages are explicitly `publish = false`. Freeze one
+bike-rental packages and `xtask` are explicitly `publish = false`. Freeze one
 clean commit for the Git tag, Skills kit, CLI and registry packages; dependency-aware
 Skills setup checks the published package's `.cargo_vcs_info.json` revision.
 
@@ -198,7 +201,7 @@ With the repository's pinned Cargo version, qualify the complete package graph:
 
 ```sh
 cargo publish --dry-run --locked --workspace \
-  --exclude rostfrei-benchmarks --exclude bike-rental --all-features
+  --exclude rostfrei-benchmarks --exclude bike-rental --exclude xtask --all-features
 ```
 
 Cargo packages the selected crates into a temporary registry, verifies their
@@ -209,7 +212,7 @@ matching Skills qualification before uploading. Authenticate locally with
 
 ```sh
 cargo publish --locked --workspace \
-  --exclude rostfrei-benchmarks --exclude bike-rental --all-features
+  --exclude rostfrei-benchmarks --exclude bike-rental --exclude xtask --all-features
 ```
 
 If publication stops partway through, inspect crates.io/index state and archive
@@ -231,7 +234,7 @@ starter currently targets `v0.0.5-alpha`
 generator's package version and `main`. Existing projects retain their pin and
 should commit `Cargo.lock`.
 
-`scripts/versions.py bump` does not advance the starter pin. After publishing a
+`cargo xtask versions bump` does not advance the starter pin. After publishing a
 release, update `SCAFFOLD_RELEASE` and `SCAFFOLD_REVISION` in
 `crates/rostfrei-structure/src/scaffold.rs`, the pin regression expectation, and
 this guide. Run the external acceptance check in that follow-up PR. Templates
