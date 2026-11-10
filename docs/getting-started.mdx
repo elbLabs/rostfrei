@@ -40,10 +40,10 @@ Tracer and development test helpers:
 
 ```toml
 [dependencies]
-rostfrei = { version = "0.1.3", features = ["nats", "tracer"] }
+rostfrei = { version = "0.2.0", features = ["nats", "tracer"] }
 
 [dev-dependencies]
-rostfrei = { version = "0.1.3", features = ["testing"] }
+rostfrei = { version = "0.2.0", features = ["testing"] }
 ```
 
 Domain macros, typed buses, execution, read models, and in-memory adapters are
@@ -80,3 +80,14 @@ Install the [development CLI and Agent Skills](agent-skills-install.md) separate
 too. The [generated starter](development.md#starter-dependency-contract) documents
 its own release pin; the bike-rental checkout inherits dependencies with
 `workspace = true`.
+
+## Upgrading from 0.1
+
+Version 0.2 requires a [fresh NATS namespace](messaging/subjects.mdx#fresh-deployments)
+for its receipt and integration-event subject layouts. It replaces low-level
+fixture writes with `FixtureEventStore::append_fixture`; NATS fixtures require
+Test scope, while Normal data is created through commands. A configured shared
+codec registry must cover every registered aggregate. Read the
+[release changes](../CHANGELOG.md) and [event evolution guide](event-schema-evolution.md)
+before upgrading custom adapters or codecs, then update the application lockfile
+and its [managed Agent Skills](agent-skills-install.md#install-and-update).

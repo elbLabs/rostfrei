@@ -4,8 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
+This release includes breaking fixture-write APIs, shared-codec registration and
+NATS subject-layout changes described below. Existing NATS deployments need a
+[fresh namespace](docs/messaging/subjects.mdx#fresh-deployments).
+
 ### Added
 
+- Agent-guided onboarding with a portable, text-first Tracer tutorial, plus a
+  documentation website rendered from the shared `docs/` sources.
 - Native NATS correlation and causation addressing on permanent transaction receipts
   and Test fixture manifests. Domain subjects stay stable per aggregate; integration
   subjects append control IDs while preserving logical addresses and durable identities.
