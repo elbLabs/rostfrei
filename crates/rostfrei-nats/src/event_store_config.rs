@@ -189,6 +189,7 @@ impl NatsEventStoreConfig {
     /// identities stay unchanged and old outcomes must be routed to their old authority.
     /// Stream names use `__JOURNAL__<epoch>` and `__COMMAND_RESULTS__<epoch>`;
     /// the epoch label is preserved exactly while subjects retain its digest.
+    /// Epochs must not contain the reserved `__` stream-name separator.
     pub fn with_fresh_split_outcome_epoch(
         self,
         epoch: impl Into<String>,
@@ -201,6 +202,11 @@ impl NatsEventStoreConfig {
             .completed_outcome_epoch
             .as_deref()
             .ok_or_else(|| invalid("missing epoch"))?;
+        if epoch.contains("__") {
+            return Err(invalid(
+                "split outcome epoch contains the reserved __ separator",
+            ));
+        }
         let token = digest_parts(&[epoch.as_bytes()]);
         config.stream_name = format!("{}__JOURNAL__{epoch}", config.split_stream_prefix);
         config.subject_prefix = format!("{}.split.{token}", config.subject_prefix);
@@ -668,6 +674,28 @@ mod tests {
                 config.outcome_state_stream_name(),
                 format!("CUSTOM_DOMAIN_EVENTS__COMMAND_RESULTS__{epoch}")
             );
+        }
+    }
+
+    #[test]
+    fn split_epoch_cannot_alias_another_scope_or_custom_prefix() {
+        let application = ApplicationName::new("app").unwrap();
+        let test_context = application.test_bounded_context("journal").unwrap();
+        let test = NatsEventStoreConfig::for_bounded_context(&test_context)
+            .unwrap()
+            .with_fresh_split_outcome_epoch("v1")
+            .unwrap();
+        assert_eq!(test.stream_name(), "APP__TEST__JOURNAL__JOURNAL__v1");
+
+        let normal_context = application.bounded_context("test").unwrap();
+        for config in [
+            NatsEventStoreConfig::for_bounded_context(&normal_context).unwrap(),
+            NatsEventStoreConfig::new(&normal_context, "APP__TEST").unwrap(),
+        ] {
+            let error = config
+                .with_fresh_split_outcome_epoch("JOURNAL__v1")
+                .expect_err("epoch must not introduce another stream-name boundary");
+            assert_eq!(error.kind(), EventStoreErrorKind::InvalidRequest);
         }
     }
 

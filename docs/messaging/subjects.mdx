@@ -115,6 +115,8 @@ For example, epoch `rental-v1` produces
 With a custom base name from `NatsEventStoreConfig::new`, the pair is
 `<base>__JOURNAL__<epoch>` and `<base>__COMMAND_RESULTS__<epoch>`.
 Both names must fit JetStream's 255-byte limit.
+Split epochs must not contain the reserved `__` separator; this prevents epoch
+labels from aliasing another context, traffic scope, or stream role.
 
 - Commands use **WorkQueue** retention for durable work delivery.
 - Command responses, integration events, and quarantine use **Limits** retention.
