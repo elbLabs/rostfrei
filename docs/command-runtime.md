@@ -85,12 +85,14 @@ is application-owned; the built-in bounded memory sink is not a durable audit lo
 
 New coordinated execution selects
 `NatsEventStoreConfig::with_fresh_split_outcome_epoch(epoch)`, then explicitly
-provisions a journal/outcome-state pair. Both creation incarnations and the epoch
+provisions a journal/command-results pair using the
+[readable stream names](messaging/subjects.mdx#explore-subjects-and-their-streams).
+Both creation incarnations and the epoch
 bind the authority. Partial provisioning, recreation, policy drift, and stale
 handles fail closed. Follow the [cutover runbook](completed-outcome-cutover.md).
 
 - The append-only journal retains events, guards, and compact decision manifests.
-- The state stream retains one Active detail record or terminal Expired record per
+- The command-results stream retains one Active detail record or terminal Expired record per
   candidate subject. It uses file/Limits storage, bounded capacity, DiscardNew,
   max messages per subject 1, and no age expiry, delete, purge, rollup, or direct access.
 - Prepare immutable details with expected subject sequence zero; reconcile an
@@ -112,7 +114,7 @@ infrastructure entry points, without per-call policy admission.
 
 ## Detail expiry
 
-Enable `with_explicit_detail_expiry(true)` for native maintenance, then call
+Detail expiry is disabled by default. Enable `with_explicit_detail_expiry(true)` for native maintenance, then call
 `expire_details(key, expected_revision)`. CAS replaces Active with Expired.
 `OutcomeExpiry` proves withdrawal; `ReclamationStatus::Reclaimed` additionally
 requires verification that the old retained sequence is absent. Otherwise

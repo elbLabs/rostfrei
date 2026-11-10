@@ -310,7 +310,7 @@ Both JSON responses carry a `snapshot` describing the sources queried:
       {
         "context": "ordering",
         "kind": "domain",
-        "stream": "SHOP__ORDERING_DOMAIN_EVENTS__SPLIT_<epoch-digest>",
+        "stream": "SHOP__ORDERING__JOURNAL__<epoch>",
         "cutoff_sequence": "42"
       },
       {
