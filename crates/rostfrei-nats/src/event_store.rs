@@ -375,6 +375,16 @@ impl NatsEventStore {
             .await
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
         verify_stream_config(&config.stream_config(), &stream.cached_info().config)?;
+        // A legacy-shaped reader cannot gain write access if observed authority
+        // metadata is later damaged or removed.
+        let config = if !config.split_outcomes()
+            && config.completed_outcome_epoch().is_none()
+            && has_outcome_authority_metadata(&stream.cached_info().config)
+        {
+            config.with_read_only_outcomes()
+        } else {
+            config
+        };
         let journal_incarnation = stream.cached_info().created.to_string();
         let (split, authority) = if history_only {
             (
@@ -2226,11 +2236,13 @@ pub async fn update_event_store(
     for key in [
         "rostfrei.completed-outcomes.epoch",
         "rostfrei.completed-outcomes.version",
+        outcomes::JOURNAL_BINDING,
+        outcomes::STATE_BINDING,
     ] {
         if actual.metadata.get(key) != expected.metadata.get(key) {
             return Err(EventStoreError::new(
                 EventStoreErrorKind::ConfigurationMismatch,
-                "policy update cannot activate/change a completed outcome epoch; use a fresh fenced namespace",
+                "policy update cannot activate/change a completed outcome authority; use a fresh fenced namespace",
             ));
         }
     }

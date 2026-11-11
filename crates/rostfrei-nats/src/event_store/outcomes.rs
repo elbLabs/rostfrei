@@ -48,13 +48,13 @@ pub(super) fn authority(
     for part in [
         config.stream_name(),
         config.subject_prefix(),
-        config
-            .completed_outcome_epoch()
-            .unwrap_or(if config.split_outcomes() {
+        config.completed_outcome_epoch().unwrap_or_else(|| {
+            if config.split_outcomes() {
                 "split"
             } else {
                 "legacy"
-            }),
+            }
+        }),
         journal,
         split.map_or("inline", |s| s.state_incarnation.as_str()),
     ] {
