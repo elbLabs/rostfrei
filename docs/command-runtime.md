@@ -84,10 +84,10 @@ is application-owned; the built-in bounded memory sink is not a durable audit lo
 ## Native authority
 
 New coordinated execution selects
-`NatsEventStoreConfig::with_fresh_split_outcome_epoch(epoch)`, then explicitly
+`NatsEventStoreConfig::with_fresh_outcomes()`, then explicitly
 provisions a journal/command-results pair using the
 [readable stream names](messaging/subjects.mdx#explore-subjects-and-their-streams).
-Both creation incarnations and the epoch
+Both creation incarnations
 bind the authority. Partial provisioning, recreation, policy drift, and stale
 handles fail closed. Follow the [cutover runbook](completed-outcome-cutover.md).
 

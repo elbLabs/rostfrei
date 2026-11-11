@@ -47,14 +47,14 @@ Use **`rostfrei` as your framework dependency**, enabling the adapters you need:
 
 ```toml
 [dependencies]
-rostfrei = { version = "0.2.1", features = ["nats", "tracer"] }
+rostfrei = { version = "0.2.2", features = ["nats", "tracer"] }
 ```
 
 See [Framework setup](docs/getting-started.mdx#one-framework-dependency) for
 features, imports, and test dependencies.
 
 Install the development CLI separately with
-`cargo install --locked --version 0.2.1 rostfrei-structure`; see
+`cargo install --locked --version 0.2.2 rostfrei-structure`; see
 [Agent Skills setup](docs/agent-skills-install.md) for dependency-aware installation.
 
 ## Documentation and examples

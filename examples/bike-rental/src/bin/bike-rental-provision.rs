@@ -16,7 +16,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = BikeRentalNatsConfig::new_with_resource_limits(&application, resource_limits)?;
     let config = match env::var("ROSTFREI_COMPLETED_OUTCOME_EPOCH") {
         Ok(epoch) => config.with_fresh_completed_outcome_epoch(&epoch)?,
-        Err(_) => config,
+        Err(env::VarError::NotPresent) => config.with_fresh_outcomes()?,
+        Err(error) => return Err(error.into()),
     };
     let connection = connect(
         &NatsConnectionConfig::new(format!("{application}-provision"), nats_url)

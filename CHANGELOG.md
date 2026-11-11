@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-11
+
+### Added
+
+- `with_fresh_outcomes()` selects a label-free journal/command-results pair on
+  the NATS event-store and application-host configuration. Names derive from the
+  application/context (`<APP>__<CONTEXT>__JOURNAL` and `__COMMAND_RESULTS`); subjects
+  omit the epoch-derived segment. Stream incarnations and cross-bindings still
+  fence stale writers, and result expiry remains disabled by default.
+  Existing epoch-based APIs retain their names, subjects and authority identities.
+
+### Changed
+
+- Bike-rental binaries use label-free storage when no explicit epoch is set.
+  Switching an existing epoch-based deployment to this layout requires a fresh
+  namespace or an explicit migration; startup does not adopt its retained data.
+
 ## [0.2.1] - 2026-11-10
 
 ### Changed

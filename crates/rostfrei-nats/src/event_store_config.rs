@@ -185,11 +185,30 @@ impl NatsEventStoreConfig {
         self.completed_outcome_epoch.as_deref()
     }
 
+    /// Select the journal/command-results pair for a fresh application namespace.
+    /// Names and subjects derive from the application, scope and bounded context;
+    /// the streams' creation identities bind the authority without an epoch label.
+    /// This does not migrate existing storage or exclude old writers.
+    pub fn with_fresh_outcomes(mut self) -> Result<Self, EventStoreError> {
+        if self.split_outcomes || self.completed_outcome_epoch.is_some() {
+            return Err(invalid("outcome authority already selected"));
+        }
+        self.stream_name = format!("{}__JOURNAL", self.split_stream_prefix);
+        self.outcome_state_stream_name = format!("{}__COMMAND_RESULTS", self.split_stream_prefix);
+        self.split_outcomes = true;
+        self.validate()?;
+        if !valid_stream_name(&self.outcome_state_stream_name) {
+            return Err(invalid("command results stream name is too long"));
+        }
+        Ok(self)
+    }
+
     /// Explicit fenced cutover. Derives disjoint journal and state subjects; original
     /// identities stay unchanged and old outcomes must be routed to their old authority.
     /// Stream names use `__JOURNAL__<epoch>` and `__COMMAND_RESULTS__<epoch>`;
     /// the epoch label is preserved exactly while subjects retain its digest.
     /// Epochs must not contain the reserved `__` stream-name separator.
+    /// Use `with_fresh_outcomes` for new deployments that do not need a named epoch.
     pub fn with_fresh_split_outcome_epoch(
         self,
         epoch: impl Into<String>,
@@ -452,6 +471,19 @@ impl NatsEventStoreConfig {
     }
 
     pub fn stream_config(&self) -> Config {
+        let mut metadata = std::collections::HashMap::new();
+        if self.split_outcomes || self.completed_outcome_epoch.is_some() {
+            metadata.insert(
+                "rostfrei.completed-outcomes.version".to_owned(),
+                if self.split_outcomes { "2" } else { "1" }.to_owned(),
+            );
+        }
+        if let Some(epoch) = &self.completed_outcome_epoch {
+            metadata.insert(
+                "rostfrei.completed-outcomes.epoch".to_owned(),
+                epoch.clone(),
+            );
+        }
         Config {
             name: self.stream_name.clone(),
             subjects: vec![
@@ -475,22 +507,7 @@ impl NatsEventStoreConfig {
             deny_purge: true,
             allow_rollup: false,
             allow_atomic_publish: true,
-            metadata: self
-                .completed_outcome_epoch
-                .as_ref()
-                .map(|epoch| {
-                    std::collections::HashMap::from([
-                        (
-                            "rostfrei.completed-outcomes.epoch".to_owned(),
-                            epoch.clone(),
-                        ),
-                        (
-                            "rostfrei.completed-outcomes.version".to_owned(),
-                            if self.split_outcomes { "2" } else { "1" }.to_owned(),
-                        ),
-                    ])
-                })
-                .unwrap_or_default(),
+            metadata,
             ..Default::default()
         }
     }
@@ -656,6 +673,63 @@ mod tests {
         assert_ne!(
             domain_event_stream_name(&first),
             domain_event_stream_name(&second)
+        );
+    }
+
+    #[test]
+    fn fresh_outcomes_preserve_scope_custom_prefixes_and_name_limits() {
+        let test_context = ApplicationName::new("fast-inbox")
+            .unwrap()
+            .test_bounded_context("commercial-access")
+            .unwrap();
+        let config = NatsEventStoreConfig::for_bounded_context(&test_context)
+            .unwrap()
+            .with_fresh_outcomes()
+            .unwrap();
+        assert_eq!(
+            config.stream_name(),
+            "FAST_INBOX__TEST__COMMERCIAL_ACCESS__JOURNAL"
+        );
+        assert_eq!(
+            config.outcome_state_stream_name(),
+            "FAST_INBOX__TEST__COMMERCIAL_ACCESS__COMMAND_RESULTS"
+        );
+        assert_eq!(
+            config.subject_prefix(),
+            "fast-inbox.test.domain.commercial-access"
+        );
+        assert!(config.with_fresh_outcomes().is_err());
+        let custom = NatsEventStoreConfig::new(&test_context, "CUSTOM_DOMAIN_EVENTS")
+            .unwrap()
+            .with_fresh_outcomes()
+            .unwrap();
+        assert_eq!(custom.stream_name(), "CUSTOM_DOMAIN_EVENTS__JOURNAL");
+        assert_eq!(
+            custom.outcome_state_stream_name(),
+            "CUSTOM_DOMAIN_EVENTS__COMMAND_RESULTS"
+        );
+        let maximum_prefix = MAX_STREAM_NAME_LEN - "__COMMAND_RESULTS".len();
+        let config = NatsEventStoreConfig::new(&test_context, "A".repeat(maximum_prefix))
+            .unwrap()
+            .with_fresh_outcomes()
+            .unwrap();
+        assert_eq!(
+            config.outcome_state_stream_name().len(),
+            MAX_STREAM_NAME_LEN
+        );
+        assert!(
+            NatsEventStoreConfig::new(&test_context, "A".repeat(maximum_prefix + 1))
+                .unwrap()
+                .with_fresh_outcomes()
+                .is_err()
+        );
+        assert!(
+            NatsEventStoreConfig::for_bounded_context(&test_context)
+                .unwrap()
+                .with_fresh_completed_outcome_epoch("retained")
+                .unwrap()
+                .with_fresh_outcomes()
+                .is_err()
         );
     }
 

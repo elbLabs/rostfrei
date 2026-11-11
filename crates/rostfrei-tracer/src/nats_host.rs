@@ -95,6 +95,12 @@ pub struct NatsRuntimeConfig {
 }
 
 impl NatsRuntimeConfig {
+    /// Select a fresh journal/results pair without an operator epoch label.
+    pub fn with_fresh_outcomes(mut self) -> Result<Self, NatsHostError> {
+        self.event_store = self.event_store.with_fresh_outcomes()?;
+        Ok(self)
+    }
+
     /// Explicitly select a new writable split authority. This never migrates an
     /// existing history or excludes old writers on the operator's behalf.
     pub fn with_fresh_completed_outcome_epoch(
@@ -866,6 +872,11 @@ pub struct NatsApplicationBuilder {
     tracer: Option<TracerConfig>,
 }
 impl NatsApplicationBuilder {
+    pub fn with_fresh_outcomes(mut self) -> Result<Self, NatsHostError> {
+        self.config = self.config.with_fresh_outcomes()?;
+        Ok(self)
+    }
+
     pub fn with_fresh_completed_outcome_epoch(
         mut self,
         epoch: &str,

@@ -29,7 +29,7 @@ async fn paired_reset_reconnects_authority_preserves_normal_and_cannot_bypass_fa
     let bindings = Arc::new(tracer::bindings()?);
     let normal_config =
         NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?
-            .with_fresh_completed_outcome_epoch("owned-test")?;
+            .with_fresh_outcomes()?;
     let normal =
         NatsRuntime::provision(connection.clone(), normal_config, bindings.clone()).await?;
     seed_demo(&normal.store()).await?;
@@ -39,7 +39,7 @@ async fn paired_reset_reconnects_authority_preserves_normal_and_cannot_bypass_fa
         connection.clone(),
         bindings,
     )?
-    .with_fresh_completed_outcome_epoch("owned-test")?
+    .with_fresh_outcomes()?
     .provision_and_start()
     .await?;
     let runtime = host.runtime();

@@ -242,8 +242,7 @@ async fn acceptance_survives_process_and_broker_restart_beyond_deduplication() -
     let server = Server::spawn(&directory, "seed")?;
     let url = format!("nats://acceptance:owned@127.0.0.1:{port}");
     let js = connect_ready(&url).await?;
-    let config = NatsEventStoreConfig::for_bounded_context(&context()?)?
-        .with_fresh_split_outcome_epoch("acceptance-restart")?;
+    let config = NatsEventStoreConfig::for_bounded_context(&context()?)?.with_fresh_outcomes()?;
     provision_event_store(&js, &config).await?;
     let original = js
         .get_stream(config.stream_name())
@@ -286,8 +285,7 @@ async fn acceptance_child() -> TestResult {
     if mode == "failure" {
         return capacity_with_failed_diagnostic_publication_retries_without_response(js).await;
     }
-    let config = NatsEventStoreConfig::for_bounded_context(&context()?)?
-        .with_fresh_split_outcome_epoch("acceptance-restart")?;
+    let config = NatsEventStoreConfig::for_bounded_context(&context()?)?.with_fresh_outcomes()?;
     let store = Arc::new(NatsEventStore::connect(js.clone(), config.clone()).await?);
     let calls = Arc::new(AtomicUsize::new(0));
     let bus = CommandBus::new(
@@ -420,7 +418,7 @@ async fn capacity_with_failed_diagnostic_publication_retries_without_response(
     let capacity_context =
         ApplicationName::new("acceptance-capacity")?.bounded_context("acceptance")?;
     let config = NatsEventStoreConfig::new(&capacity_context, "acceptance_capacity")?
-        .with_fresh_split_outcome_epoch("acceptance-capacity")?
+        .with_fresh_outcomes()?
         .with_storage_limits(8192, 2048)?;
     provision_event_store(&js, &config).await?;
     let store = Arc::new(NatsEventStore::connect(js.clone(), config.clone()).await?);

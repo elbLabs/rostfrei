@@ -170,6 +170,11 @@ pub struct BikeRentalNatsConfig {
     integration_event_route: BikeRentalIntegrationEventRoute,
 }
 impl BikeRentalNatsConfig {
+    pub fn with_fresh_outcomes(mut self) -> Result<Self, BikeRentalNatsError> {
+        self.runtime = self.runtime.with_fresh_outcomes()?;
+        Ok(self)
+    }
+
     pub fn with_fresh_completed_outcome_epoch(
         mut self,
         epoch: &str,

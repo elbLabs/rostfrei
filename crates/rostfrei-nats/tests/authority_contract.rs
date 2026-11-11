@@ -20,7 +20,7 @@ rostfrei_runtime::install_macro_support!();
 async fn fixture(label: &str) -> TestResult<(Fixture, Arc<NatsEventStore>)> {
     let f = Fixture::new(label).await?;
     let config = NatsEventStoreConfig::for_bounded_context(&f.context)?
-        .with_fresh_split_outcome_epoch("authority")?
+        .with_fresh_outcomes()?
         .with_explicit_detail_expiry(true)?
         .with_storage_limits(2 * 1024 * 1024, 64 * 1024)?;
     provision_event_store(&f.js, &config).await?;
@@ -127,6 +127,31 @@ impl rostfrei_runtime::CommandAuthorizer for AccessLog {
         self.0.lock().unwrap().push(access);
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn missing_result_authority_blocks_compatibility_append() -> TestResult {
+    let (f, store) = fixture("missing-results-append").await?;
+    let session = store.append_session().await?;
+    f.js.delete_stream(store.config().outcome_state_stream_name())
+        .await?;
+    let operation = OperationId::new("unbound-append")?;
+    let transaction = EventTransaction::new(
+        operation,
+        ContentFingerprint::digest("unbound-append"),
+        Vec::new(),
+    )
+    .with_bounded_context(f.context.name().clone());
+    assert_eq!(
+        session
+            .append_transaction(transaction)
+            .await
+            .unwrap_err()
+            .kind(),
+        EventStoreErrorKind::ConfigurationMismatch
+    );
+    assert_eq!(f.messages(store.config().stream_name()).await?, 0);
+    Ok(())
 }
 
 #[tokio::test]

@@ -13,7 +13,7 @@ evidence or weaken its integrity.
 - Publish events, read guards, and permanent outcome evidence in one atomic batch.
   Prepared result details alone do not establish completion; only the journal
   selects the winner. Explicit detail expiry leaves terminal decision evidence.
-- Bind coordinated authority to its epoch and resource incarnations. Replacing
+- Bind coordinated authority to its resource incarnations. Replacing
   storage must not silently admit stale writers or reuse evidence from a prior
   authority. Backup and restore preserve the journal/outcome-state pair.
 - Prefer native NATS features and official client APIs for batching, ordering,

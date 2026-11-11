@@ -211,7 +211,8 @@ impl NatsEventStore {
         topology: &crate::MessagingTopology,
     ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
         self.require_mutable_namespace().await?;
-        if self.config.completed_outcome_epoch().is_some()
+        if self.config.split_outcomes()
+            || self.config.completed_outcome_epoch().is_some()
             || command.address().application() != self.config.application().as_str()
             || command.address().traffic_scope() != self.config.traffic_scope()
         {
@@ -313,7 +314,7 @@ impl NatsEventStore {
         self.require_writable_handle()?;
         // Configured authority cannot be downgraded by clearing broker metadata.
         // Split writers must verify their captured pair even on compatibility routes.
-        if self.config.completed_outcome_epoch().is_some() {
+        if self.config.split_outcomes() || self.config.completed_outcome_epoch().is_some() {
             return self.require_completed_outcome_writer().await;
         }
         let stream = self

@@ -45,11 +45,11 @@ limited to 64 bytes, and a business address to 256 bytes.
 Domain events use stable aggregate subjects. Correlation and causation address
 their atomic receipt and remain in each event envelope. Integration events retain
 both identities in their own subjects. The domain prefix includes the configured
-application, scope, context, and optional split-outcome epoch:
+application, scope and context:
 
 ```text
-<app>[.test].domain.<context>[.split.<epoch-digest>].aggregate.<type>.<id>
-<app>[.test].domain.<context>[.split.<epoch-digest>].transaction.<operation-digest>.receipt.<correlation-or-~>.<causation-or-~>
+<app>[.test].domain.<context>.aggregate.<type>.<id>
+<app>[.test].domain.<context>.transaction.<operation-digest>.receipt.<correlation-or-~>.<causation-or-~>
 <app>[.test].integration.<producer-context>.<event-name>.<correlation>.<causation-or-~>
 ```
 
@@ -82,9 +82,8 @@ Prepend `bike-rental.` to the subject and filter suffixes below, and `BIKE_RENTA
 to stream-name suffixes. For Test use `bike-rental.test.` and `BIKE_RENTAL__TEST`
 instead. On the website, switch between **Normal** and **Test** to see the complete
 names. The table and rental walkthrough use the current **split outcome authority**:
-an append-only journal plus a separate result-state stream, selected with a fresh
-completed-outcome epoch. Stream names include the exact readable `<epoch>` label;
-subjects use its derived `<epoch-digest>`.
+an append-only journal plus a separate command-results stream, selected with
+`with_fresh_outcomes()`. No epoch label or epoch-derived subject segment is required.
 
 <SubjectExplorer>
 
@@ -92,8 +91,8 @@ subjects use its derived `<epoch-digest>`.
 | --- | --- | --- | --- | --- |
 | Command | Ask a bounded context to make a decision. | `command.bike-rental.rent-bicycle` | `command.>` | `_COMMANDS` |
 | Command response | Retain the accepted or rejected outcome for one operation. | `command-response.bike-rental.<response-digest>` | `command-response.>` | `_COMMAND_RESPONSES` |
-| Private domain event | Append BicycleRented and permanent decision evidence to the journal. | `domain.bike-rental.split.<epoch-digest>.aggregate.bike-rental%2Frental-fleet.city-fleet` | `domain.bike-rental.split.<epoch-digest>.aggregate.*.*`, `domain.bike-rental.split.<epoch-digest>.transaction.>`, `domain.bike-rental.split.<epoch-digest>.fixture.*.receipt.*.*` | `__BIKE_RENTAL__JOURNAL__<epoch>` |
-| Command results | Retain active result details or terminal expiry; the journal owns the decision. | `domain.bike-rental.split.<epoch-digest>.outcome.<candidate-digest>` | `domain.bike-rental.split.<epoch-digest>.outcome.*` | `__BIKE_RENTAL__COMMAND_RESULTS__<epoch>` |
+| Private domain event | Append BicycleRented and permanent decision evidence to the journal. | `domain.bike-rental.aggregate.bike-rental%2Frental-fleet.city-fleet` | `domain.bike-rental.aggregate.*.*`, `domain.bike-rental.transaction.>`, `domain.bike-rental.fixture.*.receipt.*.*` | `__BIKE_RENTAL__JOURNAL` |
+| Command results | Retain active result details or terminal expiry; the journal owns the decision. | `domain.bike-rental.outcome.<candidate-digest>` | `domain.bike-rental.outcome.*` | `__BIKE_RENTAL__COMMAND_RESULTS` |
 | Integration event | Publish the public BicycleRentalStarted contract after commit. | `integration.bike-rental.bicycle-rental-started.<correlation>.<causation>` | `integration.>` | `_INTEGRATION_EVENTS` |
 | Query (illustrative) | Read state with Core NATS request/reply; the example does not mount a NATS responder. | `query.bike-rental.bicycle-availability` | None | None |
 | Quarantine | Retain a delivery needing inspection, preserving its source kind and business address. | `quarantine.command.bike-rental.rent-bicycle` | `quarantine.>` | `_QUARANTINE` |
@@ -104,19 +103,15 @@ Angle-bracketed values are placeholders, not literal subjects or wildcards.
 rostfrei derives the digests and encodes event identities from their envelopes.
 
 rostfrei derives four messaging streams per application and traffic scope, plus
-the journal/state pair per bounded context, scope, and epoch. Human-readable
-application/context components use uppercase and underscores; the epoch label
-retains its exact case, hyphens, and underscores. Logical address tokens are lowercase kebab-case; encoded
+the journal/results pair per bounded context and scope. Human-readable
+application/context components use uppercase and underscores. Logical address tokens are lowercase kebab-case; encoded
 identity tokens preserve case.
 
-For example, epoch `rental-v1` produces
-`BIKE_RENTAL__BIKE_RENTAL__JOURNAL__rental-v1` and
-`BIKE_RENTAL__BIKE_RENTAL__COMMAND_RESULTS__rental-v1`.
+For example, the pair is `BIKE_RENTAL__BIKE_RENTAL__JOURNAL` and
+`BIKE_RENTAL__BIKE_RENTAL__COMMAND_RESULTS`.
 With a custom base name from `NatsEventStoreConfig::new`, the pair is
-`<base>__JOURNAL__<epoch>` and `<base>__COMMAND_RESULTS__<epoch>`.
+`<base>__JOURNAL` and `<base>__COMMAND_RESULTS`.
 Both names must fit JetStream's 255-byte limit.
-Split epochs must not contain the reserved `__` separator; this prevents epoch
-labels from aliasing another context, traffic scope, or stream role.
 
 - Commands use **WorkQueue** retention for durable work delivery.
 - Command responses, integration events, and quarantine use **Limits** retention.
@@ -144,8 +139,7 @@ for cutoffs and incomplete evidence.
 ## Follow one rental
 
 Assume the demo's serviceable `bike-42` is still available in `city-fleet`.
-Start in a [fresh application namespace](#fresh-deployments) with a fresh
-`ROSTFREI_COMPLETED_OUTCOME_EPOCH` as described in
+Start in a [fresh application namespace](#fresh-deployments) as described in
 [host setup](../nats-application-host.md#lifecycle-and-ownership). We submit
 `RentBicycle`, schema version **2**; addresses below use Normal scope.
 
@@ -184,7 +178,7 @@ On success, `BicycleRented` is appended through `NatsEventStore`, with the expec
 aggregate stream version:
 
 ```text
-bike-rental.domain.bike-rental.split.<epoch-digest>.aggregate.bike-rental%2Frental-fleet.city-fleet
+bike-rental.domain.bike-rental.aggregate.bike-rental%2Frental-fleet.city-fleet
 ```
 
 The fleet is the aggregate; the bicycle is an entity inside it. All of that fleet's
@@ -194,7 +188,7 @@ ID supplies causation when none was explicitly supplied. The same atomic batch
 ends with its permanent receipt:
 
 ```text
-bike-rental.domain.bike-rental.split.<epoch-digest>.transaction.<operation-digest>.receipt.<correlation>.<command-message-id>
+bike-rental.domain.bike-rental.transaction.<operation-digest>.receipt.<correlation>.<command-message-id>
 ```
 
 ### 4. Return the outcome and publish the public fact
@@ -257,16 +251,16 @@ message has one concrete, validated subject.
 The split journal captures three filters:
 
 ```text
-bike-rental.domain.bike-rental.split.<epoch-digest>.aggregate.*.*
-bike-rental.domain.bike-rental.split.<epoch-digest>.transaction.>
-bike-rental.domain.bike-rental.split.<epoch-digest>.fixture.*.receipt.*.*
+bike-rental.domain.bike-rental.aggregate.*.*
+bike-rental.domain.bike-rental.transaction.>
+bike-rental.domain.bike-rental.fixture.*.receipt.*.*
 ```
 
 The second filter retains operation-scoped transaction receipts and read guards:
 
 ```text
-bike-rental.domain.bike-rental.split.<epoch-digest>.transaction.<operation-digest>.receipt.<correlation-or-~>.<causation-or-~>
-bike-rental.domain.bike-rental.split.<epoch-digest>.transaction.<operation-digest>.guard.<ordinal>
+bike-rental.domain.bike-rental.transaction.<operation-digest>.receipt.<correlation-or-~>.<causation-or-~>
+bike-rental.domain.bike-rental.transaction.<operation-digest>.guard.<ordinal>
 ```
 
 The fixture branch is reserved for Test setup; fixture publication and decoding
@@ -304,18 +298,17 @@ excludes guard records from winner and correlation selectors. See
 requirements and validation.
 
 The separate outcome-state stream captures
-`bike-rental.domain.bike-rental.split.<epoch-digest>.outcome.*`. Preparing a result
+`bike-rental.domain.bike-rental.outcome.*`. Preparing a result
 there is not a commit; the atomic journal decision selects the winner. See
 [native authority](../command-runtime.md#native-authority) for lifecycle guarantees.
 
 ### Legacy layout
 
-Legacy **outcome authority** omits `.split.<epoch-digest>` from subjects and
-uses the original `DOMAIN_EVENTS` stream name, with no separate command-results
+Legacy **outcome authority** uses the original `DOMAIN_EVENTS` stream name, with no separate command-results
 stream. In a fresh namespace its aggregate filter is
 `bike-rental.domain.bike-rental.aggregate.*.*` and stream is
-`BIKE_RENTAL__BIKE_RENTAL_DOMAIN_EVENTS`. That filter does **not** match split
-history. Default legacy authority permits current-format history/known-outcome
+`BIKE_RENTAL__BIKE_RENTAL_DOMAIN_EVENTS`. Its subjects overlap the label-free pair,
+so the two layouts cannot share a namespace. Default legacy authority permits current-format history/known-outcome
 reads, but blocks new coordinated command execution.
 
 This authority choice is independent of the event-subject format.
@@ -327,6 +320,13 @@ stream and consumer configurations are rejected; older event subjects are not re
 Update publishers, NATS ACLs and external subscriptions to use the current filters.
 Changing an outcome epoch does not rewrite stored subjects or create a new shared
 integration stream.
+
+From 0.2.2, `with_fresh_outcomes()` selects the label-free layout above. Stream
+creation identities and cross-bindings still fence stale handles; expiry remains
+disabled by default. This is for a fresh namespace, not automatic adoption of
+retained epoch-based storage. `with_fresh_split_outcome_epoch(epoch)` remains
+available for existing named pairs: it retains `__<epoch>` stream suffixes and
+`.split.<epoch-digest>` subjects. Those labels preserve case and cannot contain `__`.
 
 Version 0.2.1 changes split-authority stream names from
 `<app>__<context>_DOMAIN_EVENTS__SPLIT_<epoch-digest>` and its `_STATE` companion
@@ -361,10 +361,10 @@ Separate stream names use the unambiguous `__TEST` marker:
 Normal commands: BIKE_RENTAL_COMMANDS
 Test commands:   BIKE_RENTAL__TEST_COMMANDS
 
-Normal journal: BIKE_RENTAL__BIKE_RENTAL__JOURNAL__<epoch>
-Normal results: BIKE_RENTAL__BIKE_RENTAL__COMMAND_RESULTS__<epoch>
-Test journal:   BIKE_RENTAL__TEST__BIKE_RENTAL__JOURNAL__<epoch>
-Test results:   BIKE_RENTAL__TEST__BIKE_RENTAL__COMMAND_RESULTS__<epoch>
+Normal journal: BIKE_RENTAL__BIKE_RENTAL__JOURNAL
+Normal results: BIKE_RENTAL__BIKE_RENTAL__COMMAND_RESULTS
+Test journal:   BIKE_RENTAL__TEST__BIKE_RENTAL__JOURNAL
+Test results:   BIKE_RENTAL__TEST__BIKE_RENTAL__COMMAND_RESULTS
 ```
 
 Normal is not a literal `.normal` or `.prod` token. Naming another application
@@ -373,7 +373,7 @@ the canonical application's Test scope.
 
 Scoped adapters validate both application and scope. The example's Test reset
 recreates only isolated Test resources, including both authority streams; Normal
-history persists. Each scope uses its configured epoch.
+history persists. Each scope has its own cross-bound storage pair.
 
 **A stream name does not namespace subjects.** Separate stream names alone cannot
 isolate traffic: their subject filters must also be disjoint. Read broad filters
@@ -434,7 +434,7 @@ commands. See the
 
 For storage, use the configured `NatsEventStoreConfig` getters such as
 `stream_name()`, `aggregate_subject_filter()`, and `outcome_state_stream_name()`.
-They include the selected scope and authority epoch; reconstructing legacy names
+They include the selected scope and storage layout; reconstructing legacy names
 by hand can silently miss current history.
 
 The `public_event` above is a logical address. Let the integration publisher derive

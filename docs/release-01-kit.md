@@ -51,12 +51,12 @@ cargo xtask test -- cargo xtask skills live \
   --host-command "$NEW_EVIDENCE/matched/external-target/debug/bike-rental-api" --tracer
 ```
 
-Each live mode uses a unique app, fresh `ROSTFREI_COMPLETED_OUTCOME_EPOCH`, loopback
+Each live mode uses a unique app, label-free storage, loopback
 port and distinct control/dispatch/inspection tokens; `cargo xtask test` removes its
 disposable broker. Source mode clones the exact commit. Installed mode removes the
 kit before empty-tools-PATH execution; onboarding also checks retained-runner routing.
-The epoch explicitly selects fresh split authority; existing legacy history remains
-read-only without a fenced cutover. Test reset recreates both journal/outcome-state
+Existing legacy history remains read-only without a fenced cutover.
+Test reset recreates both journal/outcome-state
 streams, reconnects and rebuilds services, retaining Normal resources.
 
 Require pass → intentional comparison mismatch (exit 1) → unchanged pass, each with

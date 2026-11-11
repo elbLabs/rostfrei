@@ -28,9 +28,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         limits,
         &bindings,
     )?;
-    let epoch = env::var("ROSTFREI_COMPLETED_OUTCOME_EPOCH").ok();
+    let epoch = match env::var("ROSTFREI_COMPLETED_OUTCOME_EPOCH") {
+        Ok(epoch) => Some(epoch),
+        Err(env::VarError::NotPresent) => None,
+        Err(error) => return Err(error.into()),
+    };
     if let Some(epoch) = &epoch {
         normal = normal.with_fresh_completed_outcome_epoch(epoch)?;
+    } else {
+        normal = normal.with_fresh_outcomes()?;
     }
     let host = if enabled {
         let mut test = BikeRentalNatsConfig::for_bindings(
@@ -41,6 +47,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )?;
         if let Some(epoch) = &epoch {
             test = test.with_fresh_completed_outcome_epoch(epoch)?;
+        } else {
+            test = test.with_fresh_outcomes()?;
         }
         let dispatch = Arc::new(
             NatsRuntime::provision(

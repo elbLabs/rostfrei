@@ -28,12 +28,12 @@ bike-rental runtime or register bicycle fixtures.
 
 rostfrei is a Cargo library dependency. Install its setup CLI separately; adding
 the library, building it or starting an application does not install skills.
-Install the 0.2.1 CLI from crates.io with Rust 1.98+, Cargo and a native linker.
+Install the 0.2.2 CLI from crates.io with Rust 1.98+, Cargo and a native linker.
 Git dependencies also need Git and source access. Consumer setup and execution
 need no Python.
 
 ```sh
-cargo install --locked --version 0.2.1 rostfrei-structure
+cargo install --locked --version 0.2.2 rostfrei-structure
 # Inside your application, with its dependency resolved in Cargo.lock:
 cargo rostfrei skills install
 # After deliberately upgrading the application's dependency and Cargo.lock:
@@ -41,7 +41,7 @@ cargo rostfrei skills update
 ```
 
 The equivalent Git installation uses
-`cargo install --locked --git https://github.com/elbLabs/rostfrei --tag v0.2.1 rostfrei-structure`.
+`cargo install --locked --git https://github.com/elbLabs/rostfrei --tag v0.2.2 rostfrei-structure`.
 Use the CLI/kit matching the application's actual locked framework revision;
 the earlier 0.1.0 Git release and its kit retain their original identities.
 
@@ -73,11 +73,10 @@ setup CLI does not change the starter pin or make a skills-enabled release avail
 Start the application's own Tracer host with its real handlers, workers, fixtures
 and NATS event store on **NATS 2.12.1+ with JetStream**. For the framework example,
 follow [bike-rental startup](https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/README.md#run-locally):
-export `ROSTFREI_NATS_URL`, a unique owned `ROSTFREI_APPLICATION`, a new explicit
-`ROSTFREI_COMPLETED_OUTCOME_EPOCH`, and distinct `ROSTFREI_API_TOKEN` /
+export `ROSTFREI_NATS_URL`, a unique owned `ROSTFREI_APPLICATION`, and distinct `ROSTFREI_API_TOKEN` /
 `ROSTFREI_DISPATCH_TOKEN`. Run `cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer`.
-Without the flag there is no Tracer HTTP. The epoch selects fresh writable authority;
-omitting it retains legacy/read-only semantics. Do not apply this fresh setup to an
+Without the flag there is no Tracer HTTP. The example selects a label-free writable
+journal/results pair. Do not apply this fresh setup to an
 existing history. A consuming application supplies its own application-linked host.
 
 Use a disposable broker or uniquely owned application namespace and serialize Test
