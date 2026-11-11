@@ -80,7 +80,7 @@ cp clippy.toml "$TRIAL_APP/clippy.toml" # The helper omits the root Clippy polic
 Resolve its standalone lock, run skills install/update with `$ROSTFREI_CLI`, and
 record the manifest/lock, both installed releases, managed baseline and cached runner.
 Build the host and save its command/binary hash. Start it with `--tracer` on an owned
-NATS broker, unique application and fresh epoch, using distinct ephemeral tokens and
+NATS broker and unique application, using label-free storage, distinct ephemeral tokens and
 a loopback endpoint. Start a fresh agent in that app with its installed skills.
 
 Agree on a genuinely missing behavior with the human. Record the test-before-code

@@ -130,6 +130,35 @@ impl rostfrei_runtime::CommandAuthorizer for AccessLog {
 }
 
 #[tokio::test]
+async fn legacy_alias_cannot_append_to_label_free_authority() -> TestResult {
+    let (f, store) = fixture("legacy-alias").await?;
+    let alias_config = NatsEventStoreConfig::new(&f.context, store.config().stream_name())?
+        .with_storage_limits(
+            store.config().max_stream_bytes(),
+            store.config().max_event_bytes(),
+        )?;
+    let alias = NatsEventStore::connect(f.js.clone(), alias_config).await?;
+    f.js.delete_stream(store.config().outcome_state_stream_name())
+        .await?;
+    let transaction = EventTransaction::new(
+        OperationId::new("legacy-alias-append")?,
+        ContentFingerprint::digest("legacy-alias-append"),
+        Vec::new(),
+    )
+    .with_bounded_context(f.context.name().clone());
+    assert_eq!(
+        alias
+            .append_transaction(transaction)
+            .await
+            .unwrap_err()
+            .kind(),
+        EventStoreErrorKind::ConfigurationMismatch
+    );
+    assert_eq!(f.messages(store.config().stream_name()).await?, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn missing_result_authority_blocks_compatibility_append() -> TestResult {
     let (f, store) = fixture("missing-results-append").await?;
     let session = store.append_session().await?;

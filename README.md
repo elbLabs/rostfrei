@@ -82,8 +82,8 @@ Retry with the original operation ID and evidence to recover the same decision.
 Result-detail expiry never permits reevaluation. See the
 [command runtime](docs/command-runtime.md) for identity, authorization, and recovery.
 
-Writable NATS startup requires a fresh outcome epoch. The example uses
-`ROSTFREI_COMPLETED_OUTCOME_EPOCH`; follow its [setup guide](examples/bike-rental/README.md).
+Writable NATS startup selects a fresh journal/results pair with `with_fresh_outcomes()`;
+no epoch label is required. Follow the example's [setup guide](examples/bike-rental/README.md).
 Existing deployments need the [cutover runbook](docs/completed-outcome-cutover.md).
 
 Domain events form private aggregate history. Integration events are separately

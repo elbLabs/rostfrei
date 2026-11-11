@@ -225,14 +225,9 @@ impl NatsEventStore {
             .get_stream(self.config.stream_name())
             .await
             .map_err(|error| unavailable(format!("legacy namespace inspection failed: {error}")))?;
-        if stream
-            .cached_info()
-            .config
-            .metadata
-            .contains_key("rostfrei.completed-outcomes.epoch")
-        {
+        if has_outcome_authority_metadata(&stream.cached_info().config) {
             return Err(invalid(
-                "legacy imports cannot write a fresh completed outcome epoch",
+                "legacy imports cannot write a completed outcome authority",
             ));
         }
         let transaction = command
@@ -323,12 +318,7 @@ impl NatsEventStore {
             .await
             .map_err(|error| unavailable(format!("failed to inspect write namespace: {error}")))?;
         verify_stream_config(&self.config.stream_config(), &stream.cached_info().config)?;
-        if stream
-            .cached_info()
-            .config
-            .metadata
-            .contains_key("rostfrei.completed-outcomes.epoch")
-        {
+        if has_outcome_authority_metadata(&stream.cached_info().config) {
             self.require_completed_outcome_writer().await?;
         }
         Ok(())
@@ -4249,6 +4239,17 @@ fn event_checksum(
     Ok(encode_lower_hex(Sha256::digest(input)))
 }
 
+fn has_outcome_authority_metadata(config: &Config) -> bool {
+    [
+        "rostfrei.completed-outcomes.epoch",
+        "rostfrei.completed-outcomes.version",
+        outcomes::JOURNAL_BINDING,
+        outcomes::STATE_BINDING,
+    ]
+    .iter()
+    .any(|key| config.metadata.contains_key(*key))
+}
+
 fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventStoreError> {
     reject_incompatible_subject_layout(expected, actual)?;
     if expected
@@ -4268,8 +4269,8 @@ fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventS
         }
     }
     if expected.metadata.is_empty() {
-        // A new reader may inspect/replay a fresh epoch in explicit default read-only
-        // mode. Every mutable API independently requires its configured durable epoch.
+        // Legacy-shaped readers may inspect history. Every mutable API independently
+        // requires the authority selected by broker metadata, including label-free pairs.
         compatible.metadata.clone_from(&actual.metadata);
     }
     if actual.max_message_size == -1 || actual.max_message_size > expected.max_message_size {
