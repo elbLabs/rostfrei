@@ -47,14 +47,14 @@ Use **`rostfrei` as your framework dependency**, enabling the adapters you need:
 
 ```toml
 [dependencies]
-rostfrei = { version = "0.2.1", features = ["nats", "tracer"] }
+rostfrei = { version = "0.2.2", features = ["nats", "tracer"] }
 ```
 
 See [Framework setup](docs/getting-started.mdx#one-framework-dependency) for
 features, imports, and test dependencies.
 
 Install the development CLI separately with
-`cargo install --locked --version 0.2.1 rostfrei-structure`; see
+`cargo install --locked --version 0.2.2 rostfrei-structure`; see
 [Agent Skills setup](docs/agent-skills-install.md) for dependency-aware installation.
 
 ## Documentation and examples
@@ -82,8 +82,8 @@ Retry with the original operation ID and evidence to recover the same decision.
 Result-detail expiry never permits reevaluation. See the
 [command runtime](docs/command-runtime.md) for identity, authorization, and recovery.
 
-Writable NATS startup requires a fresh outcome epoch. The example uses
-`ROSTFREI_COMPLETED_OUTCOME_EPOCH`; follow its [setup guide](examples/bike-rental/README.md).
+Writable NATS startup selects a fresh journal/results pair with `with_fresh_outcomes()`;
+no epoch label is required. Follow the example's [setup guide](examples/bike-rental/README.md).
 Existing deployments need the [cutover runbook](docs/completed-outcome-cutover.md).
 
 Domain events form private aggregate history. Integration events are separately

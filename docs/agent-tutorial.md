@@ -89,9 +89,9 @@ For an already running broker, establish a unique application namespace owned
 by this demo before starting any workers. Never reuse the sample namespace from
 a previous tutorial or reset unknown shared resources.
 
-Set a fresh `ROSTFREI_APPLICATION` and an explicit, new
-`ROSTFREI_COMPLETED_OUTCOME_EPOCH`. The epoch selects fresh writable authority;
-it must not reinterpret an existing history. Keep these values fixed during
+Set a fresh `ROSTFREI_APPLICATION`; the example selects the label-free journal/results
+pair. Leave `ROSTFREI_COMPLETED_OUTCOME_EPOCH` unset for this layout.
+Keep the application fixed during
 this demo, including both behavior runs. The host provisions Normal and Test
 resources and resets Test on startup. Each behavior run resets the entire Test
 scenario again; the tutorial reference explains preserving evidence between runs.

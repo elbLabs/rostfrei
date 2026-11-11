@@ -7,7 +7,6 @@ flow against real NATS JetStream:
 docker compose -f examples/bike-rental/compose.yaml up -d
 
 export ROSTFREI_NATS_URL=nats://127.0.0.1:4222
-export ROSTFREI_COMPLETED_OUTCOME_EPOCH=isolated-quarantine-demo
 cargo run --locked -p bike-rental --bin bike-rental-quarantine-demo
 ```
 

@@ -68,14 +68,14 @@ authorized specific fixture/suite TDD scope without redundant confirmations.
 Use the consuming application's application-linked Tracer host and documented
 startup configuration. The following Rust-only recipe is specifically for the
 framework's `bike-rental-api` example, with distinct control/dispatch capabilities
-and an owned unique application/epoch already available in the environment:
+and an owned unique application already available in the environment:
 
 ```sh
 # Separate terminal; disposable broker, no persistent volume:
 docker run --rm --name "$OWNED_BROKER" -p 127.0.0.1:14222:4222 nats:2.12.15-alpine -js
 # Framework checkout, while that broker runs:
 : "${ROSTFREI_APPLICATION:?Set a unique owned application name}"
-: "${ROSTFREI_COMPLETED_OUTCOME_EPOCH:?Set a new explicit fresh-authority epoch}"
+unset ROSTFREI_COMPLETED_OUTCOME_EPOCH
 ROSTFREI_NATS_URL=nats://127.0.0.1:14222 \
   cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer
 ```
@@ -84,9 +84,8 @@ The host defaults to `127.0.0.1:1309` (`ROSTFREI_API_ADDR` overrides it). It req
 distinct `ROSTFREI_API_TOKEN` and `ROSTFREI_DISPATCH_TOKEN`, provisions both traffic
 scopes, and resets Test at startup. Optional `ROSTFREI_INSPECTION_TOKEN` enables
 read-only production observation/quarantine; Test inspection uses the control
-token. Export the application and epoch variables before startup. The epoch
-selects fresh writable split authority; a unique app alone is insufficient.
-Existing namespaces remain read-only by default: do not use this fresh setup as
+token. Export the application before startup; the example selects label-free
+journal/results storage. Do not use this fresh setup as
 an implicit migration. Repeated Test resets must retain Normal history/authority.
 Stop the host and the owned broker after use
 (`docker stop "$OWNED_BROKER"`). A consuming application supplies its own

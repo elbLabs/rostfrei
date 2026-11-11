@@ -83,13 +83,13 @@ until independent Test-run isolation is available.
 The framework example's Tracer-enabled startup is
 `cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer`, with
 `ROSTFREI_NATS_URL` pointing to the disposable broker, a unique owned
-`ROSTFREI_APPLICATION`, an explicit new `ROSTFREI_COMPLETED_OUTCOME_EPOCH`, and distinct
+`ROSTFREI_APPLICATION`, and distinct
 `ROSTFREI_API_TOKEN` / `ROSTFREI_DISPATCH_TOKEN` available in the host environment.
 Set optional `ROSTFREI_INSPECTION_TOKEN` on the host and client for read-only
 production observation/quarantine. Test inspection uses the control token.
-The epoch explicitly selects fresh writable split authority. A unique application
-name alone does not select it. Existing/legacy namespaces remain read-only by
-default; never add an epoch to an existing history as an implicit migration.
+The example selects label-free journal/results storage; leave
+`ROSTFREI_COMPLETED_OUTCOME_EPOCH` unset. Do not reinterpret existing history
+through this fresh setup.
 It provisions both Normal and Test topology and resets Test on startup. Default
 bind: `127.0.0.1:1309`, configurable via `ROSTFREI_API_ADDR`.
 Without `--tracer`, the example runs without Tracer HTTP. Consumer applications

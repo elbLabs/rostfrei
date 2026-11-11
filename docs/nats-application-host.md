@@ -19,7 +19,7 @@ let tracer = TracerConfig::new(listener, HttpConfig::new(control_token)?)
     .with_test_repository(Arc::new(FilesystemTestRepository::load("tests/tracer")?))
     .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
 let host = NatsApplication::builder(test_context, connection, bindings)?
-    .with_fresh_completed_outcome_epoch("owned-disposable-test")?
+    .with_fresh_outcomes()?
     .with_default_test_fixture(fixture)
     .with_tracer(Some(tracer))
     .provision_and_start().await?;
@@ -178,8 +178,9 @@ HTTP and correlation-observer workers are absent and HTTP tokens are unnecessary
 ## Lifecycle and ownership
 
 Writable startup requires explicit fresh split authority selection through
-`with_fresh_completed_outcome_epoch`. Bike rental reads
-`ROSTFREI_COMPLETED_OUTCOME_EPOCH` for both isolated Test and Normal configurations.
+`with_fresh_outcomes()`, without an epoch label. Bike rental selects this layout
+for both Test and Normal configurations by default. Its optional
+`ROSTFREI_COMPLETED_OUTCOME_EPOCH` setting reopens existing named-epoch stores.
 Use an owned disposable application/broker for qualification. Existing legacy
 authorities remain read-only unless the operator performs an explicit fenced
 cutover; an application name alone is not authority selection. See also the

@@ -323,7 +323,7 @@ try {
   const subjectSource = await rawSubjects.text()
   assert.match(subjectSource, /\| Command response \|.*`_COMMAND_RESPONSES`/)
   assert.match(subjectSource, /\| Integration event \|.*`_INTEGRATION_EVENTS`/)
-  assert.match(subjectSource, /\| Command results \|.*__COMMAND_RESULTS__<epoch>/)
+  assert.match(subjectSource, /\| Command results \|.*__COMMAND_RESULTS`/)
   await documentation.goto(`${origin}${base}docs/messaging/subjects`, {
     waitUntil: "networkidle0",
   })
@@ -333,8 +333,9 @@ try {
   await documentation.click(`${explorer} button:nth-child(2)`)
   assert.match(await documentation.$eval(explorer, (element) => element.textContent), /BIKE_RENTAL__TEST_COMMAND_RESPONSES/)
   assert.match(await documentation.$eval(explorer, (element) => element.textContent), /bike-rental\.test\.integration\.bike-rental\.bicycle-rental-started/)
-  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /bike-rental\.test\.domain\.bike-rental\.split\.<epoch-digest>\.aggregate\.\*/)
-  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /BIKE_RENTAL__TEST__BIKE_RENTAL__COMMAND_RESULTS__<epoch>/)
+  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /bike-rental\.test\.domain\.bike-rental\.aggregate\.\*/)
+  assert.doesNotMatch(await documentation.$eval(explorer, (element) => element.textContent), /epoch|\.split\./)
+  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /BIKE_RENTAL__TEST__BIKE_RENTAL__COMMAND_RESULTS/)
   await documentation.close()
   for (const theme of ["light", "dark"]) {
     const context = await browser.createBrowserContext()

@@ -14,15 +14,15 @@ Event storage has separate [subject deployment requirements](messaging/subjects.
    wherever attribution is enabled. Retain immutable history, command envelopes,
    responses and quarantine.
 2. Provision a **new application namespace**, never reuse the legacy application/
-   traffic address for a new epoch. Isolate its broker account or rotate/restrict
+   traffic address for a new history. Isolate its broker account or rotate/restrict
    credentials so old writers cannot publish events, command responses or commands
    there, nor create/update/delete/purge streams or obtain the new credential.
 3. Use `NatsEventStoreConfig::for_bounded_context(&new_context)?
-   .with_fresh_split_outcome_epoch("epoch01")?` only when creating that fresh
+   .with_fresh_outcomes()?` only when creating that fresh
    namespace. Provision and verify both journal and outcome-state streams; their
-   creation incarnations are cross-bound. Epoch metadata is immutable through
-   normal framework policy updates. Default config intentionally blocks unevidenced
-   command execution. The shared host's `with_fresh_completed_outcome_epoch` selects
+   creation incarnations are cross-bound. No operator epoch label is required.
+   Default config intentionally blocks unevidenced
+   command execution. The shared host's `with_fresh_outcomes` selects
    this split configuration rather than the low-level inline compatibility mode.
 4. Verify old credentials against the broker, including raw direct publish and
    JetStream management. Only then start new writers. Deliver new business attempts
@@ -31,7 +31,7 @@ Event storage has separate [subject deployment requirements](messaging/subjects.
    was accepted there. HTTP authorization/routing must enforce the same boundary.
 5. Do not give rollback binaries the new credential. A rollback may use an upgraded
    split/actor-capable reader with read-only credentials and
-   `with_read_only_outcomes()`; it cannot evaluate new IDs or mutate the new epoch.
+   `with_read_only_outcomes()`; it cannot evaluate new IDs or mutate the new history.
    Broker ACLs, not documentation or ledger metadata, exclude an old binary that
    ignores the authority protocol.
 
@@ -41,9 +41,9 @@ preserving/auditing legacy evidence. The library does not administer your broker
 coordinate a deployment lock. Administrative credentials can bypass any fence;
 never share them with application/rollback workers.
 
-Framework responsibilities: default fail-closed legacy processing; durable epoch
+Framework responsibilities: default fail-closed legacy processing; durable authority
 verification; rejected-outcome codecs and atomic guards/winners; permanent decision
-retention with explicit result-detail lifecycle; refusal of epoch activation/change
+retention with explicit result-detail lifecycle; refusal of authority activation/change
 via normal policy update; and safe evidence-bound import without overwriting
 conflicting authority. A missing/corrupt/unavailable detail record never permits
 reevaluation of a completed decision.

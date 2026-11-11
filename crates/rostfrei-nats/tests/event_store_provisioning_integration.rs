@@ -41,16 +41,35 @@ async fn split_authority_uses_readable_names_and_retains_results_after_reconnect
         .as_str()
         .replace('-', "_")
         .to_uppercase();
-    let journal_name = format!("{prefix}__POLICY__JOURNAL__nexus-v1");
-    let results_name = format!("{prefix}__POLICY__COMMAND_RESULTS__nexus-v1");
-    let config = config.with_fresh_split_outcome_epoch("nexus-v1")?;
+    let journal_name = format!("{prefix}__POLICY__JOURNAL");
+    let results_name = format!("{prefix}__POLICY__COMMAND_RESULTS");
+    let original_subject_prefix = config.subject_prefix().to_owned();
+    let config = config.with_fresh_outcomes()?;
     provision_event_store(&context, &config).await?;
     assert_eq!(config.stream_name(), journal_name);
     assert_eq!(config.outcome_state_stream_name(), results_name);
+    assert_eq!(config.subject_prefix(), original_subject_prefix);
+    assert_eq!(config.completed_outcome_epoch(), None);
     for name in [&journal_name, &results_name] {
         let stream = context.get_stream(name).await?;
         assert_eq!(stream.cached_info().config.name, *name);
         assert!(stream.cached_info().config.max_age.is_zero());
+        assert!(
+            !stream
+                .cached_info()
+                .config
+                .metadata
+                .contains_key("rostfrei.completed-outcomes.epoch")
+        );
+        assert_eq!(
+            stream
+                .cached_info()
+                .config
+                .metadata
+                .get("rostfrei.completed-outcomes.version")
+                .map(String::as_str),
+            Some("2")
+        );
     }
 
     let operation = OperationId::new("remembered-noop")?;

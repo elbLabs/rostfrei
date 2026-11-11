@@ -211,7 +211,8 @@ impl NatsEventStore {
         topology: &crate::MessagingTopology,
     ) -> Result<rostfrei_core::CompletedAppendOutcome, EventStoreError> {
         self.require_mutable_namespace().await?;
-        if self.config.completed_outcome_epoch().is_some()
+        if self.config.split_outcomes()
+            || self.config.completed_outcome_epoch().is_some()
             || command.address().application() != self.config.application().as_str()
             || command.address().traffic_scope() != self.config.traffic_scope()
         {
@@ -224,14 +225,9 @@ impl NatsEventStore {
             .get_stream(self.config.stream_name())
             .await
             .map_err(|error| unavailable(format!("legacy namespace inspection failed: {error}")))?;
-        if stream
-            .cached_info()
-            .config
-            .metadata
-            .contains_key("rostfrei.completed-outcomes.epoch")
-        {
+        if has_outcome_authority_metadata(&stream.cached_info().config) {
             return Err(invalid(
-                "legacy imports cannot write a fresh completed outcome epoch",
+                "legacy imports cannot write a completed outcome authority",
             ));
         }
         let transaction = command
@@ -313,7 +309,7 @@ impl NatsEventStore {
         self.require_writable_handle()?;
         // Configured authority cannot be downgraded by clearing broker metadata.
         // Split writers must verify their captured pair even on compatibility routes.
-        if self.config.completed_outcome_epoch().is_some() {
+        if self.config.split_outcomes() || self.config.completed_outcome_epoch().is_some() {
             return self.require_completed_outcome_writer().await;
         }
         let stream = self
@@ -322,12 +318,7 @@ impl NatsEventStore {
             .await
             .map_err(|error| unavailable(format!("failed to inspect write namespace: {error}")))?;
         verify_stream_config(&self.config.stream_config(), &stream.cached_info().config)?;
-        if stream
-            .cached_info()
-            .config
-            .metadata
-            .contains_key("rostfrei.completed-outcomes.epoch")
-        {
+        if has_outcome_authority_metadata(&stream.cached_info().config) {
             self.require_completed_outcome_writer().await?;
         }
         Ok(())
@@ -384,6 +375,14 @@ impl NatsEventStore {
             .await
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
         verify_stream_config(&config.stream_config(), &stream.cached_info().config)?;
+        let config = if !config.split_outcomes()
+            && config.completed_outcome_epoch().is_none()
+            && has_outcome_authority_metadata(&stream.cached_info().config)
+        {
+            config.with_read_only_outcomes()
+        } else {
+            config
+        };
         let journal_incarnation = stream.cached_info().created.to_string();
         let (split, authority) = if history_only {
             (
@@ -2235,11 +2234,13 @@ pub async fn update_event_store(
     for key in [
         "rostfrei.completed-outcomes.epoch",
         "rostfrei.completed-outcomes.version",
+        outcomes::JOURNAL_BINDING,
+        outcomes::STATE_BINDING,
     ] {
         if actual.metadata.get(key) != expected.metadata.get(key) {
             return Err(EventStoreError::new(
                 EventStoreErrorKind::ConfigurationMismatch,
-                "policy update cannot activate/change a completed outcome epoch; use a fresh fenced namespace",
+                "policy update cannot activate/change a completed outcome authority; use a fresh fenced namespace",
             ));
         }
     }
@@ -4248,6 +4249,17 @@ fn event_checksum(
     Ok(encode_lower_hex(Sha256::digest(input)))
 }
 
+fn has_outcome_authority_metadata(config: &Config) -> bool {
+    [
+        "rostfrei.completed-outcomes.epoch",
+        "rostfrei.completed-outcomes.version",
+        outcomes::JOURNAL_BINDING,
+        outcomes::STATE_BINDING,
+    ]
+    .iter()
+    .any(|key| config.metadata.contains_key(*key))
+}
+
 fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventStoreError> {
     reject_incompatible_subject_layout(expected, actual)?;
     if expected
@@ -4267,8 +4279,6 @@ fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventS
         }
     }
     if expected.metadata.is_empty() {
-        // A new reader may inspect/replay a fresh epoch in explicit default read-only
-        // mode. Every mutable API independently requires its configured durable epoch.
         compatible.metadata.clone_from(&actual.metadata);
     }
     if actual.max_message_size == -1 || actual.max_message_size > expected.max_message_size {

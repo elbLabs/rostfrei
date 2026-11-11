@@ -33,12 +33,9 @@ pub struct Options {
 pub fn host_environment(prefix: &str) -> Result<Environment> {
     let port = nats::port()?;
     let mut env = environment();
+    env.remove("ROSTFREI_COMPLETED_OUTCOME_EPOCH");
     for (key, value) in [
         ("ROSTFREI_APPLICATION", format!("{prefix}-{}", nonce())),
-        (
-            "ROSTFREI_COMPLETED_OUTCOME_EPOCH",
-            format!("{prefix}-{}", nonce()),
-        ),
         ("ROSTFREI_API_ADDR", format!("127.0.0.1:{port}")),
         ("ROSTFREI_TRACER_URL", format!("http://127.0.0.1:{port}")),
         ("ROSTFREI_API_TOKEN", nonce()),
@@ -330,7 +327,7 @@ pub fn qualify(options: Options) -> Result<()> {
             &output.join("summary.json"),
             &json!({"release":passed["release"],"catalogVersion":catalog["catalogVersion"],"application":env["ROSTFREI_APPLICATION"],
             "applicationCommand":command,"hostSourceRevision":revision,"hostBuildProvenance":"host-build-provenance.json","cliRelease":cli_release,"cliSha256":digest(&native)?,
-            "completedOutcomeEpoch":env["ROSTFREI_COMPLETED_OUTCOME_EPOCH"],"normalPreservation":"observed history retained through three suite resets; new duplicate command rejected",
+            "normalPreservation":"observed history retained through three suite resets; new duplicate command rejected",
             "requiredHandlerSimulation":options.require_handler_simulation,"sourceCheckout":options.source_checkout,"fixture":{"id":passed["fixture"]["id"],"revision":passed["fixture"]["revision"]},
             "example":"passed","negativeComparisonControl":"failed-as-expected","exampleAfterReset":"passed","capture":passed["messageSeries"]["capture"],
             "freshSessionTrial":"unexecuted","humanFeedback":"not-collected","brokerCleanup":"owned by cargo xtask test caller","consumerPath":"empty tools directory; build tools unavailable",

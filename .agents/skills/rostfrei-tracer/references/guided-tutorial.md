@@ -30,7 +30,7 @@ application, read this skill's `release.json`, match its locked dependency, and
 use `cargo rostfrei` with `--release` as described in the runtime reference.
 Never borrow newer online skill instructions to claim an older kit has them.
 
-Record the owned broker/application namespace, fresh completed-outcome epoch,
+Record the owned broker/application namespace,
 host address, selected definitions and fixture, evidence directory, and owned
 processes for cleanup. Keep credentials only in the process environment. Explain
 once that startup and each behavior run reset the whole configured **Test**

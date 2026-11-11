@@ -13,16 +13,16 @@ The application's only direct Rostfrei dependency is `rostfrei`, with `nats` and
 
 ## Completed-outcome cutover
 
-NATS now defaults to a fail-closed legacy/read-only outcome namespace. For a **new
-isolated application** (not an existing demo namespace), explicitly set both
-`ROSTFREI_APPLICATION=bike-rental-epoch92` and
-`ROSTFREI_COMPLETED_OUTCOME_EPOCH=epoch92` for provision/API processes. Fence old
-credentials before starting new mutable workers. Programmatic fixtures use
-`BikeRentalNatsConfig::with_fresh_completed_outcome_epoch` with
-`BikeRentalNatsRuntime::provision_config`. This now selects the fresh two-stream
-split authority, deriving disjoint journal/state namespaces. Do not use it to
+For a **new isolated application** (not an existing demo namespace), set
+`ROSTFREI_APPLICATION=bike-rental-demo` for provision/API processes. Both binaries
+select label-free journal/command-results storage by default. Programmatic fixtures
+use `BikeRentalNatsConfig::with_fresh_outcomes` with
+`BikeRentalNatsRuntime::provision_config`. Fence old credentials before starting
+new mutable workers. Do not use this fresh setup to
 reinterpret old retries or migrate histories implicitly; each belongs to its
 original authority. The pair is verified by configuration and incarnation.
+For an existing named-epoch store, retain its explicit
+`ROSTFREI_COMPLETED_OUTCOME_EPOCH` value; removing it selects different storage.
 Old retries stay in their original namespace; a repaired business attempt uses a
 new operation ID. See the [cutover runbook](../../docs/completed-outcome-cutover.md).
 The [native authority contract](../../docs/command-runtime.md#native-authority) describes
@@ -32,10 +32,10 @@ explicit detail expiry, legacy scope mapping and authorized sender/worker APIs.
 
 ```sh
 docker compose -f examples/bike-rental/compose.yaml up -d
+unset ROSTFREI_COMPLETED_OUTCOME_EPOCH
 
 ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
-  ROSTFREI_APPLICATION=bike-rental-epoch92 \
-  ROSTFREI_COMPLETED_OUTCOME_EPOCH=epoch92 \
+  ROSTFREI_APPLICATION=bike-rental-demo \
   ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES=67108864 \
   ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES=268435456 \
   ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES=524288 \

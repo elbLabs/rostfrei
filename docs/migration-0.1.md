@@ -65,9 +65,9 @@ See the [command runtime](command-runtime.md).
 ## Native authority and deployment
 
 New coordinated NATS execution requires a **fresh split-outcome authority**:
-`NatsEventStoreConfig::with_fresh_split_outcome_epoch(...)`. The shared host's
-`with_fresh_completed_outcome_epoch(...)` selects that split configuration;
-the bike-rental example obtains it from `ROSTFREI_COMPLETED_OUTCOME_EPOCH`.
+`NatsEventStoreConfig::with_fresh_outcomes()`. The shared host exposes the same
+label-free selection. Existing epoch-based stores retain their explicit
+`with_fresh_split_outcome_epoch(...)` configuration.
 
 The journal and outcome-state streams form one incarnation-bound authority.
 Provision and back up both, retain their metadata and original identity/routing,
