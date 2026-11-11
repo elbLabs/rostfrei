@@ -185,10 +185,6 @@ impl NatsEventStoreConfig {
         self.completed_outcome_epoch.as_deref()
     }
 
-    /// Select the journal/command-results pair for a fresh application namespace.
-    /// Names and subjects derive from the application, scope and bounded context;
-    /// the streams' creation identities bind the authority without an epoch label.
-    /// This does not migrate existing storage or exclude old writers.
     pub fn with_fresh_outcomes(mut self) -> Result<Self, EventStoreError> {
         if self.split_outcomes || self.completed_outcome_epoch.is_some() {
             return Err(invalid("outcome authority already selected"));
@@ -208,7 +204,6 @@ impl NatsEventStoreConfig {
     /// Stream names use `__JOURNAL__<epoch>` and `__COMMAND_RESULTS__<epoch>`;
     /// the epoch label is preserved exactly while subjects retain its digest.
     /// Epochs must not contain the reserved `__` stream-name separator.
-    /// Use `with_fresh_outcomes` for new deployments that do not need a named epoch.
     pub fn with_fresh_split_outcome_epoch(
         self,
         epoch: impl Into<String>,

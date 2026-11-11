@@ -95,7 +95,6 @@ pub struct NatsRuntimeConfig {
 }
 
 impl NatsRuntimeConfig {
-    /// Select a fresh journal/results pair without an operator epoch label.
     pub fn with_fresh_outcomes(mut self) -> Result<Self, NatsHostError> {
         self.event_store = self.event_store.with_fresh_outcomes()?;
         Ok(self)

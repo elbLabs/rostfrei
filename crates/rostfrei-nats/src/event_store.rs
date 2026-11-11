@@ -375,8 +375,6 @@ impl NatsEventStore {
             .await
             .map_err(|error| unavailable(format!("failed to get event-store stream: {error}")))?;
         verify_stream_config(&config.stream_config(), &stream.cached_info().config)?;
-        // A legacy-shaped reader cannot gain write access if observed authority
-        // metadata is later damaged or removed.
         let config = if !config.split_outcomes()
             && config.completed_outcome_epoch().is_none()
             && has_outcome_authority_metadata(&stream.cached_info().config)
@@ -4281,8 +4279,6 @@ fn verify_stream_config(expected: &Config, actual: &Config) -> Result<(), EventS
         }
     }
     if expected.metadata.is_empty() {
-        // Legacy-shaped readers may inspect history. Every mutable API independently
-        // requires the authority selected by broker metadata, including label-free pairs.
         compatible.metadata.clone_from(&actual.metadata);
     }
     if actual.max_message_size == -1 || actual.max_message_size > expected.max_message_size {
