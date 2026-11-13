@@ -3,7 +3,9 @@
 rostfrei provides two project-local skills for coding agents:
 
 - **`rostfrei-develop-feature`** turns agreed Given/When/Then behavior into real
-  NATS-backed tests, then guides the red/green/refactor loop.
+  NATS-backed tests, then guides the red/green/refactor loop. Before designing
+  infrastructure, it checks the installed framework's guarantees and the
+  application's remaining responsibilities to avoid parallel implementations.
 - **`rostfrei-tracer`** discovers runtime capabilities, runs isolated tests and
   explains recorded operations, observations and quarantine through HTTP/SSE.
   Its guided tutorial reference adds step-by-step, text-first exploration.

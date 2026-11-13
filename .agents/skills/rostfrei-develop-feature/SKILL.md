@@ -31,6 +31,21 @@ Then <observable result>
 Resolve business decisions before writing assertions. Start with one useful
 scenario and add others only when the feature requires them.
 
+### Check framework ownership
+
+Before designing infrastructure, check the application's locked Rostfrei version,
+its [documented contracts](https://elblabs.github.io/rostfrei/docs), public APIs and
+existing application wiring. For each required guarantee—durability/idempotency,
+atomic commits, conflict retries, delivery/recovery or read-model consistency—cite
+what Rostfrei provides, its configuration and limits, and what the application owns.
+Verify against that version's source/docs; a feature name alone is not a guarantee.
+
+Reuse framework primitives. Do not add parallel command buses, receipts,
+deduplication/outbox stores or retry/recovery loops for guarantees already covered.
+Before adding such machinery, identify a concrete capability gap; missing wiring
+or configuration alone is not one. External effects and cross-context work still
+need explicit coordination; a durable command decision does not make them atomic.
+
 ## 2. Write the behavior test
 
 Read [execution prerequisites](references/execution.md) and the
