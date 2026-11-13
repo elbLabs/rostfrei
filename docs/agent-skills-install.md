@@ -8,6 +8,11 @@ rostfrei provides two project-local skills for coding agents:
   explains recorded operations, observations and quarantine through HTTP/SSE.
   Its guided tutorial reference adds step-by-step, text-first exploration.
 
+Each `SKILL.md` is a short workflow entry point. Read linked reference sections
+for the selected task; Tracer's runtime reference contains the detailed HTTP,
+execution and inspection procedures. Explanations default to text, with optional
+diagrams using the same recorded evidence.
+
 ## Start with a guided tutorial
 
 For a new-user bike-rental demo, give your agent the prompt in the
