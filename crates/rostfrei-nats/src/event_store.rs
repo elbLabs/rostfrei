@@ -200,6 +200,13 @@ impl AppendSession for NatsAppendSession<'_> {
 }
 
 #[derive(Clone)]
+#[cfg_attr(
+    test,
+    allow(
+        clippy::struct_excessive_bools,
+        reason = "serial-history test control is independent of production access and replay modes"
+    )
+)]
 pub struct NatsEventStore {
     context: jetstream::Context,
     config: NatsEventStoreConfig,
