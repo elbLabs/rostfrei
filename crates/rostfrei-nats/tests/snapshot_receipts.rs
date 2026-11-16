@@ -299,6 +299,10 @@ async fn earlier_receipt_cannot_certify_a_repeated_operation_in_the_tail() -> Te
         "Nats-Expected-Last-Subject-Sequence",
         original.sequence.to_string(),
     );
+    headers.insert(
+        "Nats-Expected-Last-Subject-Sequence-Subject",
+        original.subject.as_str(),
+    );
     let staged = fixture
         .js
         .client()
