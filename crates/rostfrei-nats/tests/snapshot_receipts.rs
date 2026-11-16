@@ -1,8 +1,11 @@
 //! Receipt-backed snapshot replay uses the permanent transaction authority.
 #![allow(clippy::unwrap_used, clippy::panic_in_result_fn)]
-rostfrei::install_macro_support!();
+rostfrei_runtime::install_macro_support!();
 mod release_contract_support;
+#[allow(dead_code)]
+mod transaction_support;
 use release_contract_support::*;
+use transaction_support::transaction;
 
 fn config(fixture: &Fixture) -> TestResult<NatsEventStoreConfig> {
     Ok(NatsEventStoreConfig::for_bounded_context(&fixture.context)?
@@ -41,24 +44,25 @@ async fn store(fixture: &Fixture) -> TestResult<NatsEventStore> {
 }
 
 #[tokio::test]
-async fn low_level_appends_and_sessions_share_permanent_transaction_receipts() -> TestResult {
+async fn transactions_and_sessions_share_permanent_transaction_receipts() -> TestResult {
     let fixture = Fixture::new("snapshot-receipt-appends").await?;
     let store = store(&fixture).await?;
     let full_reader = store.clone().with_snapshotting(false);
     let id = stream("one")?;
     let first = batch(&id, "first", "one")?;
+    let proposal = transaction(&id, ExpectedVersion::NoStream, first.clone());
     let (left, right) = tokio::join!(
-        full_reader.append(&id, ExpectedVersion::NoStream, first.clone()),
-        store.append(&id, ExpectedVersion::NoStream, first.clone())
+        full_reader.append_transaction(proposal.clone()),
+        store.append_transaction(proposal)
     );
     let (left, right) = (left?, right?);
     assert_ne!(left.is_exact_replay(), right.is_exact_replay());
-    assert_eq!(left.events(), right.events());
+    assert_eq!(left.receipt(), right.receipt());
     let receipt = store
         .load_transaction_receipt(first.operation_id())
         .await?
-        .ok_or("low-level append did not persist an operation receipt")?;
-    assert_eq!(receipt.events(), left.events());
+        .ok_or("transaction did not persist an operation receipt")?;
+    assert_eq!(&receipt, left.receipt());
     assert_eq!(receipt.actor(), first.actor());
     assert_eq!(receipt.correlation_id(), first.correlation_id());
     assert_eq!(receipt.causation_id(), first.causation_id());
@@ -68,33 +72,32 @@ async fn low_level_appends_and_sessions_share_permanent_transaction_receipts() -
     let result = full_reader
         .append_session()
         .await?
-        .append(
+        .append_transaction(transaction(
             &id,
             ExpectedVersion::Exact(StreamVersion::new(1)),
             second.clone(),
-        )
+        ))
         .await?;
     assert_eq!(
         store
             .load_transaction_receipt(second.operation_id())
             .await?
-            .ok_or("append session did not persist an operation receipt")?
-            .events(),
-        result.events()
+            .ok_or("append session did not persist an operation receipt")?,
+        *result.receipt()
     );
     let replay = store
         .append_session()
         .await?
-        .append(&id, ExpectedVersion::NoStream, second)
+        .append_transaction(transaction(&id, ExpectedVersion::NoStream, second))
         .await?;
     assert!(replay.is_exact_replay());
-    assert_eq!(replay.events(), result.events());
+    assert_eq!(replay.receipt(), result.receipt());
     let error = store
-        .append(
+        .append_transaction(transaction(
             &id,
             ExpectedVersion::Exact(StreamVersion::new(2)),
             batch(&id, "first", "changed")?,
-        )
+        ))
         .await
         .unwrap_err();
     assert_eq!(error.kind(), EventStoreErrorKind::IdentityConflict);
@@ -108,7 +111,11 @@ async fn receipt_profile_is_fresh_and_cannot_be_enabled_by_policy_update() -> Te
     let legacy = fixture.split_event_store().await?;
     let id = stream("one")?;
     legacy
-        .append(&id, ExpectedVersion::NoStream, batch(&id, "old", "old")?)
+        .append_transaction(transaction(
+            &id,
+            ExpectedVersion::NoStream,
+            batch(&id, "old", "old")?,
+        ))
         .await?;
     for config in [
         config(&fixture)?,
@@ -159,14 +166,18 @@ async fn receipt_profile_refuses_writes_after_its_guarantee_is_removed() -> Test
     fixture.js.update_stream(changed).await?;
     for result in [
         store
-            .append(&id, ExpectedVersion::NoStream, batch(&id, "direct", "one")?)
+            .append_transaction(transaction(
+                &id,
+                ExpectedVersion::NoStream,
+                batch(&id, "transaction", "one")?,
+            ))
             .await,
         pending
-            .append(
+            .append_transaction(transaction(
                 &id,
                 ExpectedVersion::NoStream,
                 batch(&id, "session", "two")?,
-            )
+            ))
             .await,
     ] {
         assert_eq!(
@@ -191,20 +202,7 @@ async fn accelerated_tail_requires_its_actual_operation_receipt() -> TestResult 
         };
         let events = batch(&id, operation, operation)?;
         store
-            .append_transaction(
-                EventTransaction::new(
-                    events.operation_id().clone(),
-                    events.operation_fingerprint(),
-                    vec![TransactionParticipant::new(
-                        id.clone(),
-                        expected,
-                        Some(events),
-                    )],
-                )
-                .with_actor(ActorRef::new("test", "receipt-actor")?)
-                .with_correlation_id(CorrelationId::new("receipt-correlation")?)
-                .with_causation_id(CausationId::new("receipt-causation")?),
-            )
+            .append_transaction(transaction(&id, expected, events))
             .await?;
     }
     let config = NatsReadModelConfig::new(&fixture.context, "snapshot-cache")?;
@@ -226,7 +224,9 @@ async fn accelerated_tail_requires_its_actual_operation_receipt() -> TestResult 
     // must not certify the retained transaction. This bypasses the supported writer.
     let journal = fixture.js.get_stream(store.config().stream_name()).await?;
     let receipt = journal
-        .get_last_raw_message_by_subject(&store.config().transaction_subject("second"))
+        .get_last_raw_message_by_subject(
+            &store.config().transaction_receipt_subject_filter("second"),
+        )
         .await?;
     fixture
         .js
@@ -250,7 +250,11 @@ async fn earlier_receipt_cannot_certify_a_repeated_operation_in_the_tail() -> Te
     let store = store(&fixture).await?;
     let id = stream("one")?;
     store
-        .append(&id, ExpectedVersion::NoStream, batch(&id, "first", "one")?)
+        .append_transaction(transaction(
+            &id,
+            ExpectedVersion::NoStream,
+            batch(&id, "first", "one")?,
+        ))
         .await?;
     let checkpoint = store
         .load_replay(&id, None, None)
@@ -262,7 +266,7 @@ async fn earlier_receipt_cannot_certify_a_repeated_operation_in_the_tail() -> Te
         .get_last_raw_message_by_subject(
             &store
                 .config()
-                .aggregate_subject(id.aggregate_type().as_str(), id.aggregate_id().as_str()),
+                .event_subject(id.aggregate_type().as_str(), id.aggregate_id().as_str()),
         )
         .await?;
     // Preserve canonical wire field order when checksumming a genuine event with
@@ -314,7 +318,9 @@ async fn earlier_receipt_cannot_certify_a_repeated_operation_in_the_tail() -> Te
     fixture
         .js
         .send_publish(
-            store.config().transaction_subject("filler"),
+            store
+                .config()
+                .transaction_receipt_subject("filler", None, None),
             async_nats::jetstream::message::PublishMessage::build()
                 .payload("{}".into())
                 .headers(headers),

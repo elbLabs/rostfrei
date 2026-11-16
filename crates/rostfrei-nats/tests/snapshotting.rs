@@ -2,7 +2,10 @@
 #![allow(clippy::unwrap_used, clippy::panic_in_result_fn)]
 rostfrei_runtime::install_macro_support!();
 mod release_contract_support;
+#[allow(dead_code)]
+mod transaction_support;
 use release_contract_support::*;
+use transaction_support::transaction;
 
 async fn seed(store: &NatsEventStore, id: &StreamId, count: u64) -> TestResult {
     for number in 1..=count {
@@ -21,18 +24,19 @@ async fn seed(store: &NatsEventStore, id: &StreamId, count: u64) -> TestResult {
         } else {
             ExpectedVersion::Exact(StreamVersion::new(number.saturating_sub(1)))
         };
-        store
-            .append(
-                id,
-                expected,
-                EventBatch::new(
-                    commit,
-                    operation,
-                    ContentFingerprint::digest(number.to_string().as_bytes()),
-                    vec![event],
-                )?,
-            )
-            .await?;
+        let batch = EventBatch::new(
+            commit,
+            operation,
+            ContentFingerprint::digest(number.to_string().as_bytes()),
+            vec![event],
+        )?;
+        if store.config().receipt_backed_history() {
+            store
+                .append_transaction(transaction(id, expected, batch))
+                .await?;
+        } else {
+            store.append_fixture(id, expected, batch).await?;
+        }
     }
     Ok(())
 }
@@ -162,7 +166,29 @@ async fn setup_profile(
     Arc<AggregateCodecs>,
     Arc<RebuildDiagnostics>,
 )> {
-    let fixture = Fixture::new(label).await?;
+    let mut fixture = Fixture::new(label).await?;
+    if !receipt_backed {
+        fixture.context = fixture
+            .context
+            .application()
+            .bounded_context_in_scope(TrafficScope::Test, fixture.context.name().as_str())?;
+        fixture.messaging = ApplicationMessagingConfig::new_in_scope(
+            fixture.context.application(),
+            TrafficScope::Test,
+        )?
+        .with_max_bytes(64 * 1024 * 1024)?;
+        provision_application_messaging(&fixture.js, &fixture.messaging).await?;
+        fixture.adapter = Arc::new(
+            NatsMessagingAdapter::new(
+                NatsPublisher::new(fixture.js.clone(), fixture.messaging.topology().clone()),
+                NatsCommandResponseReader::new(
+                    fixture.js.clone(),
+                    fixture.messaging.topology().clone(),
+                ),
+            )
+            .with_response_timeout(Duration::from_secs(3)),
+        );
+    }
     let store = snapshot_store(&fixture, receipt_backed).await?;
     let config = NatsReadModelConfig::new(&fixture.context, "snapshots")?;
     provision_read_model(&fixture.js, &config).await?;
@@ -181,6 +207,12 @@ async fn unqualified_history_replays_full_prefix_for_real_commands() -> TestResu
         setup_profile("snapshot-unqualified", SnapshotPolicy::Manual, false).await?;
     let id = stream("one")?;
     seed(&store, &id, 8).await?;
+    assert!(
+        store
+            .load_transaction_receipt(&OperationId::new("seed-1")?)
+            .await?
+            .is_none()
+    );
     CommandExecutor::with_codecs(store.clone(), codecs.clone())
         .create_snapshot::<Target>(&id, StreamVersion::new(6))
         .await?;
@@ -210,9 +242,9 @@ async fn unqualified_history_replays_full_prefix_for_real_commands() -> TestResu
     assert_eq!(report.events_applied, 2);
     assert_eq!(
         report.events_read, 8,
-        "unqualified histories must validate the whole prefix, even for a normal command"
+        "unqualified histories must validate the whole prefix, even for a real command"
     );
-    // The preceding command has now made this a mixed direct/transaction history.
+    // The preceding command has now made this a mixed fixture/transaction history.
     bus.dispatch(request("mixed-command", "one", "add")?)
         .await?;
     let mixed = reports
@@ -325,7 +357,7 @@ async fn rejects_mid_commit_capture_and_retains_complete_history_after_session_r
         })
         .collect::<Result<Vec<_>, _>>()?;
     store
-        .append(
+        .append_transaction(transaction(
             &id,
             ExpectedVersion::NoStream,
             EventBatch::new(
@@ -334,7 +366,7 @@ async fn rejects_mid_commit_capture_and_retains_complete_history_after_session_r
                 ContentFingerprint::digest(b"multi"),
                 events,
             )?,
-        )
+        ))
         .await?;
     let executor = CommandExecutor::with_codecs(store.clone(), codecs);
     assert!(
@@ -677,7 +709,7 @@ async fn concurrent_writer_forces_a_fresh_tail_and_retries_at_the_new_head() -> 
             derive_event_id(&commit, 0),
         )?;
         store
-            .append(
+            .append_transaction(transaction(
                 &id,
                 ExpectedVersion::Exact(StreamVersion::new(8)),
                 EventBatch::new(
@@ -686,7 +718,7 @@ async fn concurrent_writer_forces_a_fresh_tail_and_retries_at_the_new_head() -> 
                     ContentFingerprint::digest(b"race"),
                     vec![event],
                 )?,
-            )
+            ))
             .await?;
         resume.add_permits(1);
         TestResult::Ok(())
@@ -747,7 +779,7 @@ async fn seed_many(store: &NatsEventStore, id: &StreamId, count: u64, boundary: 
             ExpectedVersion::Exact(StreamVersion::new(version))
         };
         store
-            .append(
+            .append_transaction(transaction(
                 id,
                 expected,
                 EventBatch::new(
@@ -756,7 +788,7 @@ async fn seed_many(store: &NatsEventStore, id: &StreamId, count: u64, boundary: 
                     ContentFingerprint::digest(version.to_string()),
                     events,
                 )?,
-            )
+            ))
             .await?;
         version = end;
     }
@@ -830,9 +862,9 @@ async fn whole_command_and_exact_replay_transfer_a_bounded_tail() -> TestResult 
 }
 
 #[tokio::test]
-async fn skipped_direct_operation_identities_still_fence_command_writes() -> TestResult {
+async fn skipped_command_operation_identities_still_fence_command_writes() -> TestResult {
     let (_fixture, store, codecs, _) =
-        setup_profile("snapshot-old-identity", SnapshotPolicy::Manual, false).await?;
+        setup("snapshot-old-identity", SnapshotPolicy::Manual).await?;
     let id = stream("one")?;
     seed(&store, &id, 8).await?;
     let executor = CommandExecutor::with_codecs(store.clone(), codecs);
@@ -840,9 +872,11 @@ async fn skipped_direct_operation_identities_still_fence_command_writes() -> Tes
         .create_snapshot::<Target>(&id, StreamVersion::new(8))
         .await?;
     let session = store.append_session().await?;
-    session
+    let replay = session
         .load_replay(&id, Some(&snapshot.checkpoint), None)
         .await?;
+    assert!(replay.events.is_empty());
+    assert_eq!(replay.events_read, 0);
     let operation = OperationId::new("seed-1")?;
     let commit = derive_commit_id(&id, &operation);
     let event = <JsonEventCodec as EventCodec<Target>>::encode(

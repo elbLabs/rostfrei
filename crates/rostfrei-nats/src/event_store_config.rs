@@ -168,9 +168,9 @@ impl NatsEventStoreConfig {
         &self.stream_name
     }
 
-    /// Select a fresh, disjoint namespace whose event writes all publish operation
-    /// receipts. Low-level appends use `EventTransaction` without invoking handlers.
-    /// Provision this profile from creation; existing/mixed histories are not upgraded.
+    /// Select a fresh, disjoint namespace for accelerated transaction-history replay.
+    /// Test fixture manifests are not supported by the accelerated reader yet.
+    /// Provision from creation; existing histories are not upgraded.
     pub fn with_receipt_backed_history(mut self) -> Result<Self, EventStoreError> {
         if self.receipt_backed_history() {
             return Err(invalid("receipt-backed history already selected"));

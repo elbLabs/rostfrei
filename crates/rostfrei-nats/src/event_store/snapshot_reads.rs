@@ -60,7 +60,8 @@ impl NatsEventStore {
             )
         })?;
         let expected_subject = if participant.event_count == 0 {
-            self.config.transaction_guard_subject(operation.as_str(), guard_ordinal)
+            self.config
+                .transaction_guard_subject(operation.as_str(), guard_ordinal)
         } else {
             subject.clone()
         };

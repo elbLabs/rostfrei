@@ -1,7 +1,7 @@
 use rostfrei_core::{
     AppendOutcome, CommandExecutor, CommandOutcome, CommandReceipt, ContentFingerprint, Event,
-    EventBatch, EventStore, ExpectedVersion, FixtureEventStore, MAX_BATCH_PAYLOAD_LEN, MAX_EVENTS_PER_BATCH,
-    MAX_TRANSACTION_ITEMS, NewEvent, OperationId, StreamVersion, derive_commit_id, derive_event_id,
+    EventBatch, EventStore, ExpectedVersion, FixtureEventStore, MAX_BATCH_PAYLOAD_LEN,
+    MAX_EVENTS_PER_BATCH, NewEvent, OperationId, StreamVersion, derive_commit_id, derive_event_id,
 };
 
 use super::{BenchResult, config::HistoryKind, model};
@@ -120,7 +120,12 @@ async fn batched_transactions<S: EventStore>(
     Ok(())
 }
 
-async fn fixtures<S: FixtureEventStore>(store: &S, id: &str, count: u32, note_bytes: u32) -> BenchResult {
+async fn fixtures<S: FixtureEventStore>(
+    store: &S,
+    id: &str,
+    count: u32,
+    note_bytes: u32,
+) -> BenchResult {
     let stream = model::stream(id)?;
     let mut position = 0_u32;
     while position < count {
@@ -129,9 +134,7 @@ async fn fixtures<S: FixtureEventStore>(store: &S, id: &str, count: u32, note_by
         let commit = derive_commit_id(&stream, &operation);
         let mut events = Vec::new();
         let mut bytes = 0_usize;
-        while position < count
-            && events.len() < MAX_EVENTS_PER_BATCH.min(MAX_TRANSACTION_ITEMS.saturating_sub(1))
-        {
+        while position < count && events.len() < MAX_EVENTS_PER_BATCH {
             let event = model::StockReceived::at(u64::from(position), note_bytes)?;
             let payload = event.encode_json()?;
             let next_bytes = bytes

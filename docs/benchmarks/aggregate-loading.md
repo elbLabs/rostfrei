@@ -45,7 +45,9 @@ snapshot-plus-tail rehydration and commands. The target must end a complete comm
 capture time/state size are reported separately. Original events remain retained.
 Add `--receipt-backed-history` to qualify the fresh namespace for bounded fetching
 and exact tail-receipt validation; without it, snapshots still fetch full histories.
-Low-level `direct` writes in that profile also publish atomic operation receipts.
+Use that profile with `--history commands,batched-transactions`. The accelerated
+reader does not yet support Test fixture manifests; measure `fixtures` in the
+ordinary namespace, where snapshots skip prefix application but retain full reads.
 
 The `rostfrei-benchmarks` package owns the suite and Rust broker runner.
 Actual broker measurements reject debug builds. The default artifact is the checkout's

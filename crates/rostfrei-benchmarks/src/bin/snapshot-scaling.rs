@@ -140,7 +140,7 @@ async fn run(options: Options) -> BenchResult {
             .await?;
         let message = journal
             .get_last_raw_message_by_subject(
-                &config.aggregate_subject(stream.aggregate_type().as_str(), ID),
+                &config.event_subject(stream.aggregate_type().as_str(), ID),
             )
             .await?;
         let envelope: Value = serde_json::from_slice(&message.payload)?;
@@ -328,7 +328,7 @@ async fn import_fixture(
     end: u64,
 ) -> BenchResult {
     let stream_id = model::stream(ID)?;
-    let subject = config.aggregate_subject(stream_id.aggregate_type().as_str(), ID);
+    let subject = config.event_subject(stream_id.aggregate_type().as_str(), ID);
     let stream = connection
         .jetstream()
         .get_stream(config.stream_name())
@@ -398,6 +398,10 @@ async fn import_fixture(
                 headers.insert(
                     "Nats-Expected-Last-Subject-Sequence",
                     predecessor.to_string(),
+                );
+                headers.insert(
+                    "Nats-Expected-Last-Subject-Sequence-Subject",
+                    subject.as_str(),
                 );
             }
             if ordinal.saturating_add(1) == count {

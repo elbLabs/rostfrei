@@ -369,9 +369,14 @@ fn aggregate_event_filter_matches_family(filter: &str, family_filter: &str) -> b
     let tokens: Vec<_> = remainder.split('.').collect();
     let (context, identifiers) = match tokens.as_slice() {
         [context, "aggregate", aggregate_type, aggregate_id]
-        | [context, "receipts", "v1", "aggregate", aggregate_type, aggregate_id] => {
-            (context, [aggregate_type, aggregate_id])
-        }
+        | [
+            context,
+            "receipts",
+            "v1",
+            "aggregate",
+            aggregate_type,
+            aggregate_id,
+        ] => (context, [aggregate_type, aggregate_id]),
         [
             context,
             "split",

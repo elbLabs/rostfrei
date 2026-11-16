@@ -48,9 +48,11 @@ events remain authoritative and retained. Configure `AggregateCodecs` with a
 then share that registry with the executor/processor. For NATS, provision a scoped
 KV bucket, connect `NatsSnapshotStore`, and enable `store.with_snapshotting(true)`.
 For bounded fetching, explicitly provision `config.with_receipt_backed_history()?`
-from creation. It selects a disjoint namespace and routes low-level appends through
-atomic event transactions with permanent receipts. Policy updates cannot adopt an
-existing namespace. As with outcome epochs, exclude unsupported/raw writers through
+from creation. It selects a disjoint namespace for coordinated transactions with
+permanent receipts. Policy updates cannot adopt an existing namespace.
+The accelerated reader does not yet support Test fixture manifests; use the ordinary
+namespace for snapshot-backed fixtures, retaining full-history validation.
+As with outcome epochs, exclude unsupported/raw writers through
 broker permissions. Each tail transaction is checked against its receipt's exact
 events, guards, atomic batch and native positions. Older/mixed histories still fetch
 and validate the full history; snapshots only skip decoding/applying their prefix.

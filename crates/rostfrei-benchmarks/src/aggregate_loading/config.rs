@@ -43,7 +43,7 @@ pub struct Options {
     /// Audit historical transaction evidence during read phases (writes stay ordinary).
     #[arg(long)]
     pub audit_reads: bool,
-    /// Provision a fresh receipt-backed namespace, including low-level append receipts.
+    /// Provision a fresh receipt-backed namespace for transaction-history measurements.
     #[arg(long)]
     pub receipt_backed_history: bool,
     /// Capture this complete-commit version before measuring snapshot-aware reads/writes.
