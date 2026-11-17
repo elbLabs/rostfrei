@@ -1,15 +1,14 @@
 import { Link } from "@tanstack/react-router"
 import { MdxCodeBlock } from "@/components/docs/MdxCodeBlock"
 
-const rentalCode = `#[domain_action(
-    id = "rent-bicycle",
-    label = "Rent bicycle"
+const rentalCode = `#[derive(Command, Clone, Debug)]
+#[domain(
+    id = "collect-rental-payment",
+    label = "Collect rental payment",
+    context = BikeRental
 )]
-pub trait RentBicycleAction {
-    fn rent_bicycle(
-        &mut self,
-        input: BicycleId,
-    ) -> Result<(), BicycleUnavailable>;
+pub struct CollectRentalPayment {
+    pub payment_id: PaymentId,
 }`
 
 export function RentalExampleSection() {
@@ -19,17 +18,17 @@ export function RentalExampleSection() {
         How a rental becomes recorded history
       </h2>
       <p className="section-intro">
-        In the bike-rental example, the fleet decides whether a bicycle is
-        available. This illustration connects its Rust action declaration to the
-        command and events used by the application.
+        In the bike-rental example, customers reserve a category and staff selects
+        the bicycle at collection. Payment approval starts the rental. This
+        illustration connects the Rust command to its recorded effects.
       </p>
       <div className="rental-example">
         <div className="rental-source">
           <a
-            href="https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/src/domain/bike_rental/rental_fleet/rent_bicycle/action.rs"
+            href="https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/src/domain/bike_rental/rental_payment/process_payment/command.rs"
             className="source-link"
           >
-            rent_bicycle/action.rs
+            process_payment/command.rs
           </a>
           <MdxCodeBlock>
             <code className="language-rust">{rentalCode}</code>
@@ -39,16 +38,16 @@ export function RentalExampleSection() {
           <li>
             <span className="text-command">Command</span>
             <h3>
-              <code>RentBicycle</code>
+              <code>CollectRentalPayment</code>
             </h3>
-            <p>Ask the fleet to rent an available, serviceable bicycle.</p>
+            <p>Collect the agreed rent and deposit for the pending collection.</p>
           </li>
           <li>
             <span className="text-domain-event">Domain event</span>
             <h3>
               <code>BicycleRented</code>
             </h3>
-            <p>Record the accepted rental in the fleet’s private history.</p>
+            <p>Record the rental atomically with payment approval and collection.</p>
           </li>
           <li>
             <span className="text-integration-event">Integration event</span>
@@ -60,9 +59,8 @@ export function RentalExampleSection() {
         </ol>
       </div>
       <p className="section-intro">
-        A bicycle that needs maintenance is rejected with{" "}
-        <code>BICYCLE_UNAVAILABLE</code>. The command has a recorded outcome
-        without adding rental events. Applying the fleet’s event history
+        A declined payment records <code>RentalPaymentDeclined</code> and releases
+        the bicycle while keeping the booking. Applying the fleet’s event history
         reconstructs its state without running those commands again.
       </p>
       <Link

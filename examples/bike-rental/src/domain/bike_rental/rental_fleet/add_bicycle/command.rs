@@ -7,12 +7,12 @@ use crate::domain::{
 
 #[derive(Command, Clone, Debug, Eq, PartialEq)]
 #[domain(
-    id = "add-bicycle",
-    label = "Add bicycle",
+    id = "register-bicycle",
+    label = "Register bicycle",
     context = BikeRental,
     schema_version = 2
 )]
-pub struct AddBicycle {
+pub struct RegisterBicycle {
     pub fleet_id: FleetId,
     pub bicycle_id: BicycleId,
     pub condition: BicycleCondition,

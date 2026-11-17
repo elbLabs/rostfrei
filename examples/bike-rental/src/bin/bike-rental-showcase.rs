@@ -137,10 +137,10 @@ async fn demonstrate(host: &NatsApplication, output: &Path) -> DemoResult {
     let submitted = tracer
         .submit_test(
             "bike-rental",
-            "rent-bicycle",
+            "reserve-bicycle-category",
             CommandRequest {
-                schema_version: 2,
-                payload: json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42"}),
+                schema_version: 1,
+                payload: json!({"fleet_id":"city-fleet", "reservation_id":"booking-no-serviceable-bike", "customer_id":"customer-next", "category":"city", "period":{"starts_at":"2026-12-02T09:00:00Z", "ends_at":"2026-12-02T17:00:00Z"}}),
             },
             Some("hire-damaged-bike"),
         )
@@ -148,10 +148,12 @@ async fn demonstrate(host: &NatsApplication, output: &Path) -> DemoResult {
     let refused = completed(&tracer, &submitted.operation_id).await?;
     save_capture(&tracer, &refused, output, "blocked-rental.json").await?;
     ensure(
-        matches!(&refused.result, Some(OperationResult::Rejected { rejection, .. }) if rejection.get("code").and_then(Value::as_str) == Some("BICYCLE_UNAVAILABLE")),
-        "damaged bike was not refused for hire",
+        matches!(&refused.result, Some(OperationResult::Rejected { rejection, .. }) if rejection.get("code").and_then(Value::as_str) == Some("RESERVATION_REJECTED")),
+        "bicycles awaiting repair must not support a new booking",
     )?;
-    println!("7. Try to hire it again: BICYCLE_UNAVAILABLE. The business rule protects the rider.");
+    println!(
+        "7. Try to book again: RESERVATION_REJECTED. Bicycles awaiting repair are not bookable capacity."
+    );
     rebalance(host, &tracer, output).await?;
     demonstrate_refund(runtime, &tracer, output).await?;
     Ok(())
@@ -186,7 +188,7 @@ async fn reserve_and_collect(runtime: &NatsRuntime, tracer: &Tracer, output: &Pa
     let decision = payment.last().ok_or("payment decision missing")?;
     let payload: Value = serde_json::from_slice(decision.payload())?;
     ensure(
-        payload.get("outcome").and_then(Value::as_str) == Some("approved")
+        decision.event_type() == "rental-payment-approved"
             && payload.get("quote")
                 == Some(
                     &json!({"currency": "EUR", "rental_charge_minor": 2500, "security_deposit_minor": 10000}),
@@ -214,7 +216,7 @@ async fn reserve_and_collect(runtime: &NatsRuntime, tracer: &Tracer, output: &Pa
 }
 
 async fn rebalance(host: &NatsApplication, tracer: &Tracer, output: &Path) -> DemoResult {
-    let added = tracer.submit_test("bike-rental", "add-bicycle", CommandRequest {
+    let added = tracer.submit_test("bike-rental", "register-bicycle", CommandRequest {
         schema_version: 2,
         payload: json!({"fleet_id": "harbor-fleet", "bicycle_id": "bike-77", "condition": "serviceable", "category": "city"}),
     }, Some("register-harbor-spare")).await?;
@@ -317,7 +319,7 @@ async fn demonstrate_refund(runtime: &NatsRuntime, tracer: &Tracer, output: &Pat
     let settled = tracer
         .submit_test(
             "bike-rental",
-            "settle-rental-deposit",
+            "refund-eligible-rental-deposit",
             CommandRequest {
                 schema_version: 1,
                 payload: json!({"payment_id":"payment-42"}),
@@ -330,7 +332,7 @@ async fn demonstrate_refund(runtime: &NatsRuntime, tracer: &Tracer, output: &Pat
             completed(tracer, &settled.operation_id).await?.result,
             Some(OperationResult::Accepted { .. })
         ),
-        "damaged deposit assessment failed",
+        "damaged-return refund eligibility check failed",
     )?;
     let held = payment_history(runtime, "payment-42", 2).await?;
     ensure(

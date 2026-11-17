@@ -1,6 +1,6 @@
 use rostfrei::Command;
 
-use crate::domain::{
+use bike_rental::{
     BikeRental,
     rental_fleet::{BicycleId, FleetId},
 };

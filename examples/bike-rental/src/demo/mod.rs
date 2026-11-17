@@ -10,7 +10,8 @@ use rostfrei::{
 use thiserror::Error;
 
 use crate::rental_fleet::{
-    AddBicycle, AddBicycleHandler, BicycleCondition, BicycleId, FleetId, RentalFleetAggregate,
+    BicycleCondition, BicycleId, FleetId, RegisterBicycle, RegisterBicycleHandler,
+    RentalFleetAggregate,
 };
 
 pub const DEMO_FLEET_ID: &str = "city-fleet";
@@ -129,7 +130,7 @@ pub async fn seed_demo<S: ExecutionStore + Clone>(
         ("bike-42", BicycleCondition::Serviceable),
         ("bike-99", BicycleCondition::MaintenanceRequired),
     ] {
-        let command = AddBicycle {
+        let command = RegisterBicycle {
             fleet_id: FleetId::new(DEMO_FLEET_ID)
                 .ok_or(DemoSeedError::InvalidIdentity(DEMO_FLEET_ID))?,
             bicycle_id: BicycleId::new(bicycle).ok_or(DemoSeedError::InvalidIdentity(bicycle))?,
@@ -143,13 +144,13 @@ pub async fn seed_demo<S: ExecutionStore + Clone>(
         if let Some(fields) = payload.as_object_mut() {
             fields.remove("category");
         }
-        let operation = format!("demo:add-bicycle:{DEMO_FLEET_ID}:{bicycle}");
+        let operation = format!("demo:register-bicycle:{DEMO_FLEET_ID}:{bicycle}");
         let metadata = CommandExecutionMetadata::new(
             OperationId::new(&operation)?,
             ContentFingerprint::digest(serde_json::to_vec(&(
                 crate::BOUNDED_CONTEXT_NAME,
-                AddBicycle::LOCAL_ID,
-                AddBicycle::SCHEMA_VERSION,
+                RegisterBicycle::LOCAL_ID,
+                RegisterBicycle::SCHEMA_VERSION,
                 payload,
             ))?),
         )
@@ -159,7 +160,7 @@ pub async fn seed_demo<S: ExecutionStore + Clone>(
         .with_correlation_id(rostfrei::CorrelationId::new(operation)?);
         match executor
             .execute_with_rejection_codec(
-                &AddBicycleHandler,
+                &RegisterBicycleHandler,
                 metadata,
                 &command,
                 &JsonRejectionCodec::new("bike-rental.bicycle-already-in-fleet", 1),

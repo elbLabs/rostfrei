@@ -1,5 +1,8 @@
-use super::{PaymentRejected, RecordPaymentResultAction, RentalPaymentProcessed};
-use crate::domain::rental_payment::{PaymentOutcome, RentalPaymentAggregate};
+use super::{PaymentRejected, RecordPaymentResultAction};
+use crate::domain::rental_payment::{
+    PaymentOutcome, RecordPaymentApprovalAction as _, RecordPaymentDeclineAction as _,
+    RentalPaymentAggregate,
+};
 use rostfrei::AggregateInstance;
 
 impl RecordPaymentResultAction for AggregateInstance<RentalPaymentAggregate> {
@@ -28,12 +31,11 @@ impl RecordPaymentResultAction for AggregateInstance<RentalPaymentAggregate> {
         if provider_reference.trim().is_empty() {
             return Err(reject("missing-provider-reference"));
         }
-        self.raise(RentalPaymentProcessed {
-            payment_id: self.state().payment_id().clone(),
-            outcome,
-            provider_reference,
-            quote: details.quote.clone(),
-        });
+        let quote = details.quote.clone();
+        match outcome {
+            PaymentOutcome::Approved => self.record_payment_approval(provider_reference, quote),
+            PaymentOutcome::Declined => self.record_payment_decline(provider_reference, quote),
+        }
         Ok(())
     }
 }

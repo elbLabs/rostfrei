@@ -5,6 +5,6 @@ mod event;
 mod execute;
 mod handler;
 pub use action::RecordDepositRefundAction;
-pub use command::SettleRentalDeposit;
+pub use command::RefundEligibleRentalDeposit;
 pub use event::SecurityDepositRefunded;
-pub use handler::SettleRentalDepositHandler;
+pub use handler::RefundEligibleRentalDepositHandler;

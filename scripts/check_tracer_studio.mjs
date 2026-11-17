@@ -38,7 +38,7 @@ try {
   assert.equal(await page.$('.connection-notice'), null, await page.$eval('body', body => body.innerText))
   await page.waitForSelector('.test-row', { timeout: 15000 })
   const names = await page.$$eval('.test-row', rows => rows.map(row => row.textContent.trim()))
-  assert.equal(names.length, 9)
+   assert.equal(names.length, 7)
   for (const name of names) {
     if (await page.$('[aria-controls="studio-navigation"][aria-expanded="false"]')) {
       await page.click('[aria-controls="studio-navigation"]')
@@ -70,7 +70,12 @@ try {
    const graphBefore = await page.$$eval('[data-graph-node]', nodes => nodes.map(node => node.dataset.nodeId))
    await page.click('[data-workspace-tab="commands"]')
    await page.click('[aria-controls="studio-command-panel"]')
-   await page.select('[aria-label="Command and schema"]', 'bike-rental/rent-bicycle@2')
+   const commands = await page.$$eval('[aria-label="Command and schema"] option', options => options.map(option => option.value))
+   assert.ok(!commands.some(value => value.includes('/rent-bicycle@')), 'direct hire must not be offered')
+   assert.ok(commands.includes('bike-rental/collect-reserved-bicycle@1'))
+   assert.ok(commands.includes('bike-rental/collect-rental-payment@1'))
+   assert.ok(commands.includes('bike-rental/refund-eligible-rental-deposit@1'))
+   await page.select('[aria-label="Command and schema"]', 'bike-rental/return-bicycle@2')
    for (const [field, value] of [['fleet_id', 'city-fleet'], ['bicycle_id', 'bike-42']]) {
      const selector = `[data-payload-field="${field}"] input`
      await page.waitForSelector(`${selector}:not(:disabled)`)

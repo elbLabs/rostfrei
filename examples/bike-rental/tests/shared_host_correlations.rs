@@ -8,7 +8,9 @@ use std::{error::Error, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use axum::{body::Body, http::Request};
-use bike_rental::{demo::demo_fixture, tracer};
+mod support;
+rostfrei::install_macro_support!();
+use bike_rental::demo::demo_fixture;
 use http_body_util::BodyExt as _;
 use rostfrei::nats::{NatsConnection, NatsConnectionConfig, NatsEventStoreConfig, connect};
 use rostfrei::tracer::{
@@ -19,6 +21,7 @@ use rostfrei::tracer::{
 };
 use rostfrei::{ApplicationName, OperationId};
 use serde_json::{Value, json};
+use support::tracer;
 use tower::ServiceExt as _;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -222,7 +225,7 @@ async fn inspection_host_survives_missing_outcome_state_but_rejects_replaced_jou
     command(
         &runtime,
         "retained-add",
-        "add-bicycle",
+        "register-bicycle",
         json!({
             "fleet_id": "city-fleet", "bicycle_id": "bike-42", "condition": "serviceable"
         }),
@@ -342,7 +345,7 @@ async fn aggregate_correlation_selection_intersects_history_and_preserves_retain
         command(
             &normal,
             operation,
-            "add-bicycle",
+            "register-bicycle",
             json!({"fleet_id": fleet, "bicycle_id": bicycle, "condition": "serviceable"}),
         )
         .await?;
@@ -596,7 +599,7 @@ async fn inspect_runtime_source(inspection_only: bool) -> TestResult {
     command(
         &normal,
         "seed-city-bike-42",
-        "add-bicycle",
+        "register-bicycle",
         json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42", "condition": "serviceable"}),
     )
     .await?;

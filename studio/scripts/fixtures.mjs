@@ -1,10 +1,10 @@
-// Test-only HTTP fixtures. Domain fixtures and expectations come from the actual
-// bike-rental example; this module is never imported by the application bundle.
+// Test-only HTTP fixtures, including the framework's historical direct-rental
+// contract. This module is never imported by the application bundle.
 import fleet from "../../examples/bike-rental/fixtures/demo-fleet.json" with { type: "json" }
 import rented from "../../examples/bike-rental/fixtures/rented-demo-fleet.json" with { type: "json" }
 import empty from "../../examples/bike-rental/fixtures/no-rental-fleets.json" with { type: "json" }
-import rent from "../../examples/bike-rental/tests/tracer/rent-available-bicycle.json" with { type: "json" }
-import reject from "../../examples/bike-rental/tests/tracer/reject-unavailable-bicycle.json" with { type: "json" }
+import rent from "../../examples/bike-rental/tests/support/definitions/rent-available-bicycle.json" with { type: "json" }
+import reject from "../../examples/bike-rental/tests/support/definitions/reject-unavailable-bicycle.json" with { type: "json" }
 import returned from "../../examples/bike-rental/tests/tracer/return-rented-bicycle.json" with { type: "json" }
 import add from "../../examples/bike-rental/tests/tracer/add-first-bicycle.json" with { type: "json" }
 import duplicate from "../../examples/bike-rental/tests/tracer/reject-duplicate-bicycle.json" with { type: "json" }

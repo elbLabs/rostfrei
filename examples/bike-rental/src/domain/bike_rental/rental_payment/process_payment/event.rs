@@ -5,6 +5,7 @@ use crate::domain::{
 use rostfrei::DomainEvent;
 use serde::{Deserialize, Serialize};
 
+// Retained for replay; new payment decisions write explicit approval/decline events.
 #[derive(DomainEvent, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[domain(id = "rental-payment-processed", label = "Rental payment processed")]
 pub struct RentalPaymentProcessed {

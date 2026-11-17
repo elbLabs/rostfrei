@@ -1,9 +1,11 @@
 #![allow(clippy::panic_in_result_fn)]
 
 use async_trait::async_trait;
+mod support;
+rostfrei::install_macro_support!();
 use bike_rental::{
     demo::{demo_fixture, demo_stream},
-    rental_fleet::{RentBicycle, RentBicycleHandler, RentalFleetAggregate},
+    rental_fleet::RentalFleetAggregate,
 };
 use rostfrei::core::JsonEventCodec;
 use rostfrei::nats::{NatsConnectionConfig, ServicePrincipalContext, connect};
@@ -26,6 +28,7 @@ use std::{
     },
     time::Duration,
 };
+use support::{RentBicycle, RentBicycleHandler};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "id": "skills-add-first-bicycle",
-  "name": "Add the first serviceable bicycle to an empty fleet",
+  "name": "Register the first serviceable bicycle in an empty fleet",
   "setup": { "fixture": "no-rental-fleets" },
   "expected": {
     "within": "35s",
@@ -12,7 +12,7 @@
           "kind": "command",
           "key": "add",
           "context": "bike-rental",
-          "name": "add-bicycle",
+          "name": "register-bicycle",
           "schemaVersion": 2,
           "payload": {
             "fleet_id": "city-fleet",

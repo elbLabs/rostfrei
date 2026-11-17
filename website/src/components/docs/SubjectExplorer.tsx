@@ -14,7 +14,7 @@ export function SubjectExplorer() {
     ...(isTest ? [{ label: "Traffic scope", value: "test" }] : []),
     { label: "Kind", value: "command" },
     { label: "Bounded context", value: "bike-rental" },
-    { label: "Business name", value: "rent-bicycle" },
+    { label: "Business name", value: "collect-rental-payment" },
   ]
 
   return (

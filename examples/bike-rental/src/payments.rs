@@ -1,5 +1,5 @@
 use crate::rental_payment::{
-    CollectionPayment, PaymentId, PaymentOutcome, ProcessRentalPayment, RentalPaymentRequested,
+    CollectRentalPayment, CollectionPayment, PaymentId, PaymentOutcome, RentalPaymentRequested,
 };
 use async_trait::async_trait;
 use rostfrei::{
@@ -84,10 +84,10 @@ impl IntegrationEventMapper<crate::rental_fleet::ReservedBicycleReturned>
 pub struct SettleReturnedRental;
 
 impl IntegrationCommandMapper<RentalReturnRecorded> for SettleReturnedRental {
-    type Command = crate::rental_payment::SettleRentalDeposit;
+    type Command = crate::rental_payment::RefundEligibleRentalDeposit;
     type Error = &'static str;
     fn map(&self, event: &RentalReturnRecorded) -> Result<Self::Command, Self::Error> {
-        Ok(crate::rental_payment::SettleRentalDeposit {
+        Ok(crate::rental_payment::RefundEligibleRentalDeposit {
             payment_id: event.payment_id.clone(),
         })
     }
@@ -118,10 +118,10 @@ impl IntegrationEventMapper<RentalPaymentRequested> for CollectionPaymentIntegra
 pub struct ProcessRequestedPayment;
 
 impl IntegrationCommandMapper<CollectionPaymentRequested> for ProcessRequestedPayment {
-    type Command = ProcessRentalPayment;
+    type Command = CollectRentalPayment;
     type Error = &'static str;
     fn map(&self, event: &CollectionPaymentRequested) -> Result<Self::Command, Self::Error> {
-        Ok(ProcessRentalPayment {
+        Ok(CollectRentalPayment {
             payment_id: event.payment_id.clone(),
         })
     }

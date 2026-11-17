@@ -220,15 +220,22 @@ pub fn bike_host(studio: bool) -> Result<()> {
                 .context("bike command")?;
             let versions = array(&command["versions"])?;
             ensure!(versions.len() == 1, "command versions");
-            client.normal_command(&json!({"context":"bike-rental","name":name,"schemaVersion":versions[0]["schemaVersion"],"payload":{"fleet_id":"city-fleet","bicycle_id":"bike-42"}}),key,expected)?;
+            client.normal_command(&json!({"context":"bike-rental","name":name,"schemaVersion":versions[0]["schemaVersion"],"payload":{"fleet_id":"city-fleet","bicycle_id":"normal-registration","condition":"serviceable"}}),key,expected)?;
             Ok(())
         };
-        dispatch("rent-bicycle", "normal-before-test-reset", "accepted")?;
+        ensure!(
+            !array(&catalog["contexts"])?
+                .iter()
+                .flat_map(|c| c["commands"].as_array().into_iter().flatten())
+                .any(|c| c["id"] == "rent-bicycle"),
+            "direct rental must not be advertised"
+        );
+        dispatch("register-bicycle", "normal-before-test-reset", "accepted")?;
         let definitions =
             client.get(text(&catalog["behavioralTest"]["definitionsHref"])?, "test")?;
         ensure!(
-            array(&definitions["items"])?.len() == 9,
-            "expected nine host definitions"
+            array(&definitions["items"])?.len() == 7,
+            "expected seven host definitions"
         );
         for definition in array(&definitions["items"])? {
             let report = client
@@ -250,8 +257,7 @@ pub fn bike_host(studio: bool) -> Result<()> {
                 definition["id"], report["operation"]["command"]
             );
         }
-        dispatch("rent-bicycle", "normal-after-test-reset", "rejected")?;
-        dispatch("return-bicycle", "normal-return", "accepted")?;
+        dispatch("register-bicycle", "normal-after-test-reset", "rejected")?;
         if studio {
             let mut browser = env.clone();
             browser.insert(

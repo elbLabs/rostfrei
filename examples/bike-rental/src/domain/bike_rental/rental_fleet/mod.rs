@@ -3,7 +3,9 @@ mod add_categorized_bicycle;
 mod aggregate;
 mod bicycle;
 mod bicycle_availability;
+mod cancel_collection;
 mod collect_reserved_bicycle;
+mod complete_collection;
 mod event_set;
 pub(in crate::domain) mod fleet_consistency;
 mod identity;
@@ -26,7 +28,7 @@ pub use super::bicycle_transfer::{
     BicycleTransferRejectionReason, TransferBicycle, TransferBicycleHandler,
 };
 pub use add_bicycle::{
-    AddBicycle, AddBicycleAction, AddBicycleHandler, BicycleAdded, BicycleAlreadyInFleet,
+    AddBicycleAction, BicycleAdded, BicycleAlreadyInFleet, RegisterBicycle, RegisterBicycleHandler,
 };
 pub use add_categorized_bicycle::{AddCategorizedBicycleAction, BicycleCategorized};
 pub use aggregate::RentalFleetAggregate;
@@ -37,15 +39,17 @@ pub use bicycle::{
     RegistrationNumberFormat, RegistrationNumberValidity,
 };
 pub use bicycle_availability::{BicycleAvailability, BicycleAvailabilityQuery};
+pub use cancel_collection::BicycleCollectionCancelled;
+use cancel_collection::CancelCollectionAction;
 pub use collect_reserved_bicycle::{
     BicycleCollectionRequested, CollectReservedBicycle, CollectReservedBicycleAction,
     CollectReservedBicycleHandler, CollectionRejected,
 };
+use complete_collection::CompleteCollectionAction;
+pub use complete_collection::ReservedBicycleCollected;
 pub use event_set::RentalFleetEvent;
 pub use identity::FleetId;
-pub use rent_bicycle::{
-    BicycleRented, BicycleUnavailable, RentBicycle, RentBicycleAction, RentBicycleHandler,
-};
+pub use rent_bicycle::{BicycleRented, BicycleUnavailable, RentBicycleAction};
 pub use reservation::{
     CollectionAssignment, RentalPeriod, RentalReturn, Reservation, ReservationId, ReturnTime,
 };

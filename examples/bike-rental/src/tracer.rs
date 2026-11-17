@@ -9,14 +9,13 @@ use crate::payments::{
     ProcessRequestedPayment, SandboxPaymentProvider,
 };
 use crate::rental_fleet::{
-    AddBicycle, AddBicycleHandler, CollectReservedBicycle, CollectReservedBicycleHandler,
-    RentBicycle, RentBicycleHandler, RentalFleetAggregate, ReserveBicycleCategory,
-    ReserveBicycleCategoryHandler, ReturnBicycle, ReturnBicycleHandler, TransferBicycle,
-    TransferBicycleHandler,
+    CollectReservedBicycle, CollectReservedBicycleHandler, RegisterBicycle, RegisterBicycleHandler,
+    RentalFleetAggregate, ReserveBicycleCategory, ReserveBicycleCategoryHandler, ReturnBicycle,
+    ReturnBicycleHandler, TransferBicycle, TransferBicycleHandler,
 };
 use crate::rental_payment::{
-    ProcessRentalPayment, ProcessRentalPaymentHandler, RentalPaymentAggregate,
-    RentalPaymentRequested, SettleRentalDeposit, SettleRentalDepositHandler,
+    CollectRentalPayment, CollectRentalPaymentHandler, RefundEligibleRentalDeposit,
+    RefundEligibleRentalDepositHandler, RentalPaymentAggregate, RentalPaymentRequested,
 };
 use crate::rental_tariff::{
     ConfigureRentalTariff, ConfigureRentalTariffHandler, RentalTariffAggregate,
@@ -26,9 +25,9 @@ use crate::workshop::{
     BicycleDamageIntegrationMapper, BicycleMaintenanceRequested, OpenRepairJobOnMaintenanceRequest,
 };
 
-pub struct AddBicycleInputOptions;
+pub struct RegisterBicycleInputOptions;
 
-impl CommandInputOptions<AddBicycle> for AddBicycleInputOptions {
+impl CommandInputOptions<RegisterBicycle> for RegisterBicycleInputOptions {
     fn fields(&self) -> Vec<CommandInputField> {
         vec![CommandInputField::select(
             "condition",
@@ -60,9 +59,8 @@ pub fn command_bindings_with_payments(
     bindings.register_aggregate::<RentalTariffAggregate>()?;
     bindings.register_aggregate::<RentalPaymentAggregate>()?;
     let rejections = JsonDomainRejectionMapper::new(CommandRejectionClassification::Conflict);
-    bindings.register_command::<RentBicycle, _>(RentBicycleHandler, rejections)?;
     bindings.register_command::<ReturnBicycle, _>(ReturnBicycleHandler, rejections)?;
-    bindings.register_command::<AddBicycle, _>(AddBicycleHandler, rejections)?;
+    bindings.register_command::<RegisterBicycle, _>(RegisterBicycleHandler, rejections)?;
     bindings.register_command::<TransferBicycle, _>(TransferBicycleHandler, rejections)?;
     bindings.register_command::<OpenRepairJob, _>(OpenRepairJobHandler, rejections)?;
     bindings
@@ -71,17 +69,17 @@ pub fn command_bindings_with_payments(
         .register_command::<ConfigureRentalTariff, _>(ConfigureRentalTariffHandler, rejections)?;
     bindings
         .register_command::<CollectReservedBicycle, _>(CollectReservedBicycleHandler, rejections)?;
-    bindings.register_command::<ProcessRentalPayment, _>(
-        ProcessRentalPaymentHandler {
+    bindings.register_command::<CollectRentalPayment, _>(
+        CollectRentalPaymentHandler {
             provider: provider.clone(),
         },
         rejections,
     )?;
-    bindings.register_command::<SettleRentalDeposit, _>(
-        SettleRentalDepositHandler { provider },
+    bindings.register_command::<RefundEligibleRentalDeposit, _>(
+        RefundEligibleRentalDepositHandler { provider },
         rejections,
     )?;
-    bindings.register_input_options::<AddBicycle, _>(AddBicycleInputOptions)?;
+    bindings.register_input_options::<RegisterBicycle, _>(RegisterBicycleInputOptions)?;
     bindings
         .register_integration_event::<RentalFleetAggregate, crate::rental_fleet::BicycleRented, _>(
             crate::BicycleRentedIntegrationMapper,

@@ -1,6 +1,9 @@
-use super::{BicycleCollectionResolved, ResolveCollectionAction};
+use super::ResolveCollectionAction;
 use crate::domain::{
-    rental_fleet::{BicycleRented, CollectionRejected, RentalFleetAggregate, ReservationId},
+    rental_fleet::{
+        CancelCollectionAction as _, CollectionRejected, CompleteCollectionAction as _,
+        RentalFleetAggregate, ReservationId,
+    },
     rental_payment::{PaymentId, PaymentOutcome},
 };
 use rostfrei::AggregateInstance;
@@ -19,20 +22,12 @@ impl ResolveCollectionAction for AggregateInstance<RentalFleetAggregate> {
                 reservation_id: reservation_id.clone(),
                 reason: "collection-not-pending".to_owned(),
             })?;
-        let event = BicycleCollectionResolved {
-            fleet_id: self.state().fleet_id().clone(),
-            reservation_id,
-            bicycle_id: collection.bicycle_id.clone(),
-            payment_id,
-            outcome,
-        };
+        let bicycle_id = collection.bicycle_id.clone();
         if outcome == PaymentOutcome::Approved {
-            self.raise(BicycleRented {
-                fleet_id: event.fleet_id.clone(),
-                bicycle_id: event.bicycle_id.clone(),
-            });
+            self.complete_collection(reservation_id, bicycle_id, payment_id);
+        } else {
+            self.cancel_collection(reservation_id, bicycle_id, payment_id);
         }
-        self.raise(event);
         Ok(())
     }
 }

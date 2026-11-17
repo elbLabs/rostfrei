@@ -5,6 +5,7 @@ use crate::domain::{
 use rostfrei::DomainEvent;
 use serde::{Deserialize, Serialize};
 
+// Retained for replay; new collections write explicit collected/cancelled events.
 #[derive(DomainEvent, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[domain(
     id = "bicycle-collection-resolved",

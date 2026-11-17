@@ -41,7 +41,7 @@ async fn normal_demo_startup_persists_command_receipts_and_retries_without_write
                 && first_receipts
                     .iter()
                     .all(|receipt| matches!(receipt, CommandReceipt::Appended(_))),
-            "first startup must accept and append both AddBicycle commands",
+            "first startup must accept and append both RegisterBicycle commands",
         )?;
         let first = store.load(&demo_stream()).await?;
         ensure(
@@ -112,7 +112,7 @@ async fn normal_demo_startup_persists_command_receipts_and_retries_without_write
         for event in &retried {
             let original_payload: serde_json::Value = serde_json::from_slice(event.payload())?;
             let original_fingerprint = rostfrei::ContentFingerprint::digest(serde_json::to_vec(&(
-                "bike-rental", "add-bicycle", 2, original_payload,
+                "bike-rental", "register-bicycle", 2, original_payload,
             ))?);
             ensure(event.operation_fingerprint() == original_fingerprint,
                 "seed fingerprints must remain compatible with payloads predating optional category")?;
@@ -139,7 +139,7 @@ async fn normal_demo_startup_persists_command_receipts_and_retries_without_write
             )?;
             ensure(
                 outcome.marker().integrity_receipt().events() == vec![event.clone()],
-                "each AddBicycle receipt must identify exactly its committed addition",
+                "each RegisterBicycle receipt must identify exactly its committed registration",
             )?;
             outcome.details().available()?;
         }
@@ -148,8 +148,8 @@ async fn normal_demo_startup_persists_command_receipts_and_retries_without_write
                 .iter()
                 .map(|event| event.operation_id().as_str())
                 .eq([
-                    "demo:add-bicycle:city-fleet:bike-42",
-                    "demo:add-bicycle:city-fleet:bike-99",
+                    "demo:register-bicycle:city-fleet:bike-42",
+                    "demo:register-bicycle:city-fleet:bike-99",
                 ]),
             "demo additions must use separate stable command operation identities",
         )

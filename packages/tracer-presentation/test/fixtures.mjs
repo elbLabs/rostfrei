@@ -1,6 +1,6 @@
 // Synthetic presentation fixtures, not evidence of a runtime execution. Business
 // names/payloads come from the registered example; IDs mirror Studio's fixtures.
-import definition from '../../../examples/bike-rental/tests/tracer/rent-available-bicycle.json' with { type: 'json' }
+import definition from '../../../examples/bike-rental/tests/support/definitions/rent-available-bicycle.json' with { type: 'json' }
 import fixture from '../../../examples/bike-rental/fixtures/demo-fleet.json' with { type: 'json' }
 
 export function savedEvidence() {

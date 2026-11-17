@@ -45,7 +45,7 @@ Fetch `/catalog` with the control token and check its contract version. Follow
 command schemas before describing the Given state. If the expected capabilities
 are missing, explain the setup mismatch; do not simulate a successful tutorial.
 
-The bike-rental host registers the two definitions below and `demo-fleet`.
+The bike-rental host registers the two definitions below and their fixtures.
 External applications supply their own definitions and fixtures: discover those
 and agree equivalent scenarios, or use a separate bike-rental checkout. Do not
 invent bicycle commands or fixtures in a consuming application.
@@ -54,12 +54,14 @@ invent bicycle commands or fixtures in a consuming application.
 
 In the source checkout, read:
 
-- `examples/bike-rental/tests/tracer/rent-available-bicycle.json`
-- `examples/bike-rental/tests/tracer/reject-unavailable-bicycle.json`
+- `examples/bike-rental/tests/tracer/add-first-bicycle.json`
+- `examples/bike-rental/tests/tracer/reject-duplicate-bicycle.json`
+- `examples/bike-rental/fixtures/no-rental-fleets.json`
 - `examples/bike-rental/fixtures/demo-fleet.json`
 
-Verify them against the registered resources. Both definitions use JSON v2 and
-fixture `demo-fleet`, revision `2` in this source. The fixture applies two
+Verify them against the registered resources. Both definitions use JSON v2.
+The successful registration uses empty `no-rental-fleets` revision `1`;
+the rejection uses `demo-fleet` revision `2`. The latter applies two
 `bicycle-added` domain events to `city-fleet`: serviceable `bike-42`, then
 maintenance-required `bike-99`. Fixture application seeds history; it does not
 execute rental commands or publish integration events.
@@ -68,20 +70,21 @@ Explain these **expectations**, not yet observed results:
 
 | Behavior | Given | When | Then |
 | --- | --- | --- | --- |
-| `rent-available-bicycle` | `demo-fleet`, serviceable `bike-42` | `bike-rental` / `rent-bicycle` schema 2, payload `{"fleet_id":"city-fleet","bicycle_id":"bike-42"}` | Accepted; `bicycle-rented` v1 followed causally by `bicycle-rental-started` v1 |
-| `reject-unavailable-bicycle` | A fresh `demo-fleet`, maintenance-required `bike-99` | Same command/schema, payload `{"fleet_id":"city-fleet","bicycle_id":"bike-99"}` | Rejected with `BICYCLE_UNAVAILABLE` and rejection payload `{"bicycle_id":"bike-99"}` |
+| `add-first-bicycle` | `no-rental-fleets`, no registered bicycles | `bike-rental` / `register-bicycle` schema 2, payload `{"fleet_id":"city-fleet","bicycle_id":"bike-42","condition":"serviceable"}` | Accepted; `bicycle-added` v1 records the fleet registration |
+| `reject-duplicate-bicycle` | A fresh `demo-fleet`, already containing `bike-42` | Same command/schema and payload | Rejected with `BICYCLE_ALREADY_IN_FLEET` and rejection payload `{"bicycle_id":"bike-42"}` |
 
-The rejection scenario tests maintenance eligibility. Each run resets the
-fixture; this is not a second rental of the bike rented in the first scenario.
-Offer to inspect the Given state or begin the successful rental, then pause.
+The rejection scenario protects fleet identity. Each run resets its own fixture;
+the second run does not depend on the first. Offer to inspect the Given state or
+begin the registration, then pause. The customer rental journey is category
+reservation → collection → payment approval; there is no direct-hire command.
 
-## 2. Run and retain the successful rental
+## 2. Run and retain the successful registration
 
 Use a new output path in the owned evidence directory. From the framework root:
 
 ```sh
-cargo rostfrei-dev test examples/bike-rental/tests/tracer/rent-available-bicycle.json \
-  --output "$EVIDENCE_DIR/rent-available-bicycle.json"
+cargo rostfrei-dev test examples/bike-rental/tests/tracer/add-first-bicycle.json \
+  --output "$EVIDENCE_DIR/add-first-bicycle.json"
 ```
 
 The runner discovers and validates the definition, resolves the registered
@@ -129,13 +132,13 @@ Tell the learner the next run replaces live Test evidence, while the saved file
 remains available. Continue only after their next-step choice.
 
 ```sh
-cargo rostfrei-dev test examples/bike-rental/tests/tracer/reject-unavailable-bicycle.json \
-  --output "$EVIDENCE_DIR/reject-unavailable-bicycle.json"
+cargo rostfrei-dev test examples/bike-rental/tests/tracer/reject-duplicate-bicycle.json \
+  --output "$EVIDENCE_DIR/reject-duplicate-bicycle.json"
 ```
 
 Inspect this new file. A passing rejection test has suite status `passed` while
 the operation completes with a **rejected business decision**. Explain the
-recorded `BICYCLE_UNAVAILABLE` rejection and its payload. No captured events
+recorded `BICYCLE_ALREADY_IN_FLEET` rejection and its payload. No captured events
 alone cannot prove rejection: distinguish the explicit outcome from the
 absence of events within this capture. `failed` or `indeterminate` operation
 states do not establish a business rejection.

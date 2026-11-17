@@ -6,6 +6,11 @@
     reason = "integration assertions use bounded test data and retain end-to-end scenarios"
 )]
 
+mod support;
+rostfrei::install_macro_support!();
+use bike_rental::tracer;
+use support::{BikeRentalNatsRuntime, RentBicycle, RentBicycleHandler};
+
 use std::{
     error::Error,
     fs, io,
@@ -24,22 +29,19 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bike_rental::{
-    BicycleRentalStarted, BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
-    BikeRentalNatsRuntime,
+    BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
     demo::{
         demo_fixture, demo_stream, no_rental_fleets_fixture, rented_demo_fixture,
         reservable_branch_fixture, seed_demo,
     },
     payments::{PaymentProvider, PaymentResult, SandboxPaymentProvider},
     rental_fleet::{
-        AddBicycle, AddBicycleHandler, BicycleRented, BicycleReturned, RentBicycle,
-        RentBicycleHandler, RentalFleetAggregate, ReserveBicycleCategory,
-        ReserveBicycleCategoryHandler, ReturnBicycle, ReturnBicycleHandler, TransferBicycle,
-        TransferBicycleHandler,
+        BicycleRented, BicycleReturned, RegisterBicycle, RegisterBicycleHandler,
+        RentalFleetAggregate, ReserveBicycleCategory, ReserveBicycleCategoryHandler, ReturnBicycle,
+        ReturnBicycleHandler, TransferBicycle, TransferBicycleHandler,
     },
     rental_payment::{CollectionPayment, PaymentId},
     rental_tariff::{ConfigureRentalTariff, ConfigureRentalTariffHandler},
-    tracer,
 };
 use http_body_util::BodyExt as _;
 use rostfrei::messaging::{
@@ -161,10 +163,13 @@ async fn satisfactory_return_automatically_refunds_only_the_deposit_once() -> Te
     let result: TestResult = async {
         runtime.apply_fixture(&bike_rental::demo::booked_city_bike_fixture()?).await?;
         runtime.start_workers().await?;
+        ensure(runtime.config().commands.iter().all(|route| !route.address().as_str().ends_with(".rent-bicycle")), "direct rental must not have an application command consumer")?;
+        let catalog = serde_json::to_value(runtime.tracer_builder().build()?.catalog())?;
+        ensure(!catalog["contexts"].as_array().into_iter().flatten().flat_map(|context| context["commands"].as_array().into_iter().flatten()).any(|command| command["id"] == "rent-bicycle"), "direct rental must not be in the application catalog")?;
         let collected = runtime.transport().invoke(invocation("collect-for-refund", "refund-flow", "collect-reserved-bicycle", 1, collection_payload("payment-42", "sandbox-approved"))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(collected.outcome(), CommandOutcome::Accepted), "collection failed")?;
         let paid = wait_for_payment(&runtime.store(), "payment-42").await?;
-        let premature = runtime.transport().invoke(invocation("refund-before-return", "refund-flow", "settle-rental-deposit", 1, json!({"payment_id":"payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
+        let premature = runtime.transport().invoke(invocation("refund-before-return", "refund-flow", "refund-eligible-rental-deposit", 1, json!({"payment_id":"payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(premature.outcome(), CommandOutcome::Rejected(_)) && provider.calls.lock().await.is_empty(), "an unreturned rental must not contact the refund provider")?;
         let request = invocation("return-for-refund", "refund-flow", "return-bicycle", 2, json!({"fleet_id":"city-fleet", "bicycle_id":"bike-42", "returned_at":"2026-12-01T17:00:00Z"}))?;
         let returned = runtime.transport().invoke(request.clone(), Arc::new(RecordingObserver::default())).await?;
@@ -189,7 +194,7 @@ async fn satisfactory_return_automatically_refunds_only_the_deposit_once() -> Te
         }).await??;
         let payload: Value = serde_json::from_slice(refunded[2].payload())?;
         ensure(refunded[2].event_type() == "security-deposit-refunded" && payload["amount_minor"] == 10000 && payload["currency"] == "EUR", "full deposit refund was not persisted")?;
-        let repeated = runtime.transport().invoke(invocation("refund-again", "refund-flow", "settle-rental-deposit", 1, json!({"payment_id":"payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
+        let repeated = runtime.transport().invoke(invocation("refund-again", "refund-flow", "refund-eligible-rental-deposit", 1, json!({"payment_id":"payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(repeated.outcome(), CommandOutcome::Accepted) && provider.calls.lock().await.len() == 1, "completed settlement must replay without contacting the provider")?;
         ensure(runtime.store().load(&payment_stream("payment-42")?).await? == refunded && runtime.store().load(&demo_stream()).await? == history, "retries duplicated refund or return effects")?;
         Ok(())
@@ -247,7 +252,7 @@ async fn return_keeps_deposit(returned_at: &str, damage_report: Option<&str>) ->
         let paid = wait_for_payment(&runtime.store(), "payment-42").await?;
         let returned = runtime.transport().invoke(invocation("return-for-review", "review-flow", "return-bicycle", 2, json!({"fleet_id":"city-fleet", "bicycle_id":"bike-42", "returned_at":returned_at, "damage_report":damage_report}))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(returned.outcome(), CommandOutcome::Accepted), "review must not prevent recording the physical return")?;
-        let settled = runtime.transport().invoke(invocation("settle-held-deposit", "review-flow", "settle-rental-deposit", 1, json!({"payment_id":"payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
+        let settled = runtime.transport().invoke(invocation("settle-held-deposit", "review-flow", "refund-eligible-rental-deposit", 1, json!({"payment_id":"payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(settled.outcome(), CommandOutcome::Accepted), "settlement must accept retaining the deposit for review")?;
         ensure(provider.calls.lock().await.is_empty() && runtime.store().load(&payment_stream("payment-42")?).await? == paid, "a damaged or late return must retain the paid deposit without calling the provider")?;
         let fleet = rostfrei::CommandExecutor::new(runtime.store()).rehydrate::<RentalFleetAggregate>(&demo_stream()).await?;
@@ -378,9 +383,6 @@ async fn collection_waits_for_payment_and_commits_finance_and_rental_once() -> T
         ensure_one_operation(&runtime.store(), &config, &[&fleet_events[3], &payment_events[0]]).await?;
         let payload: Value = serde_json::from_slice(payment_events[0].payload())?;
         ensure(payload["details"]["quote"] == json!({"currency": "EUR", "rental_charge_minor": 2500, "security_deposit_minor": 10000}), "payment request must preserve rent and refundable deposit separately")?;
-        let rental = runtime.transport().invoke(invocation("rent-held-bike", "collection-flow", RentBicycle::LOCAL_ID, RentBicycle::SCHEMA_VERSION,
-            json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42"}))?, Arc::new(RecordingObserver::default())).await?;
-        ensure(matches!(rental.outcome(), CommandOutcome::Rejected(_)), "a bicycle awaiting payment must not be hired")?;
         let repeated = runtime.transport().invoke(invocation("repeat-collection-new-request", "collection-flow", "collect-reserved-bicycle", 1, collection_payload("payment-42", "sandbox-approved"))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(repeated.outcome(), CommandOutcome::Accepted), "logical collection retry was not accepted")?;
         let mut conflicting_payload = collection_payload("payment-42", "sandbox-approved");
@@ -395,10 +397,10 @@ async fn collection_waits_for_payment_and_commits_finance_and_rental_once() -> T
         let paid = wait_for_payment(&runtime.store(), "payment-42").await?;
         let final_fleet = runtime.store().load(&demo_stream()).await?;
         let decision: Value = serde_json::from_slice(paid[1].payload())?;
-        ensure(decision["outcome"] == "approved" && decision["provider_reference"] == "sandbox:payment-42", "provider approval was not recorded")?;
-        ensure(final_fleet.len() == 6 && final_fleet[4].event_type() == "bicycle-rented" && final_fleet[5].event_type() == "bicycle-collection-resolved", "approval must start exactly one rental")?;
+        ensure(paid[1].event_type() == "rental-payment-approved" && decision["provider_reference"] == "sandbox:payment-42" && decision.get("outcome").is_none(), "provider approval must be an explicit fact")?;
+        ensure(final_fleet.len() == 6 && final_fleet[4].event_type() == "bicycle-rented" && final_fleet[5].event_type() == "reserved-bicycle-collected", "approval must start exactly one rental")?;
         ensure_one_operation(&runtime.store(), &config, &[&paid[1], &final_fleet[4], &final_fleet[5]]).await?;
-        let replay = runtime.transport().invoke(invocation("repeat-provider-processing", "collection-flow", "process-rental-payment", 1, json!({"payment_id": "payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
+        let replay = runtime.transport().invoke(invocation("repeat-provider-processing", "collection-flow", "collect-rental-payment", 1, json!({"payment_id": "payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(replay.outcome(), CommandOutcome::Accepted), "completed provider processing must replay")?;
         ensure(provider.calls.load(Ordering::SeqCst) == 1, "logical retries must not contact the provider again")?;
         ensure(runtime.store().load(&demo_stream()).await? == final_fleet && runtime.store().load(&payment_stream("payment-42")?).await? == paid, "payment processing retry duplicated durable effects")?;
@@ -451,12 +453,13 @@ async fn declined_payment_releases_the_bicycle_and_keeps_the_booking_for_a_new_a
         let denied = wait_for_payment(&runtime.store(), "declined-payment").await?;
         let denied_payload: Value = serde_json::from_slice(denied[1].payload())?;
         ensure(
-            denied_payload["outcome"] == "declined",
+            denied[1].event_type() == "rental-payment-declined"
+                && denied_payload.get("outcome").is_none(),
             "sandbox decline was not recorded",
         )?;
         let events = runtime.store().load(&demo_stream()).await?;
         ensure(
-            events.len() == 5 && events[4].event_type() == "bicycle-collection-resolved",
+            events.len() == 5 && events[4].event_type() == "bicycle-collection-cancelled",
             "declined payment must release the hold without renting",
         )?;
         let fleet = rostfrei::CommandExecutor::new(runtime.store())
@@ -494,7 +497,7 @@ async fn declined_payment_releases_the_bicycle_and_keeps_the_booking_for_a_new_a
                 invocation(
                     "old-decline-replayed",
                     "decline-flow",
-                    "process-rental-payment",
+                    "collect-rental-payment",
                     1,
                     json!({"payment_id": "declined-payment"}),
                 )?,
@@ -602,7 +605,7 @@ async fn reservations_hold_only_serviceable_category_capacity_and_replay_without
         runtime.start_workers().await?;
         for (id, condition) in [("bike-42", "serviceable"), ("bike-99", "maintenance-required")] {
             let receipt = runtime.transport().invoke(
-                invocation(id, "prepare-reservable-branch", AddBicycle::LOCAL_ID, AddBicycle::SCHEMA_VERSION,
+                invocation(id, "prepare-reservable-branch", RegisterBicycle::LOCAL_ID, RegisterBicycle::SCHEMA_VERSION,
                     json!({"fleet_id": "city-fleet", "bicycle_id": id, "condition": condition, "category": "city"}))?,
                 Arc::new(RecordingObserver::default()),
             ).await?;
@@ -865,7 +868,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
         let test_repository: Arc<dyn TestRepository> = Arc::new(FilesystemTestRepository::load(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer"),
         )?);
-        let mut builder = tracer::builder(history)?
+        let mut builder = support::tracer::builder(history)?
             .with_test_event_store(test_store)
             .with_test_transport(test_runtime.transport())
             .with_test_scenario_reset(test_reset)
@@ -880,13 +883,13 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
             .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
         builder.register_json::<RentBicycle, _>(RentBicycleHandler)?;
         builder.register_json::<ReturnBicycle, _>(ReturnBicycleHandler)?;
-        builder.register_json::<AddBicycle, _>(AddBicycleHandler)?;
+        builder.register_json::<RegisterBicycle, _>(RegisterBicycleHandler)?;
         builder.register_json::<TransferBicycle, _>(TransferBicycleHandler)?;
         builder.register_json::<ReserveBicycleCategory, _>(ReserveBicycleCategoryHandler)?;
         builder.register_json::<ConfigureRentalTariff, _>(ConfigureRentalTariffHandler)?;
         builder.register_json::<bike_rental::rental_fleet::CollectReservedBicycle, _>(bike_rental::rental_fleet::CollectReservedBicycleHandler)?;
-        builder.register_json::<bike_rental::rental_payment::ProcessRentalPayment, _>(bike_rental::rental_payment::ProcessRentalPaymentHandler { provider: Arc::new(SandboxPaymentProvider) })?;
-        builder.register_json::<bike_rental::rental_payment::SettleRentalDeposit, _>(bike_rental::rental_payment::SettleRentalDepositHandler { provider: Arc::new(SandboxPaymentProvider) })?;
+        builder.register_json::<bike_rental::rental_payment::CollectRentalPayment, _>(bike_rental::rental_payment::CollectRentalPaymentHandler { provider: Arc::new(SandboxPaymentProvider) })?;
+        builder.register_json::<bike_rental::rental_payment::RefundEligibleRentalDeposit, _>(bike_rental::rental_payment::RefundEligibleRentalDepositHandler { provider: Arc::new(SandboxPaymentProvider) })?;
         builder.register_json::<bike_rental::repair_job::OpenRepairJob, _>(
             bike_rental::repair_job::OpenRepairJobHandler,
         )?;
@@ -915,11 +918,11 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                 io::Error::other("behavioral test discovery returned invalid JSON")
             })?;
             ensure(
-                definitions.len() == 9,
-                "expected exactly nine bike-rental behavioral definitions",
+                definitions.len() == 7,
+                "expected exactly seven bike-rental behavioral definitions",
             )?;
 
-            let canonical_bytes = fs::read(definition_root.join("rent-available-bicycle.json"))?;
+            let canonical_bytes = fs::read(definition_root.join("../support/definitions/rent-available-bicycle.json"))?;
             let canonical_definition: Value = serde_json::from_slice(&canonical_bytes)?;
             let response = app
                 .clone()
@@ -964,10 +967,9 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
             let aggregate_type = RentalFleetAggregate::aggregate_type().into_owned();
             let command_payload = json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42"});
             let expected_command_message_id = command_message_id(
-                test_runtime
+                &test_runtime
                     .config()
-                    .command_route(BikeRentalCommand::RentBicycle)
-                    .address(),
+                    .context().command_address(RentBicycle::LOCAL_ID)?,
                 &MessagingOperationId::new(operation_id)?,
                 command_execution_fingerprint(
                     command_context,
@@ -1286,7 +1288,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                     report["revision"] == revision,
                     "behavioral report used the wrong definition revision",
                 )?;
-                if id == "reject-unavailable-bicycle" {
+                if id == "reject-duplicate-bicycle" {
                     assert_rejection_report(&report)?;
                 }
                 if id == "return-rented-bicycle" {
@@ -1593,23 +1595,23 @@ fn assert_rejection_report(report: &Value) -> TestResult {
         "status": "rejected",
         "value": {
             "classification": "conflict",
-            "code": "BICYCLE_UNAVAILABLE",
-            "message": "The requested bicycle cannot currently be rented.",
+            "code": "BICYCLE_ALREADY_IN_FLEET",
+            "message": "The requested bicycle is already part of this fleet.",
             "details": {
-                "bicycle_id": "bike-99",
-                "code": "BICYCLE_UNAVAILABLE",
-                "message": "The requested bicycle cannot currently be rented."
+                "bicycle_id": "bike-42",
+                "code": "BICYCLE_ALREADY_IN_FLEET",
+                "message": "The requested bicycle is already part of this fleet."
             }
         }
     });
     let expected_rejection = json!({
         "classification": "conflict",
-        "code": "BICYCLE_UNAVAILABLE",
-        "message": "The requested bicycle cannot currently be rented.",
+        "code": "BICYCLE_ALREADY_IN_FLEET",
+        "message": "The requested bicycle is already part of this fleet.",
         "details": {
-            "bicycle_id": "bike-99",
-            "code": "BICYCLE_UNAVAILABLE",
-            "message": "The requested bicycle cannot currently be rented."
+            "bicycle_id": "bike-42",
+            "code": "BICYCLE_ALREADY_IN_FLEET",
+            "message": "The requested bicycle is already part of this fleet."
         }
     });
     if report["commandOutcome"]["outcome"] != expected_outcome
@@ -1637,8 +1639,8 @@ async fn run_isolation_test(
     ensure(
         test_runtime
             .config()
-            .command_route(BikeRentalCommand::RentBicycle)
-            .address()
+            .context()
+            .command_address(RentBicycle::LOCAL_ID)?
             .as_str()
             .contains(".test.command."),
         "Test command did not use the derived test subject scope",
@@ -1646,8 +1648,8 @@ async fn run_isolation_test(
     ensure(
         !production_runtime
             .config()
-            .command_route(BikeRentalCommand::RentBicycle)
-            .address()
+            .context()
+            .command_address(RentBicycle::LOCAL_ID)?
             .as_str()
             .contains(".test."),
         "Dispatch command unexpectedly used the test subject scope",
@@ -1709,8 +1711,8 @@ async fn run_isolation_test(
             invocation(
                 "production-add",
                 "production-add-correlation",
-                AddBicycle::LOCAL_ID,
-                AddBicycle::SCHEMA_VERSION,
+                RegisterBicycle::LOCAL_ID,
+                RegisterBicycle::SCHEMA_VERSION,
                 json!({
                     "fleet_id": "city-fleet",
                     "bicycle_id": "production-bike",
@@ -2083,17 +2085,13 @@ async fn wait_for_command_stream_empty(
                 "command stream is not configured as a WorkQueue",
             )?;
             ensure(
-                stream_info.state.consumer_count == runtime.config().command_routes().len(),
+                stream_info.state.consumer_count == runtime.runtime_config().commands.len(),
                 "command WorkQueue has an unexpected passive consumer",
             )?;
             let mut worker_acknowledged = false;
-            for route in runtime.config().command_routes() {
-                let info = consumer_info(
-                    connection,
-                    stream_name,
-                    route.consumer().durable_name().as_str(),
-                )
-                .await?;
+            for route in &runtime.runtime_config().commands {
+                let info =
+                    consumer_info(connection, stream_name, route.durable_name().as_str()).await?;
                 ensure(
                     info.num_pending == 0 && info.num_ack_pending == 0,
                     "command WorkQueue consumer is not idle after acknowledgement",

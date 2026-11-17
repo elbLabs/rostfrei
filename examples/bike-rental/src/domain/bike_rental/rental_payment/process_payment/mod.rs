@@ -7,7 +7,7 @@ mod handler;
 mod rejection;
 
 pub use action::RecordPaymentResultAction;
-pub use command::ProcessRentalPayment;
+pub use command::CollectRentalPayment;
 pub use event::RentalPaymentProcessed;
-pub use handler::ProcessRentalPaymentHandler;
+pub use handler::CollectRentalPaymentHandler;
 pub use rejection::PaymentRejected;

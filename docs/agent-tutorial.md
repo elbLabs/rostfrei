@@ -143,14 +143,14 @@ to confirm the host, schema contracts, registered definitions and fixtures.
 Prepare a new writable `EVIDENCE_DIR` outside the checkout to hold both saved
 JSON results. Follow the [guided tutorial reference](../.agents/skills/rostfrei-tracer/references/guided-tutorial.md):
 
-1. Read `rent-available-bicycle`, `reject-unavailable-bicycle` and their
-   registered `demo-fleet` fixture; explain Given/When/Then.
-2. Run the successful rental of serviceable `bike-42`. Read its saved report,
+1. Read `add-first-bicycle`, `reject-duplicate-bicycle` and their registered
+   `no-rental-fleets` and `demo-fleet` fixtures; explain Given/When/Then.
+2. Run the successful registration of serviceable `bike-42`. Read its saved report,
    operation and finite MessageSeries, explain the observed result, and pause.
 3. Let the learner inspect that evidence. Verify it is saved before the next
    run resets live Test evidence.
-4. When the learner continues, run the rejection of maintenance-required
-   `bike-99` from a fresh `demo-fleet`. Explain the explicit rejected outcome
+4. When the learner continues, run the rejection of already registered
+   `bike-42` from a fresh `demo-fleet`. Explain the explicit rejected outcome
    separately from the absence of events, and pause again.
 
 Render existing JSON as text through the agent. Source rules can explain the

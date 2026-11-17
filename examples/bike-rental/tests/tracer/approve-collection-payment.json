@@ -6,15 +6,15 @@
   "expected": {
     "within": "35s", "settleFor": "1s",
     "graphs": [{ "nodes": [
-      { "kind": "command", "key": "process", "name": "process-rental-payment", "context": "bike-rental", "schemaVersion": 1,
+      { "kind": "command", "key": "process", "name": "collect-rental-payment", "context": "bike-rental", "schemaVersion": 1,
         "payload": { "payment_id": "payment-42" }, "outcome": "accepted" },
-      { "kind": "domain-event", "key": "paid", "parentKey": "process", "name": "rental-payment-processed", "schemaVersion": 1,
-        "payload": { "payment_id": "payment-42", "outcome": "approved", "provider_reference": "sandbox:payment-42",
+      { "kind": "domain-event", "key": "paid", "parentKey": "process", "name": "rental-payment-approved", "schemaVersion": 1,
+        "payload": { "payment_id": "payment-42", "provider_reference": "sandbox:payment-42",
           "quote": { "currency": "EUR", "rental_charge_minor": 2500, "security_deposit_minor": 10000 } } },
       { "kind": "domain-event", "key": "rented", "parentKey": "process", "name": "bicycle-rented", "schemaVersion": 1,
         "payload": { "fleet_id": "city-fleet", "bicycle_id": "bike-42" } },
-      { "kind": "domain-event", "key": "collected", "parentKey": "process", "name": "bicycle-collection-resolved", "schemaVersion": 1,
-        "payload": { "fleet_id": "city-fleet", "reservation_id": "booking-42", "bicycle_id": "bike-42", "payment_id": "payment-42", "outcome": "approved" } },
+      { "kind": "domain-event", "key": "collected", "parentKey": "process", "name": "reserved-bicycle-collected", "schemaVersion": 1,
+        "payload": { "fleet_id": "city-fleet", "reservation_id": "booking-42", "bicycle_id": "bike-42", "payment_id": "payment-42" } },
       { "kind": "integration-event", "key": "started", "parentKey": "rented", "name": "bicycle-rental-started", "schemaVersion": 1,
         "payload": { "fleet_id": "city-fleet", "bicycle_id": "bike-42" } }
     ]}]

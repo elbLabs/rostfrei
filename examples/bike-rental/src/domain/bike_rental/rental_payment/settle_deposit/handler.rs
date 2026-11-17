@@ -1,4 +1,4 @@
-use super::{RecordDepositRefundAction as _, SettleRentalDeposit};
+use super::{RecordDepositRefundAction as _, RefundEligibleRentalDeposit};
 use crate::{
     domain::{
         rental_fleet::RentalFleetAggregate,
@@ -10,16 +10,16 @@ use async_trait::async_trait;
 use rostfrei::{CommandDecision, CommandExecution, CommandHandler, CommandHandlingResult};
 use std::sync::Arc;
 
-pub struct SettleRentalDepositHandler {
+pub struct RefundEligibleRentalDepositHandler {
     pub provider: Arc<dyn PaymentProvider>,
 }
 
 #[async_trait]
-impl CommandHandler<SettleRentalDeposit> for SettleRentalDepositHandler {
+impl CommandHandler<RefundEligibleRentalDeposit> for RefundEligibleRentalDepositHandler {
     type Rejection = PaymentRejected;
     async fn handle(
         &self,
-        command: &SettleRentalDeposit,
+        command: &RefundEligibleRentalDeposit,
         execution: &mut CommandExecution<'_>,
     ) -> CommandHandlingResult<Self::Rejection> {
         let reject = |reason: &str| {

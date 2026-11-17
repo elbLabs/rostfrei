@@ -6,10 +6,9 @@
 use std::{error::Error, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use bike_rental::{
-    demo::demo_fixture,
-    rental_fleet::{RentBicycle, RentBicycleHandler, RentalFleetAggregate},
-};
+mod support;
+rostfrei::install_macro_support!();
+use bike_rental::{demo::demo_fixture, rental_fleet::RentalFleetAggregate};
 use rostfrei::nats::{NatsConnection, NatsConnectionConfig, connect};
 use rostfrei::tracer::{
     ApplicationBindings, CommandInvocation, CommandOutcome, CommandPublication, CommandTransport,
@@ -18,6 +17,7 @@ use rostfrei::tracer::{
 };
 use rostfrei::{ApplicationName, Command, CommandHandler, OperationId};
 use serde_json::json;
+use support::{RentBicycle, RentBicycleHandler};
 use tokio::sync::Notify;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;

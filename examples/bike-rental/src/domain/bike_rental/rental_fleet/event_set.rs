@@ -1,9 +1,10 @@
 use rostfrei::AggregateEvents;
 
 use super::{
-    BicycleAdded, BicycleCategorized, BicycleCollectionRequested, BicycleCollectionResolved,
-    BicycleDamageReported, BicycleRented, BicycleReservationConfirmed, BicycleRetired,
-    BicycleReturned, BicycleTransferredIn, BicycleTransferredOut, ReservedBicycleReturned,
+    BicycleAdded, BicycleCategorized, BicycleCollectionCancelled, BicycleCollectionRequested,
+    BicycleCollectionResolved, BicycleDamageReported, BicycleRented, BicycleReservationConfirmed,
+    BicycleRetired, BicycleReturned, BicycleTransferredIn, BicycleTransferredOut,
+    ReservedBicycleCollected, ReservedBicycleReturned,
 };
 
 #[derive(AggregateEvents)]
@@ -13,6 +14,8 @@ pub enum RentalFleetEvent {
     BicycleReservationConfirmed(BicycleReservationConfirmed),
     BicycleCollectionRequested(BicycleCollectionRequested),
     BicycleCollectionResolved(BicycleCollectionResolved),
+    ReservedBicycleCollected(ReservedBicycleCollected),
+    BicycleCollectionCancelled(BicycleCollectionCancelled),
     BicycleRented(BicycleRented),
     BicycleReturned(BicycleReturned),
     ReservedBicycleReturned(ReservedBicycleReturned),

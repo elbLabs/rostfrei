@@ -1,18 +1,18 @@
 use async_trait::async_trait;
 use rostfrei::{CommandDecision, CommandExecution, CommandHandler, CommandHandlingResult};
 
-use super::{AddBicycle, AddBicycleAction, BicycleAlreadyInFleet};
+use super::{AddBicycleAction, BicycleAlreadyInFleet, RegisterBicycle};
 use crate::domain::rental_fleet::{AddCategorizedBicycleAction as _, RentalFleetAggregate};
 
-pub struct AddBicycleHandler;
+pub struct RegisterBicycleHandler;
 
 #[async_trait]
-impl CommandHandler<AddBicycle> for AddBicycleHandler {
+impl CommandHandler<RegisterBicycle> for RegisterBicycleHandler {
     type Rejection = BicycleAlreadyInFleet;
 
     async fn handle(
         &self,
-        command: &AddBicycle,
+        command: &RegisterBicycle,
         execution: &mut CommandExecution<'_>,
     ) -> CommandHandlingResult<Self::Rejection> {
         let mut fleet = execution

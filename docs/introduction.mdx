@@ -29,9 +29,9 @@ Declarations and implementations have predictable locations in the source tree. 
 
 Imagine a customer renting a bicycle:
 
-1. A **command**, `RentBicycle`, asks the Bike Rental bounded context to make a business decision.
-2. Domain behavior checks the fleet and its rental policy. An unavailable bicycle produces a **rejection** and no new domain events.
-3. An accepted rental produces a **domain event**, `BicycleRented`. The runtime commits it to the fleet's private history. Replaying that history reconstructs the aggregate's state.
+1. A **command**, `ReserveBicycleCategory`, asks the Bike Rental bounded context to confirm category capacity and a price for the customer's dates.
+2. At collection, `CollectReservedBicycle` selects a physical bicycle. An unavailable bicycle produces a **rejection** and no new domain events.
+3. Collection requests payment. Approval through `CollectRentalPayment` commits the **domain events** `RentalPaymentApproved`, `BicycleRented` and `ReservedBicycleCollected` atomically. Replaying history reconstructs each aggregate's state.
 4. After the commit, application code maps the private fact to a separately versioned **integration event**, `BicycleRentalStarted`, for public communication.
 
 A query reads state without changing it. A domain policy evaluates facts without changing state or recording events.
@@ -48,7 +48,7 @@ Event history and runtime observation answer different questions. The store reta
 
 ## From command to decision
 
-The rental command carries fleet and bicycle IDs. Its action evaluates eligibility, then raises `BicycleRented` or returns a rejection. The runtime commits the decision and accepted events after checking the versions it read.
+The collection command identifies the fleet, reservation, bicycle and payment attempt. Its action checks eligibility, then records a hold and payment request or returns a rejection. Payment approval starts the rental. The runtime commits each decision and its accepted events after checking the versions it read.
 
 An exact retry returns the recorded outcome. A deliberate new request uses a new operation identity. A timeout means the caller may not know whether the command completed; it is not a business rejection. See the [command runtime](command-runtime.md) for identity, retry, and outcome contracts.
 
