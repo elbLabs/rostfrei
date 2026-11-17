@@ -1306,9 +1306,7 @@ impl NatsEventStore {
                 return Err(corrupt("transaction receipt repeats an aggregate stream"));
             }
             let base_version = StreamVersion::new(participant.base_stream_version);
-            let history = if self.snapshotting
-                && self.config.receipt_backed_history()
-                && !self.history_auditing
+            let history = if self.bounded_snapshot_history()
                 && raw_histories.maximum_stream_sequence.is_none()
             {
                 Box::pin(self.load_operation_history(

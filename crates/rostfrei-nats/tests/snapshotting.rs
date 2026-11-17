@@ -166,8 +166,32 @@ async fn setup_profile(
     Arc<AggregateCodecs>,
     Arc<RebuildDiagnostics>,
 )> {
+    setup_in_scope(
+        label,
+        policy,
+        receipt_backed,
+        if receipt_backed {
+            TrafficScope::Normal
+        } else {
+            TrafficScope::Test
+        },
+    )
+    .await
+}
+
+async fn setup_in_scope(
+    label: &str,
+    policy: SnapshotPolicy,
+    receipt_backed: bool,
+    scope: TrafficScope,
+) -> TestResult<(
+    Fixture,
+    Arc<NatsEventStore>,
+    Arc<AggregateCodecs>,
+    Arc<RebuildDiagnostics>,
+)> {
     let mut fixture = Fixture::new(label).await?;
-    if !receipt_backed {
+    if scope == TrafficScope::Test {
         fixture.context = fixture
             .context
             .application()
@@ -521,7 +545,42 @@ async fn damaged_state_and_wrong_scope_caches_never_replace_original_history() -
         other_scope,
         original.state.clone(),
     )?;
-    for snapshot in [bad_checksum, bad_state, wrong_scope] {
+    let mut bad_locator = original.checkpoint.clone();
+    let mut position: serde_json::Value = serde_json::from_slice(&bad_locator.position)?;
+    position["sequence"] = serde_json::json!(999_999);
+    bad_locator.position = serde_json::to_vec(&position)?;
+    assert_eq!(
+        store
+            .load_replay(&id, Some(&bad_locator), None)
+            .await
+            .unwrap_err()
+            .kind(),
+        EventStoreErrorKind::InvalidRequest,
+        "a cache-supplied missing native position is not authoritative corruption"
+    );
+    let bad_locator = StoredSnapshot::new(
+        original.replay_revision.clone(),
+        1,
+        bad_locator,
+        original.state.clone(),
+    )?;
+    let mut wrong_anchor = original.checkpoint.clone();
+    let mut position: serde_json::Value = serde_json::from_slice(&wrong_anchor.position)?;
+    position["digest"] = serde_json::json!("wrong cache digest");
+    wrong_anchor.position = serde_json::to_vec(&position)?;
+    let wrong_anchor = StoredSnapshot::new(
+        original.replay_revision.clone(),
+        1,
+        wrong_anchor,
+        original.state.clone(),
+    )?;
+    for snapshot in [
+        bad_checksum,
+        bad_state,
+        wrong_scope,
+        bad_locator,
+        wrong_anchor,
+    ] {
         let mut codecs = AggregateCodecs::default()
             .with_snapshot_store(Arc::new(FixedSnapshot(snapshot)))
             .with_rebuild_diagnostics(reports.clone());
@@ -530,7 +589,10 @@ async fn damaged_state_and_wrong_scope_caches_never_replace_original_history() -
             .rehydrate::<Target>(&id)
             .await?;
         assert_eq!(restored.state().items.len(), 8);
-        assert_eq!(reports.recent().pop().ok_or("report")?.events_applied, 8);
+        let report = reports.recent().pop().ok_or("report")?;
+        assert_eq!((report.events_read, report.events_applied), (8, 8));
+        assert!(report.snapshot_warning.is_some());
+        assert!(report.error.is_none());
     }
     let wrong_semantics = StoredSnapshot::new(
         "v1".to_owned(),
@@ -938,5 +1000,359 @@ async fn storage_recreation_fences_old_checkpoints_and_old_handles() -> TestResu
         reports.recent().pop().ok_or("report")?.snapshot_status,
         SnapshotStatus::Miss
     );
+    Ok(())
+}
+
+fn fixture_events(id: &StreamId, operation: &str, count: u32) -> TestResult<EventBatch> {
+    let operation = OperationId::new(operation)?;
+    let commit = derive_commit_id(id, &operation);
+    let events = (0..count)
+        .map(|ordinal| {
+            <JsonEventCodec as EventCodec<Target>>::encode(
+                &JsonEventCodec,
+                &Changed {
+                    created: true,
+                    item: Some(format!("fixture-{ordinal}")),
+                },
+                derive_event_id(&commit, ordinal),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(EventBatch::new(
+        commit,
+        operation,
+        ContentFingerprint::digest(b"fixture"),
+        events,
+    )?)
+}
+
+#[tokio::test]
+async fn receipt_profile_snapshots_preserve_complete_mixed_test_fixtures() -> TestResult {
+    let (fixture, store, codecs, reports) = setup_in_scope(
+        "snapshot-fixture",
+        SnapshotPolicy::Manual,
+        true,
+        TrafficScope::Test,
+    )
+    .await?;
+    let id = stream("one")?;
+    store
+        .append_fixture(
+            &id,
+            ExpectedVersion::NoStream,
+            fixture_events(&id, "prefix", 2)?,
+        )
+        .await?;
+    let executor = CommandExecutor::with_codecs(store.clone(), codecs.clone());
+    let error = executor
+        .create_snapshot::<Target>(&id, StreamVersion::new(1))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, CommandExecutionError::Store(error) if error.kind() == EventStoreErrorKind::InvalidRequest)
+    );
+    executor
+        .create_snapshot::<Target>(&id, StreamVersion::new(2))
+        .await?;
+    assert_eq!(
+        CommandExecutor::with_codecs(
+            store.as_ref().clone().with_snapshotting(false),
+            codecs.clone()
+        )
+        .rehydrate::<Target>(&id)
+        .await?
+        .state()
+        .items
+        .len(),
+        2
+    );
+    let metadata = CommandExecutionMetadata::new(
+        OperationId::new("application-command")?,
+        ContentFingerprint::digest(b"command"),
+    )
+    .with_bounded_context(fixture.context.name().clone());
+    assert!(matches!(
+        executor
+            .execute(
+                &Handler(Arc::new(AtomicUsize::new(0))),
+                metadata,
+                &Act {
+                    target: "one".to_owned(),
+                    action: "add".to_owned(),
+                    item: "command".to_owned()
+                },
+            )
+            .await?,
+        CommandOutcome::Accepted(_)
+    ));
+    store
+        .append_fixture(
+            &id,
+            ExpectedVersion::Exact(StreamVersion::new(3)),
+            fixture_events(&id, "tail", 2)?,
+        )
+        .await?;
+    let restored = executor.rehydrate::<Target>(&id).await?;
+    assert_eq!(
+        restored.state().items,
+        [
+            "fixture-0",
+            "fixture-1",
+            "command",
+            "fixture-0",
+            "fixture-1"
+        ]
+    );
+    let report = reports.recent().pop().ok_or("report")?;
+    assert_eq!(
+        (
+            report.snapshot_version,
+            report.events_read,
+            report.events_applied
+        ),
+        (2, 5, 3)
+    );
+    let error = executor
+        .create_snapshot::<Target>(&id, StreamVersion::new(4))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, CommandExecutionError::Store(error) if error.kind() == EventStoreErrorKind::InvalidRequest)
+    );
+    executor
+        .create_snapshot::<Target>(&id, StreamVersion::new(5))
+        .await?;
+    assert!(
+        executor
+            .verify_snapshot::<Target>(&id, StreamVersion::new(5))
+            .await?
+    );
+
+    Ok(())
+}
+
+struct TwoParticipants;
+#[async_trait::async_trait]
+impl CommandHandler<Act> for TwoParticipants {
+    type Rejection = &'static str;
+    async fn handle(
+        &self,
+        _: &Act,
+        execution: &mut CommandExecution<'_>,
+    ) -> CommandHandlingResult<Self::Rejection> {
+        for id in ["a-primary", "z-secondary"] {
+            execution.load::<Target>(id).await?.raise(Changed {
+                created: true,
+                item: Some("conflicting-command".to_owned()),
+            });
+        }
+        Ok(CommandDecision::Accepted)
+    }
+}
+
+async fn expire_fixture_dedup(
+    fixture: &Fixture,
+    store: &NatsEventStore,
+    id: &StreamId,
+    batch: &EventBatch,
+) -> TestResult {
+    let journal = fixture.js.get_stream(store.config().stream_name()).await?;
+    let original = journal.cached_info().config.clone();
+    let subject = store
+        .config()
+        .event_subject(id.aggregate_type().as_str(), id.aggregate_id().as_str());
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert(
+        "Nats-Msg-Id",
+        batch
+            .events()
+            .first()
+            .ok_or("empty fixture batch")?
+            .event_id()
+            .as_str(),
+    );
+    headers.insert("Nats-Expected-Last-Subject-Sequence", "0");
+    let mut short = original.clone();
+    short.duplicate_window = Duration::from_millis(100);
+    fixture.js.update_stream(short).await?;
+    // Observe expiration through a failing CAS: no probe event or new dedup ID
+    // is persisted. Restore the required policy before exercising Rostfrei.
+    tokio::time::timeout(WAIT, async {
+        loop {
+            match fixture
+                .js
+                .publish_with_headers(subject.clone(), headers.clone(), "{}".into())
+                .await?
+                .await
+            {
+                Ok(ack) => assert!(ack.duplicate, "the probe must never append"),
+                Err(error) => {
+                    assert_eq!(
+                        error.kind(),
+                        async_nats::jetstream::context::PublishErrorKind::WrongLastSequence
+                    );
+                    return TestResult::Ok(());
+                }
+            }
+        }
+    })
+    .await??;
+    fixture.js.update_stream(original).await?;
+    assert_eq!(
+        fixture.messages(store.config().stream_name()).await?,
+        journal.cached_info().state.messages
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn secondary_fixture_prefix_fences_commands_after_snapshot_mode_changes() -> TestResult {
+    let (fixture, store, codecs, reports) = setup_in_scope(
+        "snapshot-fixture-identity",
+        SnapshotPolicy::Manual,
+        true,
+        TrafficScope::Test,
+    )
+    .await?;
+    let secondary = stream("z-secondary")?;
+    let primary = stream("a-primary")?;
+    let fixture_batch = fixture_events(&secondary, "fixture-F", 1)?;
+    let full_store = store.as_ref().clone().with_snapshotting(false);
+    full_store
+        .append_fixture(&secondary, ExpectedVersion::NoStream, fixture_batch.clone())
+        .await?;
+    full_store
+        .append_transaction(transaction(
+            &secondary,
+            ExpectedVersion::Exact(StreamVersion::new(1)),
+            fixture_events(&secondary, "transaction-G", 1)?,
+        ))
+        .await?;
+    CommandExecutor::with_codecs(full_store, codecs.clone())
+        .create_snapshot::<Target>(&secondary, StreamVersion::new(2))
+        .await?;
+    expire_fixture_dedup(&fixture, &store, &secondary, &fixture_batch).await?;
+    let before = store.load(&secondary).await?;
+    let journal_messages = fixture.messages(store.config().stream_name()).await?;
+    let executor = CommandExecutor::with_codecs(store.clone(), codecs);
+    let result = executor
+        .execute(
+            &TwoParticipants,
+            CommandExecutionMetadata::new(
+                fixture_batch.operation_id().clone(),
+                ContentFingerprint::digest(b"reuse"),
+            )
+            .with_bounded_context(fixture.context.name().clone()),
+            &Act {
+                target: "a-primary".to_owned(),
+                action: "create".to_owned(),
+                item: String::new(),
+            },
+        )
+        .await;
+    assert!(
+        matches!(result, Err(CommandExecutionError::Store(ref error)) if error.kind() == EventStoreErrorKind::IdentityConflict),
+        "{result:?}"
+    );
+    assert!(store.load(&primary).await?.is_empty());
+    assert_eq!(store.load(&secondary).await?, before);
+    assert_eq!(
+        fixture.messages(store.config().stream_name()).await?,
+        journal_messages
+    );
+    assert!(matches!(
+        store
+            .lookup_outcome(&OutcomeKey::new(
+                store.authority().clone(),
+                fixture.context.name().clone(),
+                fixture_batch.operation_id().clone(),
+            ))
+            .await?,
+        OutcomeLookup::Missing
+    ));
+    let report = reports
+        .recent()
+        .into_iter()
+        .find(|report| {
+            report.operation_id.as_deref() == Some("fixture-F") && report.snapshot_version == 2
+        })
+        .ok_or("secondary snapshot report")?;
+    assert_eq!((report.events_read, report.events_applied), (2, 0));
+    Ok(())
+}
+
+#[tokio::test]
+async fn history_only_snapshots_reconstruct_without_live_results_and_fence_recreated_journals()
+-> TestResult {
+    let (fixture, store, codecs, reports) =
+        setup("snapshot-history-only", SnapshotPolicy::Manual).await?;
+    let id = stream("one")?;
+    seed(&store, &id, 2).await?;
+    let live = CommandExecutor::with_codecs(store.clone(), codecs.clone());
+    live.create_snapshot::<Target>(&id, StreamVersion::new(2))
+        .await?;
+    live.execute(
+        &Handler(Arc::new(AtomicUsize::new(0))),
+        CommandExecutionMetadata::new(
+            OperationId::new("completed-tail")?,
+            ContentFingerprint::digest(b"completed-tail"),
+        )
+        .with_bounded_context(fixture.context.name().clone()),
+        &Act {
+            target: "one".to_owned(),
+            action: "add".to_owned(),
+            item: "tail".to_owned(),
+        },
+    )
+    .await?;
+    assert!(
+        fixture
+            .messages(store.config().outcome_state_stream_name())
+            .await?
+            > 0
+    );
+    fixture
+        .js
+        .delete_stream(store.config().outcome_state_stream_name())
+        .await?;
+    let history = NatsEventStore::connect_history(fixture.js.clone(), store.config().clone())
+        .await?
+        .with_snapshotting(true);
+    let executor = CommandExecutor::with_codecs(history.clone(), codecs);
+    assert_eq!(
+        executor.rehydrate::<Target>(&id).await?.state().items.len(),
+        3
+    );
+    let report = reports.recent().pop().ok_or("report")?;
+    assert_eq!(
+        (
+            report.snapshot_version,
+            report.events_read,
+            report.events_applied
+        ),
+        (2, 1, 1)
+    );
+    assert_eq!(
+        executor
+            .rehydrate_at::<Target>(&id, StreamVersion::new(1))
+            .await?
+            .state()
+            .items
+            .len(),
+        1
+    );
+    assert!(store.begin_command().await.is_err());
+    assert!(history.begin_command().await.is_err());
+    let journal = fixture.js.get_stream(store.config().stream_name()).await?;
+    fixture
+        .js
+        .delete_stream(store.config().stream_name())
+        .await?;
+    fixture
+        .js
+        .create_stream(journal.cached_info().config.clone())
+        .await?;
+    assert!(matches!(executor.rehydrate::<Target>(&id).await,
+        Err(SimulationError::Store(error)) if error.kind() == EventStoreErrorKind::ConfigurationMismatch));
     Ok(())
 }

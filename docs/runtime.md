@@ -50,8 +50,14 @@ KV bucket, connect `NatsSnapshotStore`, and enable `store.with_snapshotting(true
 For bounded fetching, explicitly provision `config.with_receipt_backed_history()?`
 from creation. It selects a disjoint namespace for coordinated transactions with
 permanent receipts. Policy updates cannot adopt an existing namespace.
-The accelerated reader does not yet support Test fixture manifests; use the ordinary
-namespace for snapshot-backed fixtures, retaining full-history validation.
+Receipt-profile and fresh-outcome selection commute: either builder order selects
+the same storage, and repeating the same selection is idempotent. Conflicting
+outcome authorities are rejected. The former outcome-first receipt layout is
+preserved; resources created with the earlier order-dependent receipt-first layout
+require explicit migration or a fresh namespace.
+Test namespaces retain full-history reads and participant identity checks, including
+fixture manifests. Snapshots still skip prefix decoding/application there; this
+preserves fixture-operation collision checks when commands follow fixtures.
 As with outcome epochs, exclude unsupported/raw writers through
 broker permissions. Each tail transaction is checked against its receipt's exact
 events, guards, atomic batch and native positions. Older/mixed histories still fetch
@@ -61,8 +67,14 @@ Change the replay revision when initialization, event decoding or application ch
 `CommandExecutor::create_snapshot` captures an exact version; `rehydrate_at` restores
 a selected version and `verify_snapshot` compares against original-event replay.
 Invalid/incompatible caches fall back to original history; authoritative history or
-receipt corruption fails the read. `RebuildDiagnostics` reports replay work, and
-applications drain policy requests with `run_snapshot_jobs`. Fixture-v1 `snapshots` entries retain all
+receipt corruption fails the read. Attach `RebuildDiagnostics` with
+`with_rebuild_diagnostics` to observe replay work and nonfatal snapshot warnings;
+`RebuildReport.snapshot_warning` retains the reason for fallback, while `error`
+reports failure of the rebuild itself.
+Retained-journal handles opened with `connect_history` support snapshot and
+version-selected replay without command-results storage, while still checking the
+journal incarnation. Live command execution retains its paired-authority checks.
+Applications drain policy requests with `run_snapshot_jobs`. Fixture-v1 `snapshots` entries retain all
 backing events: omit `state` to capture during installation, or supply verified state
 that is rebound to the destination history authority.
 

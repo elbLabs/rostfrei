@@ -212,7 +212,7 @@ async fn accelerated_tail_requires_its_actual_operation_receipt() -> TestResult 
     ));
     codecs.register_json_snapshot::<Target>("v1", 1, SnapshotPolicy::Manual)?;
     let executor = CommandExecutor::with_codecs(store.clone(), Arc::new(codecs));
-    executor
+    let snapshot = executor
         .create_snapshot::<Target>(&id, StreamVersion::new(1))
         .await?;
     assert_eq!(
@@ -241,7 +241,43 @@ async fn accelerated_tail_requires_its_actual_operation_receipt() -> TestResult 
     assert!(
         matches!(error, SimulationError::Store(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory)
     );
+
+    let mut checkpoint = snapshot.checkpoint.clone();
+    let mut position: serde_json::Value = serde_json::from_slice(&checkpoint.position)?;
+    position["digest"] = serde_json::json!("invalid cache digest");
+    checkpoint.position = serde_json::to_vec(&position)?;
+    let cache = StoredSnapshot::new(
+        snapshot.replay_revision,
+        snapshot.schema_version,
+        checkpoint,
+        snapshot.state,
+    )?;
+    let mut codecs = AggregateCodecs::default().with_snapshot_store(Arc::new(FixedSnapshot(cache)));
+    codecs.register_json_snapshot::<Target>("v1", 1, SnapshotPolicy::Manual)?;
+    let error = CommandExecutor::with_codecs(store, Arc::new(codecs))
+        .rehydrate::<Target>(&id)
+        .await
+        .err()
+        .ok_or("cache fallback hid a misbound receipt")?;
+    assert!(
+        matches!(error, SimulationError::Store(ref error) if error.kind() == EventStoreErrorKind::CorruptHistory)
+    );
     Ok(())
+}
+
+struct FixedSnapshot(StoredSnapshot);
+#[async_trait::async_trait]
+impl SnapshotStore for FixedSnapshot {
+    async fn load(
+        &self,
+        _: &SnapshotKey,
+        _: StreamVersion,
+    ) -> Result<Option<StoredSnapshot>, EventStoreError> {
+        Ok(Some(self.0.clone()))
+    }
+    async fn save(&self, _: &SnapshotKey, _: &StoredSnapshot) -> Result<(), EventStoreError> {
+        Ok(())
+    }
 }
 
 #[tokio::test]

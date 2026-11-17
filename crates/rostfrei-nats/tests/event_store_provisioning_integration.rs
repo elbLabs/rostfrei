@@ -116,6 +116,86 @@ async fn split_authority_uses_readable_names_and_retains_results_after_reconnect
 }
 
 #[tokio::test]
+#[allow(clippy::panic_in_result_fn)]
+async fn receipt_profile_builder_orders_reconnect_one_authority_disjoint_from_ordinary()
+-> TestResult<()> {
+    let (context, base) = fixture().await?;
+    let ordinary = base.clone().with_fresh_outcomes()?;
+    let authority_first = ordinary.clone().with_receipt_backed_history()?;
+    let profile_first = base.with_receipt_backed_history()?.with_fresh_outcomes()?;
+    provision_event_store(&context, &ordinary).await?;
+    provision_event_store(&context, &authority_first).await?;
+
+    let operation = OperationId::new("receipt-profile-noop")?;
+    let fingerprint = ContentFingerprint::digest("receipt-profile-noop");
+    let evidence = CommandExecutionMetadata::new(operation.clone(), fingerprint)
+        .with_default_outcome_evidence::<()>()
+        .outcome_evidence()
+        .cloned();
+    let proposal = EventTransaction::new(operation, fingerprint, vec![])
+        .with_bounded_context(authority_first.bounded_context().clone())
+        .with_completion(CommandCompletion::new(evidence, None));
+    let store = NatsEventStore::connect(context.clone(), authority_first.clone()).await?;
+    let original = store
+        .begin_command()
+        .await?
+        .commit_outcome(proposal.clone())
+        .await?;
+    drop(store);
+
+    let mut receipt_resources = Vec::new();
+    for name in [
+        authority_first.stream_name(),
+        authority_first.outcome_state_stream_name(),
+    ] {
+        receipt_resources.push(context.get_stream(name).await?.cached_info().clone());
+    }
+    provision_event_store(&context, &profile_first).await?;
+    let reconnected = NatsEventStore::connect(context.clone(), profile_first).await?;
+    let replay = reconnected
+        .begin_command()
+        .await?
+        .commit_outcome(proposal.clone())
+        .await?;
+    assert!(replay.is_exact_replay());
+    assert_eq!(replay.outcome(), original.outcome());
+    for before in receipt_resources {
+        let after = context.get_stream(&before.config.name).await?;
+        assert_eq!(after.cached_info().created, before.created);
+        assert_eq!(after.cached_info().config, before.config);
+        assert_eq!(after.cached_info().state.messages, 1);
+        assert_eq!(
+            after.cached_info().state.last_sequence,
+            before.state.last_sequence
+        );
+    }
+
+    for name in [ordinary.stream_name(), ordinary.outcome_state_stream_name()] {
+        assert_eq!(
+            context.get_stream(name).await?.cached_info().state.messages,
+            0
+        );
+    }
+    let ordinary_store = NatsEventStore::connect(context.clone(), ordinary.clone()).await?;
+    let independent = ordinary_store
+        .begin_command()
+        .await?
+        .commit_outcome(proposal)
+        .await?;
+    assert!(!independent.is_exact_replay());
+    for config in [&ordinary, &authority_first] {
+        for name in [config.stream_name(), config.outcome_state_stream_name()] {
+            assert_eq!(
+                context.get_stream(name).await?.cached_info().state.messages,
+                1
+            );
+            context.delete_stream(name).await?;
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn old_subject_layouts_require_a_fresh_namespace_without_mutating_storage() {
     for (filter, subject) in [
         ("*", "opaque-digest"),

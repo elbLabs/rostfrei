@@ -21,6 +21,21 @@ impl History {
 }
 
 impl NatsEventStore {
+    pub(super) fn bounded_snapshot_history(&self) -> bool {
+        self.snapshotting
+            && self.config.receipt_backed_history()
+            && self.config.traffic_scope() != TrafficScope::Test
+            && !self.history_auditing
+    }
+
+    async fn verify_replay_attachment(&self) -> Result<(), EventStoreError> {
+        if self.history_only {
+            self.verify_history_attachment().await
+        } else {
+            self.verify_authority().await.map(|_| ())
+        }
+    }
+
     #[allow(
         clippy::too_many_arguments,
         clippy::too_many_lines,
@@ -157,15 +172,18 @@ impl NatsEventStore {
         after: Option<&HistoryCheckpoint>,
         through: Option<StreamVersion>,
     ) -> Result<(History, ReplayHistory), EventStoreError> {
-        self.verify_authority().await?;
-        let (history, read) = if self.snapshotting
-            && self.config.receipt_backed_history()
-            && !self.history_auditing
-            && (after.is_some() || through.is_some())
-        {
+        self.verify_replay_attachment().await?;
+        let (history, read) = if self.bounded_snapshot_history() {
+            // A rejected cache also replays here without an anchor, retaining
+            // exact receipt checks instead of weakening to trusted history.
             Box::pin(self.load_checkpoint_tail(stream_id, after, through)).await?
         } else {
-            let history = self.load_history(stream_id).await?;
+            // Test fixture identities have aggregate-scoped manifests, not
+            // command receipts. Append sessions must retain their full prefix.
+            let audit = self.history_auditing
+                || self.config.receipt_backed_history()
+                || self.config.traffic_scope() == TrafficScope::Test;
+            let history = self.load_history_with_audit(stream_id, audit).await?;
             let read = history.events.len();
             (truncate(&history, through)?, read)
         };
@@ -181,7 +199,7 @@ impl NatsEventStore {
             }
         }
         let checkpoint = self.checkpoint(stream_id, &history).await?;
-        self.verify_authority().await?;
+        self.verify_replay_attachment().await?;
         let events: Vec<_> = history
             .events
             .iter()
@@ -264,11 +282,11 @@ impl NatsEventStore {
             .await
             .map_err(|e| unavailable(e.to_string()))?;
         let message = stream.get_raw_message(prefix.sequence).await.map_err(|e| {
-            classify_required_raw_lookup_error(
-                &e,
-                "checkpoint anchor is missing",
-                "failed to read checkpoint anchor",
-            )
+            if e.kind() == LastRawMessageErrorKind::NoMessageFound {
+                invalid("cache checkpoint anchor is missing")
+            } else {
+                unavailable(format!("failed to read checkpoint anchor: {e}"))
+            }
         })?;
         if message.subject.as_str() != subject
             || ContentFingerprint::digest(&message.payload).to_hex() != prefix.digest
@@ -289,7 +307,15 @@ impl NatsEventStore {
         {
             return Err(invalid("checkpoint must end at a complete commit"));
         }
-        if self.config.receipt_backed_history() && !event.is_transactional {
+        if event.is_fixture {
+            let terminal = prefix
+                .sequence
+                .checked_add(1)
+                .ok_or_else(|| corrupt("fixture manifest sequence overflow"))?;
+            self.read_fixture_manifest(terminal)
+                .await?
+                .validate_event(&event, prefix.sequence)?;
+        } else if self.config.receipt_backed_history() && !event.is_transactional {
             return Err(corrupt(
                 "receipt-backed checkpoint has no transaction provenance",
             ));

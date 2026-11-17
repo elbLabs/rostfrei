@@ -217,6 +217,7 @@ async fn load_inner<A: Aggregate + 'static>(
             // receipt corruption must not be hidden by a less strict full reader.
             snapshot = None;
             report.snapshot_status = SnapshotStatus::InvalidAnchor;
+            report.snapshot_warning = Some(error.to_string());
             history.load_replay(stream, None, through).await?
         }
         Err(error) => return Err(error.into()),
@@ -342,44 +343,71 @@ async fn select_snapshot<A: Aggregate + 'static>(
     };
     let key = SnapshotKey::new(authority, stream, &entry.revision, entry.schema);
     report.snapshot_status = SnapshotStatus::Miss;
-    match tokio::time::timeout(
+    let candidate = match tokio::time::timeout(
         std::time::Duration::from_secs(1),
         store.load(&key, through.unwrap_or(StreamVersion::new(u64::MAX))),
     )
     .await
     {
-        Ok(Ok(Some(candidate))) => {
-            if candidate.validate().is_err()
-                || candidate
-                    .checkpoint
-                    .validate_for(authority, stream)
-                    .is_err()
-                || candidate.replay_revision != entry.revision
-                || candidate.schema_version != entry.schema
-                || through.is_some_and(|limit| candidate.version() > limit)
-            {
-                report.snapshot_status = SnapshotStatus::InvalidCheckpoint;
-            } else {
-                let started = Instant::now();
-                let state = (entry.decode)(&candidate.state);
-                report.snapshot_decode_ns = crate::snapshots::nanos(started.elapsed());
-                if let Ok(state) = state
-                    && entry.codec.is::<Arc<dyn SnapshotCodec<A>>>()
-                {
-                    report.snapshot_status = SnapshotStatus::Hit;
-                    return Some(SelectedSnapshot {
-                        snapshot: candidate,
-                        state,
-                    });
-                }
-                report.snapshot_status = SnapshotStatus::InvalidState;
-            }
+        Ok(Ok(Some(candidate))) => candidate,
+        Ok(Ok(None)) => return None,
+        Ok(Err(error)) => {
+            report.snapshot_status = SnapshotStatus::Unavailable;
+            report.snapshot_warning = Some(error.to_string());
+            return None;
         }
-        Ok(Ok(None)) => {}
-        Ok(Err(_)) => report.snapshot_status = SnapshotStatus::Unavailable,
-        Err(_) => report.snapshot_status = SnapshotStatus::Timeout,
+        Err(error) => {
+            report.snapshot_status = SnapshotStatus::Timeout;
+            report.snapshot_warning = Some(format!("snapshot lookup timed out: {error}"));
+            return None;
+        }
+    };
+    let validation = candidate
+        .validate()
+        .and_then(|()| candidate.checkpoint.validate_for(authority, stream))
+        .and_then(|()| {
+            if candidate.replay_revision != entry.revision
+                || candidate.schema_version != entry.schema
+            {
+                Err(crate::replay::invalid(
+                    "snapshot replay revision or schema mismatch",
+                ))
+            } else if through.is_some_and(|limit| candidate.version() > limit) {
+                Err(crate::replay::invalid(
+                    "snapshot is newer than replay target",
+                ))
+            } else {
+                Ok(())
+            }
+        });
+    if let Err(error) = validation {
+        report.snapshot_status = SnapshotStatus::InvalidCheckpoint;
+        report.snapshot_warning = Some(error.to_string());
+        return None;
     }
-    None
+    if !entry.codec.is::<Arc<dyn SnapshotCodec<A>>>() {
+        report.snapshot_status = SnapshotStatus::InvalidState;
+        report.snapshot_warning =
+            Some("snapshot codec belongs to another aggregate model".to_owned());
+        return None;
+    }
+    let started = Instant::now();
+    let state = (entry.decode)(&candidate.state);
+    report.snapshot_decode_ns = crate::snapshots::nanos(started.elapsed());
+    match state {
+        Ok(state) => {
+            report.snapshot_status = SnapshotStatus::Hit;
+            Some(SelectedSnapshot {
+                snapshot: candidate,
+                state,
+            })
+        }
+        Err(error) => {
+            report.snapshot_status = SnapshotStatus::InvalidState;
+            report.snapshot_warning = Some(error.to_string());
+            None
+        }
+    }
 }
 
 struct Observation<'a> {
@@ -415,6 +443,7 @@ impl<'a> Observation<'a> {
                 decode_ns: 0,
                 apply_ns: 0,
                 snapshot_status: SnapshotStatus::Disabled,
+                snapshot_warning: None,
                 error: Some("cancelled".to_owned()),
                 snapshot_recommended: false,
             },

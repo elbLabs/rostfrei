@@ -209,9 +209,16 @@ async fn native_acl_excludes_old_mutable_writer_and_rollback_but_allows_read_onl
             .kind(),
         EventStoreErrorKind::ConfigurationMismatch
     );
-    let wrong_epoch = config.with_fresh_completed_outcome_epoch("epoch93")?;
+    // Builders reject authority replacement; tamper with retained metadata to
+    // exercise the independent broker-attachment and policy-update fences.
+    let mut wrong_epoch = stream_info.info().await?.config.clone();
+    wrong_epoch.metadata.insert(
+        "rostfrei.completed-outcomes.epoch".to_owned(),
+        "epoch93".to_owned(),
+    );
+    js.update_stream(wrong_epoch).await?;
     assert_eq!(
-        NatsEventStore::connect(js.clone(), wrong_epoch.clone())
+        NatsEventStore::connect(js.clone(), config.clone())
             .await
             .err()
             .ok_or("wrong epoch connected")?
@@ -219,10 +226,7 @@ async fn native_acl_excludes_old_mutable_writer_and_rollback_but_allows_read_onl
         EventStoreErrorKind::ConfigurationMismatch
     );
     assert_eq!(
-        update_event_store(&js, &wrong_epoch)
-            .await
-            .unwrap_err()
-            .kind(),
+        update_event_store(&js, &config).await.unwrap_err().kind(),
         EventStoreErrorKind::ConfigurationMismatch
     );
     old_client.drain().await?;

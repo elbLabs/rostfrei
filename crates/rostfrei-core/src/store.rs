@@ -503,6 +503,8 @@ pub trait EventHistory: Send + Sync {
     /// Read `(after.version, through]`, or through a captured head when omitted.
     /// Both boundaries must end complete commits. Validate the adapter-owned anchor,
     /// continuity and the authority before returning a usable suffix and head checkpoint.
+    /// Unusable supplied checkpoints return `InvalidRequest`; authoritative history
+    /// corruption or unavailability must retain their distinct error kinds.
     /// The compatibility implementation loads full history and reports that read cost.
     async fn load_replay(
         &self,

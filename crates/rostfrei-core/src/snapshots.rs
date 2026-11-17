@@ -310,6 +310,8 @@ pub struct RebuildReport {
     pub decode_ns: u64,
     pub apply_ns: u64,
     pub snapshot_status: SnapshotStatus,
+    /// Nonfatal cache failure; `error` separately reports whether rebuilding failed.
+    pub snapshot_warning: Option<String>,
     pub error: Option<String>,
     pub snapshot_recommended: bool,
 }

@@ -43,11 +43,10 @@ target/release/rostfrei-benchmarks aggregate-loading -- \
 `--snapshot-at VERSION` creates a NATS KV checkpoint before timed phases and enables
 snapshot-plus-tail rehydration and commands. The target must end a complete commit;
 capture time/state size are reported separately. Original events remain retained.
-Add `--receipt-backed-history` to qualify the fresh namespace for bounded fetching
-and exact tail-receipt validation; without it, snapshots still fetch full histories.
-Use that profile with `--history commands,batched-transactions`. The accelerated
-reader does not yet support Test fixture manifests; measure `fixtures` in the
-ordinary namespace, where snapshots skip prefix application but retain full reads.
+`--receipt-backed-history` selects the receipt-backed storage profile. This suite's
+Test namespace retains full-history validation and fixture-operation identity checks,
+including for command-generated histories. Snapshots skip prefix decoding/application;
+these measurements do not establish bounded native fetching for production histories.
 
 The `rostfrei-benchmarks` package owns the suite and Rust broker runner.
 Actual broker measurements reject debug builds. The default artifact is the checkout's
@@ -72,7 +71,7 @@ Three history kinds are supported:
 | --- | --- |
 | `fixtures` | Test fixture batches with atomic fixture manifests, bounded by event count and payload bytes; no command decisions |
 | `commands` | One typed handler execution and one event-producing transaction per event, with durable receipts |
-| `batched-transactions` | Up to fifty events per coordinated transaction, using checked-prefix sessions to bound fixture-creation work; receipts are retained |
+| `batched-transactions` | Up to fifty events per coordinated transaction; receipts and full Test participant histories are retained |
 
 The command-history case is the more representative baseline for ordinary
 command-driven applications. A complex application's apply logic or growing

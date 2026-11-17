@@ -72,6 +72,7 @@ pub struct NatsEventStoreConfig {
     explicit_detail_expiry: bool,
     read_only_outcomes: bool,
     legacy_security_scope: Option<rostfrei_core::SecurityScope>,
+    base_stream_name: String,
     split_stream_prefix: String,
     outcome_state_stream_name: String,
     application: ApplicationName,
@@ -110,6 +111,7 @@ impl NatsEventStoreConfig {
             explicit_detail_expiry: false,
             read_only_outcomes: false,
             legacy_security_scope: None,
+            base_stream_name: stream_name.clone(),
             split_stream_prefix: stream_name.clone(),
             outcome_state_stream_name: String::new(),
             application: context.application().clone(),
@@ -169,22 +171,12 @@ impl NatsEventStoreConfig {
     }
 
     /// Select a fresh, disjoint namespace for accelerated transaction-history replay.
-    /// Test fixture manifests are not supported by the accelerated reader yet.
+    /// Test histories retain full replay, including fixture-manifest validation.
+    /// Selection is idempotent and independent of outcome-authority builder order.
     /// Provision from creation; existing histories are not upgraded.
     pub fn with_receipt_backed_history(mut self) -> Result<Self, EventStoreError> {
-        if self.receipt_backed_history() {
-            return Err(invalid("receipt-backed history already selected"));
-        }
         self.history_profile = HistoryProfile::ReceiptBacked;
-        self.stream_name.push_str("__RECEIPTS_V1");
-        self.subject_prefix.push_str(".receipts.v1");
-        if self.split_outcomes {
-            self.outcome_state_stream_name = format!("{}_STATE", self.stream_name);
-            if !valid_stream_name(&self.outcome_state_stream_name) {
-                return Err(invalid("state stream name is too long"));
-            }
-        }
-        self.validate()?;
+        self.derive_namespace()?;
         Ok(self)
     }
 
@@ -197,39 +189,24 @@ impl NatsEventStoreConfig {
     /// Provisioning durably binds this epoch at stream creation. The default legacy
     /// profile permits coordinated acceptances and Test fixtures, but blocks unknown
     /// completed command outcomes.
+    /// Repeating the same selector and epoch is idempotent; conflicting selectors fail.
     pub fn with_fresh_completed_outcome_epoch(
-        mut self,
+        self,
         epoch: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
         let epoch = epoch.into();
-        if epoch.is_empty()
-            || epoch.len() > 128
-            || !epoch
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        {
-            return Err(invalid("invalid completed outcome identity epoch"));
-        }
-        self.completed_outcome_epoch = Some(epoch);
-        Ok(self)
+        validate_outcome_epoch(&epoch)?;
+        self.with_outcome_authority(false, Some(epoch))
     }
 
     pub fn completed_outcome_epoch(&self) -> Option<&str> {
         self.completed_outcome_epoch.as_deref()
     }
 
-    pub fn with_fresh_outcomes(mut self) -> Result<Self, EventStoreError> {
-        if self.split_outcomes || self.completed_outcome_epoch.is_some() {
-            return Err(invalid("outcome authority already selected"));
-        }
-        self.stream_name = format!("{}__JOURNAL", self.split_stream_prefix);
-        self.outcome_state_stream_name = format!("{}__COMMAND_RESULTS", self.split_stream_prefix);
-        self.split_outcomes = true;
-        self.validate()?;
-        if !valid_stream_name(&self.outcome_state_stream_name) {
-            return Err(invalid("command results stream name is too long"));
-        }
-        Ok(self)
+    /// Select a fresh label-free split authority. Repeating this selection is
+    /// idempotent; selecting a different authority on this configuration fails.
+    pub fn with_fresh_outcomes(self) -> Result<Self, EventStoreError> {
+        self.with_outcome_authority(true, None)
     }
 
     /// Explicit fenced cutover. Derives disjoint journal and state subjects; original
@@ -237,34 +214,73 @@ impl NatsEventStoreConfig {
     /// Stream names use `__JOURNAL__<epoch>` and `__COMMAND_RESULTS__<epoch>`;
     /// the epoch label is preserved exactly while subjects retain its digest.
     /// Epochs must not contain the reserved `__` stream-name separator.
+    /// Repeating the same selector and epoch is idempotent; conflicting selectors fail.
     pub fn with_fresh_split_outcome_epoch(
         self,
         epoch: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
-        if self.split_outcomes {
-            return Err(invalid("split authority already selected"));
-        }
-        let mut config = self.with_fresh_completed_outcome_epoch(epoch)?;
-        let epoch = config
-            .completed_outcome_epoch
-            .as_deref()
-            .ok_or_else(|| invalid("missing epoch"))?;
+        let epoch = epoch.into();
+        validate_outcome_epoch(&epoch)?;
         if epoch.contains("__") {
             return Err(invalid(
                 "split outcome epoch contains the reserved __ separator",
             ));
         }
-        let token = digest_parts(&[epoch.as_bytes()]);
-        config.stream_name = format!("{}__JOURNAL__{epoch}", config.split_stream_prefix);
-        config.subject_prefix = format!("{}.split.{token}", config.subject_prefix);
-        config.outcome_state_stream_name =
-            format!("{}__COMMAND_RESULTS__{epoch}", config.split_stream_prefix);
-        config.split_outcomes = true;
-        config.validate()?;
-        if !valid_stream_name(&config.outcome_state_stream_name) {
-            return Err(invalid("command results stream name is too long"));
+        self.with_outcome_authority(true, Some(epoch))
+    }
+
+    fn with_outcome_authority(
+        mut self,
+        split_outcomes: bool,
+        epoch: Option<String>,
+    ) -> Result<Self, EventStoreError> {
+        if (self.split_outcomes || self.completed_outcome_epoch.is_some())
+            && (self.split_outcomes != split_outcomes || self.completed_outcome_epoch != epoch)
+        {
+            return Err(invalid(
+                "outcome authority already selected; use a new configuration to select a different authority",
+            ));
         }
-        Ok(config)
+        self.split_outcomes = split_outcomes;
+        self.completed_outcome_epoch = epoch;
+        self.derive_namespace()?;
+        Ok(self)
+    }
+
+    fn derive_namespace(&mut self) -> Result<(), EventStoreError> {
+        let (epoch_name, epoch_subject) = match (self.split_outcomes, &self.completed_outcome_epoch)
+        {
+            (true, Some(epoch)) => (
+                format!("__{epoch}"),
+                format!(".split.{}", digest_parts(&[epoch.as_bytes()])),
+            ),
+            _ => (String::new(), String::new()),
+        };
+        let (history_name, history_subject) = match self.history_profile {
+            HistoryProfile::Unqualified => ("", ""),
+            HistoryProfile::ReceiptBacked => ("__RECEIPTS_V1", ".receipts.v1"),
+        };
+        self.stream_name = if self.split_outcomes {
+            format!(
+                "{}__JOURNAL{epoch_name}{history_name}",
+                self.split_stream_prefix
+            )
+        } else {
+            format!("{}{history_name}", self.base_stream_name)
+        };
+        self.outcome_state_stream_name = if !self.split_outcomes {
+            String::new()
+        } else if self.receipt_backed_history() {
+            format!("{}_STATE", self.stream_name)
+        } else {
+            format!("{}__COMMAND_RESULTS{epoch_name}", self.split_stream_prefix)
+        };
+        self.subject_prefix = format!(
+            "{}.domain.{}{epoch_subject}{history_subject}",
+            scoped_subject_prefix(self.application.as_str(), self.traffic_scope),
+            self.bounded_context.as_str()
+        );
+        self.validate()
     }
 
     pub fn with_explicit_detail_expiry(mut self, enabled: bool) -> Result<Self, EventStoreError> {
@@ -550,6 +566,9 @@ impl NatsEventStoreConfig {
         if !valid_stream_name(&self.stream_name) {
             return Err(invalid("invalid JetStream stream name"));
         }
+        if self.split_outcomes && !valid_stream_name(&self.outcome_state_stream_name) {
+            return Err(invalid("command results stream name is too long"));
+        }
         if self.max_stream_bytes <= 0 {
             return Err(invalid("maximum stream bytes must be finite and positive"));
         }
@@ -614,6 +633,18 @@ fn valid_stream_name(value: &str) -> bool {
                 && !byte.is_ascii_control()
                 && !matches!(byte, b'.' | b'*' | b'>')
         })
+}
+
+fn validate_outcome_epoch(epoch: &str) -> Result<(), EventStoreError> {
+    if epoch.is_empty()
+        || epoch.len() > 128
+        || !epoch
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(invalid("invalid completed outcome identity epoch"));
+    }
+    Ok(())
 }
 
 fn digest_parts(parts: &[&[u8]]) -> String {
@@ -732,7 +763,7 @@ mod tests {
             config.subject_prefix(),
             "fast-inbox.test.domain.commercial-access"
         );
-        assert!(config.with_fresh_outcomes().is_err());
+        assert_eq!(config.clone().with_fresh_outcomes().unwrap(), config);
         let custom = NatsEventStoreConfig::new(&test_context, "CUSTOM_DOMAIN_EVENTS")
             .unwrap()
             .with_fresh_outcomes()
@@ -836,6 +867,228 @@ mod tests {
         );
         assert!(
             NatsEventStoreConfig::new(&context, "A".repeat(maximum_prefix + 1))
+                .unwrap()
+                .with_fresh_split_outcome_epoch("x")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn receipt_profile_and_fresh_outcomes_have_one_canonical_identity() {
+        let base = NatsEventStoreConfig::for_bounded_context(&context()).unwrap();
+        let ordinary = base.clone().with_fresh_outcomes().unwrap();
+        let authority_first = ordinary.clone().with_receipt_backed_history().unwrap();
+        let profile_first = base
+            .with_receipt_backed_history()
+            .unwrap()
+            .with_fresh_outcomes()
+            .unwrap();
+
+        assert_eq!(authority_first, profile_first);
+        assert_eq!(
+            authority_first.stream_config(),
+            profile_first.stream_config()
+        );
+        assert_eq!(
+            authority_first.outcome_state_config(),
+            profile_first.outcome_state_config()
+        );
+        assert_eq!(
+            profile_first.stream_name(),
+            "FAST_INBOX__COMMERCIAL_ACCESS__JOURNAL__RECEIPTS_V1"
+        );
+        assert_eq!(
+            profile_first.outcome_state_stream_name(),
+            "FAST_INBOX__COMMERCIAL_ACCESS__JOURNAL__RECEIPTS_V1_STATE"
+        );
+        assert_eq!(
+            profile_first.subject_prefix(),
+            "fast-inbox.domain.commercial-access.receipts.v1"
+        );
+        assert_ne!(profile_first.stream_name(), ordinary.stream_name());
+        assert_ne!(
+            profile_first.outcome_state_stream_name(),
+            ordinary.outcome_state_stream_name()
+        );
+        assert_ne!(profile_first.subject_prefix(), ordinary.subject_prefix());
+    }
+
+    #[test]
+    fn receipt_profile_and_split_epoch_preserve_custom_test_identity_in_either_order() {
+        let context = ApplicationName::new("fast-inbox")
+            .unwrap()
+            .test_bounded_context("commercial-access")
+            .unwrap();
+        let base = NatsEventStoreConfig::new(&context, "CUSTOM_DOMAIN_EVENTS").unwrap();
+        let authority_first = base
+            .clone()
+            .with_fresh_split_outcome_epoch("Nexus-v1")
+            .unwrap()
+            .with_receipt_backed_history()
+            .unwrap();
+        let profile_first = base
+            .with_receipt_backed_history()
+            .unwrap()
+            .with_fresh_split_outcome_epoch("Nexus-v1")
+            .unwrap();
+
+        assert_eq!(authority_first, profile_first);
+        assert_eq!(profile_first.traffic_scope(), TrafficScope::Test);
+        assert_eq!(
+            profile_first.stream_name(),
+            "CUSTOM_DOMAIN_EVENTS__JOURNAL__Nexus-v1__RECEIPTS_V1"
+        );
+        assert_eq!(
+            profile_first.outcome_state_stream_name(),
+            "CUSTOM_DOMAIN_EVENTS__JOURNAL__Nexus-v1__RECEIPTS_V1_STATE"
+        );
+        assert_eq!(
+            profile_first.subject_prefix(),
+            format!(
+                "fast-inbox.test.domain.commercial-access.split.{}.receipts.v1",
+                digest_parts(&[b"Nexus-v1"])
+            )
+        );
+    }
+
+    #[test]
+    fn repeating_receipt_profile_and_selected_authority_is_idempotent() {
+        let base = NatsEventStoreConfig::for_bounded_context(&context()).unwrap();
+        let receipt = base.with_receipt_backed_history().unwrap();
+        assert_eq!(
+            receipt.stream_name(),
+            "FAST_INBOX__COMMERCIAL_ACCESS_DOMAIN_EVENTS__RECEIPTS_V1"
+        );
+        assert_eq!(
+            receipt.clone().with_receipt_backed_history().unwrap(),
+            receipt
+        );
+
+        let inline = receipt
+            .clone()
+            .with_fresh_completed_outcome_epoch("retained")
+            .unwrap();
+        assert_eq!(
+            inline
+                .clone()
+                .with_fresh_completed_outcome_epoch("retained")
+                .unwrap(),
+            inline
+        );
+        let fresh = receipt.clone().with_fresh_outcomes().unwrap();
+        assert_eq!(fresh.clone().with_fresh_outcomes().unwrap(), fresh);
+        assert_eq!(fresh.clone().with_receipt_backed_history().unwrap(), fresh);
+        let split = receipt.with_fresh_split_outcome_epoch("cutover").unwrap();
+        assert_eq!(
+            split
+                .clone()
+                .with_fresh_split_outcome_epoch("cutover")
+                .unwrap(),
+            split
+        );
+        assert_eq!(split.clone().with_receipt_backed_history().unwrap(), split);
+    }
+
+    #[test]
+    fn selected_outcome_authority_rejects_conflicting_selectors() {
+        let base = NatsEventStoreConfig::for_bounded_context(&context()).unwrap();
+        let inline = base
+            .clone()
+            .with_fresh_completed_outcome_epoch("retained")
+            .unwrap();
+        let fresh = base.clone().with_fresh_outcomes().unwrap();
+        let split = base.with_fresh_split_outcome_epoch("cutover").unwrap();
+        for (selection, result) in [
+            (
+                "replace inline epoch",
+                inline.clone().with_fresh_completed_outcome_epoch("other"),
+            ),
+            ("inline to fresh", inline.clone().with_fresh_outcomes()),
+            (
+                "inline to split",
+                inline.with_fresh_split_outcome_epoch("retained"),
+            ),
+            (
+                "fresh to inline",
+                fresh.clone().with_fresh_completed_outcome_epoch("other"),
+            ),
+            (
+                "fresh to split",
+                fresh.with_fresh_split_outcome_epoch("other"),
+            ),
+            (
+                "split to inline, same epoch",
+                split.clone().with_fresh_completed_outcome_epoch("cutover"),
+            ),
+            (
+                "split to inline, changed epoch",
+                split.clone().with_fresh_completed_outcome_epoch("other"),
+            ),
+            ("split to fresh", split.clone().with_fresh_outcomes()),
+            (
+                "replace split epoch",
+                split.with_fresh_split_outcome_epoch("other"),
+            ),
+        ] {
+            let error = result.expect_err(selection);
+            assert_eq!(
+                error.kind(),
+                EventStoreErrorKind::InvalidRequest,
+                "{selection}"
+            );
+            assert!(
+                error.message().contains("authority already selected"),
+                "{selection}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn receipt_profile_validates_canonical_journal_and_state_name_lengths() {
+        let maximum_inline = MAX_STREAM_NAME_LEN - "__RECEIPTS_V1".len();
+        let inline = NatsEventStoreConfig::new(&context(), "A".repeat(maximum_inline))
+            .unwrap()
+            .with_receipt_backed_history()
+            .unwrap();
+        assert_eq!(inline.stream_name().len(), MAX_STREAM_NAME_LEN);
+        assert!(
+            NatsEventStoreConfig::new(&context(), "A".repeat(maximum_inline + 1))
+                .unwrap()
+                .with_receipt_backed_history()
+                .is_err()
+        );
+
+        let maximum_split = MAX_STREAM_NAME_LEN - "__JOURNAL__x__RECEIPTS_V1_STATE".len();
+        let base = NatsEventStoreConfig::new(&context(), "A".repeat(maximum_split)).unwrap();
+        let authority_first = base
+            .clone()
+            .with_fresh_split_outcome_epoch("x")
+            .unwrap()
+            .with_receipt_backed_history()
+            .unwrap();
+        let profile_first = base
+            .with_receipt_backed_history()
+            .unwrap()
+            .with_fresh_split_outcome_epoch("x")
+            .unwrap();
+        assert_eq!(authority_first, profile_first);
+        assert_eq!(
+            authority_first.outcome_state_stream_name().len(),
+            MAX_STREAM_NAME_LEN
+        );
+        let oversized =
+            NatsEventStoreConfig::new(&context(), "A".repeat(maximum_split + 1)).unwrap();
+        assert!(
+            oversized
+                .clone()
+                .with_fresh_split_outcome_epoch("x")
+                .unwrap()
+                .with_receipt_backed_history()
+                .is_err()
+        );
+        assert!(
+            oversized
+                .with_receipt_backed_history()
                 .unwrap()
                 .with_fresh_split_outcome_epoch("x")
                 .is_err()

@@ -105,10 +105,7 @@ pub fn replay_from_history(
             return Err(invalid("checkpoint must end at a complete commit"));
         }
         if checkpoint.position != history_digest(prefix)?.as_bytes() {
-            return Err(EventStoreError::new(
-                EventStoreErrorKind::CorruptHistory,
-                "checkpoint prefix does not match history",
-            ));
+            return Err(invalid("checkpoint prefix does not match history"));
         }
     }
     let checkpoint = authority
