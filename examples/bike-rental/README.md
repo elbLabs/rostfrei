@@ -63,6 +63,49 @@ Inspect the return before submitting `rent-bicycle` for the same bike with a new
 idempotency key. Use [the guided agent workflow](../../docs/agent-tutorial.md)
 to explore the recorded messages and source rules with the customer.
 
+### Present in Studio
+
+Start the [local API](#run-locally), then start Studio from another terminal using
+the same control token as the API:
+
+```sh
+pnpm install --frozen-lockfile
+VITE_TRACER_TARGET=http://127.0.0.1:1309 \
+  VITE_TRACER_TOKEN=local-development-token \
+  pnpm --dir studio dev --host 127.0.0.1
+```
+
+Open the URL Vite prints. In **Tests → Run a test**, choose these scenarios for a
+short customer presentation:
+
+1. **Confirm a category reservation with payment due at collection**
+   (`reserve-city-bike`): inspect the confirmed quote and deposit.
+2. **Approve sandbox payment and hand over the reserved bicycle**
+   (`approve-collection-payment`): inspect payment approval and rental start.
+3. **Refund the full deposit after a satisfactory on-time return**
+   (`refund-security-deposit`): inspect the amount and original charge reference.
+4. **Workshop opens a repair job for a damaged bicycle** (`open-repair-job`):
+   inspect the recorded fault.
+
+The library contains nine tests. Each **Run** resets the complete isolated Test
+scenario to its own fixture, then executes real handlers through NATS. Selecting
+a library entry only previews its expected flow. **Runs → Run summary** shows a
+completed test's verdict and evidence; select graph cards to inspect payloads.
+
+For a continuous journey, run `reserve-city-bike` once, then use **Commands → Send
+command → Isolated Test** for the [collection](#collection-and-sandbox-payment) and
+[return](#returns-and-deposit-settlement) payloads below. Open **Observe**, choose
+the **Test** scope and select a flow to see the automatic payment, refund or
+workshop reactions. Run another test when ready to reset the demonstration.
+The observation window is partial; worker-generated commands are absent from
+this release's capture, so their effects can have grouped fidelity.
+
+Verify all scenarios through the actual browser and host with:
+
+```sh
+cargo xtask test -- cargo xtask acceptance bike-rental-host --studio
+```
+
 ## Completed-outcome cutover
 
 For a **new isolated application** (not an existing demo namespace), set

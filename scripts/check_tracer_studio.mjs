@@ -38,7 +38,7 @@ try {
   assert.equal(await page.$('.connection-notice'), null, await page.$eval('body', body => body.innerText))
   await page.waitForSelector('.test-row', { timeout: 15000 })
   const names = await page.$$eval('.test-row', rows => rows.map(row => row.textContent.trim()))
-  assert.equal(names.length, 5)
+  assert.equal(names.length, 9)
   for (const name of names) {
     if (await page.$('[aria-controls="studio-navigation"][aria-expanded="false"]')) {
       await page.click('[aria-controls="studio-navigation"]')

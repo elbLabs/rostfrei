@@ -14,9 +14,10 @@ docs change.
 For an existing application's release-matched skills, see
 [Agent Skills setup](agent-skills-install.md).
 
-For a customer presentation, the [rental-to-workshop showcase](../examples/bike-rental/README.md#customer-showcase)
-adds an automatic repair job, a repeated request and a refused rental. Its
-one-command walkthrough saves real evidence that an agent can explain afterward.
+For a customer presentation, the [bike-rental showcase](../examples/bike-rental/README.md#customer-showcase)
+covers reservations, payments, refunds and workshop handoff. Its one-command
+walkthrough saves real evidence; [Studio presentation instructions](../examples/bike-rental/README.md#present-in-studio)
+show how to run the behavioral scenarios and follow live activity.
 
 ## Instructions for the agent
 
