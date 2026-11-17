@@ -173,7 +173,9 @@ export async function capturePage(
         width: document.documentElement.scrollWidth,
         height: document.documentElement.scrollHeight,
       },
-      heading: text(document.querySelector(".execution-header h1")),
+      heading: text(
+        document.querySelector(".execution-header h1, .rf-evidence-summary h1")
+      ),
       badges: [...document.querySelectorAll("[data-slot=badge]")].map(text),
       caption: text(document.querySelector(".graph-caption")),
       graphTransform: document.querySelector(".react-flow__viewport")?.style
@@ -191,16 +193,18 @@ export async function capturePage(
         }
       }),
       nodes: [
-        ...document.querySelectorAll("[data-graph-node], .message-list > li"),
+        ...document.querySelectorAll(
+          "[data-graph-node], .message-list > li, [data-evidence-message]"
+        ),
       ].map((node) => {
-        const button = node.querySelector(".message-card")
+        const button = node.querySelector(".message-card, button")
         const rect = button.getBoundingClientRect()
         const centerX = rect.x + rect.width / 2
         const centerY = rect.y + rect.height / 2
         const top = document.elementFromPoint(centerX, centerY)
         return {
           ...node.dataset,
-          nodeId: button.dataset.messageId,
+          nodeId: button.dataset.messageId ?? node.dataset.evidenceMessage,
           label: button.getAttribute("aria-label"),
           bounds: bounds(button),
           inViewport:
@@ -212,13 +216,13 @@ export async function capturePage(
           selected: button.getAttribute("aria-pressed") === "true",
         }
       }),
-      edges: [...document.querySelectorAll("[data-graph-edge]")].map(
-        (edge) => ({
-          sourceId: edge.dataset.sourceId,
-          targetId: edge.dataset.targetId,
-          relationship: edge.dataset.edgeRelationship,
-        })
-      ),
+      edges: [
+        ...document.querySelectorAll("[data-graph-edge], [data-evidence-edge]"),
+      ].map((edge) => ({
+        sourceId: edge.dataset.sourceId ?? edge.dataset.from,
+        targetId: edge.dataset.targetId ?? edge.dataset.to,
+        relationship: edge.dataset.edgeRelationship ?? "causation",
+      })),
       inspector: popup
         ? {
             text: text(popup),

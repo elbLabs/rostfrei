@@ -156,14 +156,17 @@ export function DraggablePanel({
 function clampPanelPosition(panel: HTMLElement | null, next: Point): Point {
   if (!panel) return next
   const bounds = panel.getBoundingClientRect()
+  const minimumTop =
+    (document.querySelector(".workspace-toolbar")?.getBoundingClientRect()
+      .bottom ?? 54) + 8
   return {
     x: Math.min(
       Math.max(8, next.x),
       Math.max(8, innerWidth - bounds.width - 8)
     ),
     y: Math.min(
-      Math.max(62, next.y),
-      Math.max(62, innerHeight - bounds.height - 12)
+      Math.max(minimumTop, next.y),
+      Math.max(minimumTop, innerHeight - bounds.height - 12)
     ),
   }
 }

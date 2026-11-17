@@ -1,0 +1,15 @@
+@font-face {
+  font-family: "Signika Negative";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("./fonts/signika-negative-latin-variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-regular.woff2") format("woff2");
+}

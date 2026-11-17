@@ -8,6 +8,10 @@
   "exports": {
     "./components/*": "./src/components/*.tsx",
     "./styles.css": "./src/styles.css",
+    "./tokens.css": "./src/tokens.css",
+    "./fonts.css": "./src/fonts.css",
+    "./evidence.css": "./src/evidence.css",
+    "./evidence": "./src/evidence.tsx",
     "./theme": "./src/theme.tsx",
     "./vite": {
       "types": "./src/vite.d.ts",

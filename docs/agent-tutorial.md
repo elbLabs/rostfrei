@@ -153,6 +153,35 @@ domain, but do not invent policy logs or query projections in the trace. Richer
 presentation uses only an explicitly available adapter and the same evidence.
 Read-only questions or display changes never trigger another test.
 
+### Read a run at a glance
+
+Start with three separate facts: **command outcome**, **test verdict**, and
+**capture quality**. Show a small recorded flow when the chosen display supports
+it. Keep payloads, full identities, assertions and reproduction commands available
+on demand. Missing evidence or conflicting outcomes belong beside the result,
+not behind a disclosure. When a visual view is open, keep the accompanying chat
+summary to the result and evidence reference rather than repeating the whole view.
+Use short, literal sentences; [Karpathy's ASD-STE100 suggestion](https://x.com/karpathy/status/2105819303471976479)
+is a useful writing aid.
+
+For example, a passed rejection scenario can read “Command rejected. Test
+passed.” An empty event list alone cannot establish rejection. Only explicit
+causation supports arrows; a settled capture does not establish business completion.
+
+The [saved-evidence reader](../packages/tracer-presentation/README.md) offers
+text and Mermaid output. The experimental [MCP Apps view](../experiments/studio-adapters/mcp-apps/README.md)
+uses the same saved evidence and shared Studio presentation components. Choose a
+display once, then inspect the capture without resubmitting the command.
+
+This follows [progressive disclosure](https://www.nngroup.com/articles/progressive-disclosure/):
+show the essential result first and make supporting detail easy to reach.
+[Research on coding-agent workflows](https://arxiv.org/abs/2507.08149) motivates
+making agent actions understandable. A small [graph-interface study](https://arxiv.org/abs/2609.23859)
+found different patterns of understanding but similar overall comprehension scores;
+a diagram is not automatically better. Check with concrete questions: “What
+happened?”, “Did the test pass?”, and “What remains unknown?” Adjust the display
+from that feedback.
+
 ### 5. Finish and clean up
 
 Summarize the two observed outcomes and give the learner both evidence paths.

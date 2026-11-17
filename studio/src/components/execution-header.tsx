@@ -1,42 +1,10 @@
-import { useId, useState } from "react"
-import {
-  Check,
-  ChevronDown,
-  CircleDot,
-  LoaderCircle,
-  Play,
-  RotateCcw,
-  TriangleAlert,
-} from "lucide-react"
+import { Check, LoaderCircle, TriangleAlert } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { messageFacts } from "@/lib/message-presentation"
-import type {
-  FlowView,
-  MessageGraphNode,
-  StoredRun,
-  StudioLayout,
-  TestDefinitionRevision,
-} from "@/lib/types"
-
-interface ExecutionHeaderProps {
-  layout: StudioLayout
-  name?: string
-  definition?: TestDefinitionRevision
-  run?: StoredRun
-  nodes: MessageGraphNode[]
-  view: FlowView
-  loading: boolean
-  canRun: boolean
-  connected: boolean
-  error?: string
-  onRun: () => void
-}
+import type { FlowView, MessageGraphNode, StoredRun } from "@/lib/types"
 
 export function ExecutionHeader({
-  layout,
   name,
-  definition,
   run,
   nodes,
   view,
@@ -44,44 +12,37 @@ export function ExecutionHeader({
   canRun,
   connected,
   error,
-  onRun,
-}: ExecutionHeaderProps) {
-  const [scenarioOpen, setScenarioOpen] = useState(false)
-  const scenarioId = useId()
-  const canvas = layout === "canvas"
+  onInspect,
+}: {
+  name?: string
+  run?: StoredRun
+  nodes: MessageGraphNode[]
+  view: FlowView
+  loading: boolean
+  canRun: boolean
+  connected: boolean
+  error?: string
+  onInspect: () => void
+}) {
   const root =
     nodes.find((node) => node.subject === true) ??
     nodes.find(
       (node) =>
         node.kind === "command" && !node.context && node.subject !== false
     )
-  const expectations = definition?.definition.expected.graphs[0]?.nodes ?? []
-  const expected = expectations.find(
-    (node) => node.kind === "command" && !node.parentKey
-  )
-  const outcome = expected?.kind === "command" ? expected.outcome : undefined
-  const fixtureCount = nodes.filter((node) => node.context).length
-  const fixtureNames = [
-    ...new Set(nodes.filter((node) => node.context).map((node) => node.name)),
-  ]
-  const expectedEventCount = expectations.filter(
-    (node) => node.kind !== "command"
-  ).length
   const status = loading
     ? "loading"
     : view === "running"
       ? "running"
       : view === "unavailable"
         ? "unavailable"
-        : (run?.status ?? "ready")
+        : run?.status
   const StatusIcon =
     status === "passed"
       ? Check
-      : status === "failed" || status === "unavailable"
-        ? TriangleAlert
-        : status === "running" || status === "loading"
-          ? LoaderCircle
-          : CircleDot
+      : status === "loading" || status === "running"
+        ? LoaderCircle
+        : TriangleAlert
   const verdict =
     status === "loading"
       ? "Loading test"
@@ -91,146 +52,64 @@ export function ExecutionHeader({
           ? "Run result unavailable"
           : status === "passed"
             ? "Test passed"
-            : status === "failed"
-              ? "Test failed"
-              : "Ready to run"
+            : "Test failed"
   const explanation = run
     ? root?.status === "accepted" || root?.status === "rejected"
-      ? `Command ${root.status}${run.status === "passed" ? " as expected" : " · expectations were not met"}`
+      ? `Command ${root.status}${run.status === "passed" ? " as expected" : "; expectations were not met"}`
       : run.status === "passed"
         ? "Expected messages matched"
         : "Expectations were not met"
-    : view === "running"
-      ? "Waiting for the execution to complete…"
-      : view === "unavailable"
-        ? "No complete run report was received"
-        : "Showing the test definition and expected messages"
+    : status === "unavailable"
+      ? "No complete run report was received"
+      : undefined
+
+  if (!name && !loading && !error) return null
 
   return (
     <section className="execution-header" aria-label="Execution summary">
       <div className="execution-title-row">
         <div>
-          <p className="eyebrow">
-            Behavioral tests <span>/</span>{" "}
-            {run ? "Run details" : "Test definition"}
-          </p>
-          <h1 title={name}>{name ?? "Explore domain behavior"}</h1>
+          <h1 title={name}>{name ?? "Loading test"}</h1>
         </div>
         <div className="execution-actions">
-          {canvas && name && (
-            <Button
-              className="scenario-toggle"
-              variant="ghost"
-              aria-expanded={scenarioOpen}
-              aria-controls={scenarioId}
-              onClick={() => setScenarioOpen((open) => !open)}
-            >
-              Scenario{" "}
-              <ChevronDown
-                className={scenarioOpen ? "rotate-180" : undefined}
-              />
+          {run && (
+            <Button variant="ghost" onClick={onInspect}>
+              Run summary
             </Button>
           )}
-          <Button className="run-button" disabled={!canRun} onClick={onRun}>
-            {view === "running" ? (
-              <LoaderCircle className="animate-spin" />
-            ) : run ? (
-              <RotateCcw />
-            ) : (
-              <Play />
-            )}
-            {view === "running" ? "Running…" : run ? "Run again" : "Run test"}
-          </Button>
         </div>
       </div>
-      {name ? (
-        <>
-          <dl
-            id={scenarioId}
-            className="scenario-summary"
-            hidden={canvas && !scenarioOpen}
-          >
-            <div>
-              <dt>Given</dt>
-              <dd title={definition?.definition.setup.fixture}>
-                {definition?.definition.setup.fixture ??
-                  `${fixtureCount} fixture ${fixtureCount === 1 ? "event" : "events"}`}
-                {fixtureNames.length > 0 && (
-                  <span>
-                    {fixtureNames.slice(0, 2).join(" · ")}
-                    {fixtureNames.length > 2
-                      ? ` · +${fixtureNames.length - 2} more`
-                      : ""}
-                  </span>
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt>When</dt>
-              <dd>
-                {root?.name ?? expected?.name ?? "Loading command…"}
-                {root && (
-                  <span>
-                    {messageFacts(root)
-                      .map(([key, value]) => `${key}: ${value}`)
-                      .join(" · ")}
-                  </span>
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt>Then</dt>
-              <dd>
-                {outcome === "accepted"
-                  ? "Command accepted"
-                  : outcome
-                    ? "Command rejected"
-                    : "Recorded expectations"}
-                {outcome && outcome !== "accepted" && (
-                  <span>{outcome.rejected.code}</span>
-                )}
-                {outcome === "accepted" && (
-                  <span>
-                    {expectedEventCount} expected{" "}
-                    {expectedEventCount === 1 ? "event" : "events"}
-                  </span>
-                )}
-              </dd>
-            </div>
-          </dl>
-          <div className="execution-result" data-status={status} role="status">
-            <StatusIcon
-              size={16}
-              className={
-                status === "running" || status === "loading"
-                  ? "animate-spin"
-                  : undefined
-              }
-            />
-            <strong>{verdict}</strong>
-            <span>{explanation}</span>
-            {run && (!canvas || scenarioOpen) && (
-              <time dateTime={run.createdAt}>{formatTime(run.createdAt)}</time>
-            )}
-          </div>
-          {connected && (
-            <p className="execution-note">
-              Runs use the current test definition and reset isolated Test state
-              to its fixture.
-            </p>
-          )}
-          {run && !canRun && !loading && (
-            <p className="execution-note">
-              {connected
-                ? "This saved run’s test is not available from the current connection."
-                : "Viewing a saved run. Reconnect to Tracer to run tests."}
-            </p>
-          )}
-        </>
-      ) : (
+      {status && (
+        <div className="execution-result" data-status={status} role="status">
+          <StatusIcon
+            size={16}
+            className={
+              status === "running" || status === "loading"
+                ? "animate-spin"
+                : undefined
+            }
+          />
+          <strong>{verdict}</strong>
+          {explanation && <span>{explanation}</span>}
+        </div>
+      )}
+      {run?.capture &&
+        (run.capture.fidelity === "grouped" ||
+          !run.capture.settled ||
+          run.capture.note) && (
+          <p className="execution-evidence">
+            {run.capture.fidelity === "grouped"
+              ? "Grouped capture"
+              : "Exact capture"}
+            , {run.capture.settled ? "settled" : "not settled"}.
+            {run.capture.note && ` ${run.capture.note}`}
+          </p>
+        )}
+      {run && !canRun && !loading && (
         <p className="execution-note">
-          No behavioral tests are registered. Registered tests will appear in
-          the sidebar.
+          {connected
+            ? "This saved run’s test is not available from the current connection."
+            : "Viewing a saved run. Reconnect to Tracer to run tests."}
         </p>
       )}
       {error && (
@@ -258,17 +137,4 @@ export function ExecutionHeader({
       )}
     </section>
   )
-}
-
-function formatTime(value: string): string {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime())
-    ? "Unknown time"
-    : new Intl.DateTimeFormat(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      }).format(date)
 }

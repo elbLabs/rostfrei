@@ -227,8 +227,8 @@ export function ObservationPanel({
             {!capability && <option value="">No observation capability</option>}
             {capabilities.map((entry) => (
               <option key={entry.scope} value={entry.scope}>
-                {entry.application} ·{" "}
-                {entry.scope === "test" ? "Test" : "Production"}
+                {entry.application} (
+                {entry.scope === "test" ? "Test" : "Production"})
               </option>
             ))}
           </NativeSelect>
@@ -317,24 +317,27 @@ export function ObservationPanel({
           >
             <strong>{item.name}</strong>
             <span className="font-mono">{item.correlationId}</span>
-            <span>
-              {item.messageCount} messages{item.truncated ? " · truncated" : ""}
-              {item.conflicted ? " · conflicting evidence" : ""}
-            </span>
+            <span>{item.messageCount} messages</span>
+            {item.truncated && (
+              <span className="text-warning">Capture truncated.</span>
+            )}
+            {item.conflicted && (
+              <span className="text-warning">Conflicting evidence.</span>
+            )}
           </button>
         ))}
       </div>
       <footer className="observation-footer">
         <span>
-          Rolling memory window · {snapshot?.items.length ?? 0}/
+          Rolling memory window: {snapshot?.items.length ?? 0}/
           {snapshot?.maximumFlows ?? 128} flows
         </span>
         {snapshot &&
           (snapshot.evictedFlows !== "0" ||
             snapshot.discardedMessages !== "0") && (
             <span className="text-warning">
-              {snapshot.evictedFlows} evicted · {snapshot.discardedMessages}{" "}
-              messages omitted
+              {snapshot.evictedFlows} flows evicted;{" "}
+              {snapshot.discardedMessages} messages omitted.
             </span>
           )}
         <span>Capture is partial; silence does not mean completion.</span>

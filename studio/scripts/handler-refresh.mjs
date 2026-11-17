@@ -149,12 +149,13 @@ export async function checkHandlerRefresh(browser, url, scenario) {
     })
     await page.goto(url, { waitUntil: "networkidle0" })
     await page.waitForSelector(".run-button:not(:disabled)")
+    await page.click('[data-workspace-tab="commands"]')
     await page.click('[aria-controls="studio-command-panel"]')
     await page.select('[aria-label="Command and schema"]', "refresh/update@1")
     await page.waitForFunction(
       () =>
         document.querySelector('[aria-label="Payload Attempt"]')
-          ?.selectedOptions[0]?.textContent === "1"
+          ?.selectedOptions?.[0]?.textContent === "1"
     )
     await page.click('[data-command-mode="simulate-handler"]')
     const submitted = page.waitForRequest((request) =>
@@ -173,12 +174,15 @@ export async function checkHandlerRefresh(browser, url, scenario) {
       )
     }
     await page.click('[aria-label="Close command panel"]')
+    await page.click('[data-workspace-tab="tests"]')
+    await page.click(".test-panel-trigger")
     await page.click(".run-button")
     await page.waitForFunction(() =>
       document
         .querySelector('[aria-label="Payload Attempt"]')
         ?.textContent.includes("2")
     )
+    await page.click('[data-workspace-tab="commands"]')
     await page.click('[aria-controls="studio-command-panel"]')
     assert.match(
       await page.$eval(".command-input-error", (node) => node.textContent),

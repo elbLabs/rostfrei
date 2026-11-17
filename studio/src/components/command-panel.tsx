@@ -473,7 +473,9 @@ export function CommandPanel({
             aria-live="polite"
           >
             <h3>Handler decision: {simulation.outcome.decision}</h3>
-            <Badge variant="warning">Uncommitted · no acceptance receipt</Badge>
+            <p className="text-warning">
+              Uncommitted. There is no acceptance receipt.
+            </p>
             <p>
               Handler computation only. Delivery, atomic persistence,
               concurrency and downstream integrations were not tested.
@@ -486,11 +488,11 @@ export function CommandPanel({
               <p>No streams loaded.</p>
             ) : (
               simulation.streams.map((stream, index) => (
-                <p key={index}>
+                <p key={index} className="flex flex-wrap gap-x-3">
                   <code>
                     {stream.aggregateType} / {stream.aggregateId}
-                  </code>{" "}
-                  · v{stream.baseStreamVersion}
+                  </code>
+                  <span>Stream v{stream.baseStreamVersion}</span>
                 </p>
               ))
             )}
@@ -500,14 +502,13 @@ export function CommandPanel({
             )}
             {simulation.proposedEvents.map((event, index) => (
               <article key={index}>
-                <strong>
-                  {event.eventType} · schema {event.schemaVersion}
-                </strong>
-                <p>
+                <strong>{event.eventType}</strong>
+                <p>Schema {event.schemaVersion}</p>
+                <p className="flex flex-wrap gap-x-3">
                   <code>
                     {event.aggregateType} / {event.aggregateId}
-                  </code>{" "}
-                  · proposed v{event.proposedStreamVersion}
+                  </code>
+                  <span>Proposed stream v{event.proposedStreamVersion}</span>
                 </p>
                 <pre>{event.payloadJson ?? "Payload redacted"}</pre>
               </article>

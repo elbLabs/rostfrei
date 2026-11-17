@@ -10,7 +10,6 @@ import {
   storeMatches,
   type MatchRow,
 } from "@/lib/correlation-match"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   DEFAULT_CORRELATION_EVENTS_TEMPLATE,
@@ -356,7 +355,7 @@ export function CorrelationPanel({
             >
               {anchors.map((entry) => (
                 <option key={entry.aggregateType} value={entry.aggregateType}>
-                  {entry.label} · {entry.aggregateType}
+                  {entry.label} ({entry.aggregateType})
                 </option>
               ))}
               <option value={CUSTOM_ANCHOR}>Other aggregate type…</option>
@@ -438,12 +437,13 @@ export function CorrelationPanel({
         {view && (
           <div className="correlation-list-heading">
             <span>
-              <strong>
-                {anchor?.label ?? view.aggregateType} · {view.aggregateId}
-              </strong>
+              <strong>{anchor?.label ?? view.aggregateType}</strong>
+              <code className="block">{view.aggregateId}</code>
               {view.correlations.length}{" "}
               {view.correlations.length === 1 ? "correlation" : "correlations"}
-              {view.truncated ? " · truncated read" : ""}
+              {view.truncated && (
+                <span className="block text-warning">Truncated read.</span>
+              )}
             </span>
             <Button
               variant="ghost"
@@ -534,10 +534,10 @@ export function CorrelationPanel({
             >
               <strong>{summary.title}</strong>
               <span className="font-mono">{correlation.correlationId}</span>
-              <span>
-                {summary.events}
-                {correlation.truncated ? " · truncated" : ""}
-              </span>
+              <span>{summary.events}</span>
+              {correlation.truncated && (
+                <span className="text-warning">Truncated read.</span>
+              )}
               {summary.contexts && <span>{summary.contexts}</span>}
               {summary.period && <span>{summary.period}</span>}
             </button>
@@ -614,6 +614,13 @@ export function CorrelationHeading({
     )
   const summary = chain && summarize(chain)
   const empty = chain && chain.refs.length === 0
+  if (
+    !correlationId &&
+    !loading &&
+    status !== "unavailable" &&
+    status !== "disconnected"
+  )
+    return null
   return (
     <section
       className="observation-heading correlation-heading"
@@ -625,22 +632,26 @@ export function CorrelationHeading({
           {correlationId ??
             (status === "unavailable" || status === "disconnected"
               ? "Correlations unavailable"
-              : "Follow a business object")}
+              : "Reading correlations")}
         </h1>
-        <p>
-          {loading
-            ? "Reading retained events…"
-            : chain
-              ? [
-                  anchor && `Anchor ${anchor.label} · ${anchor.aggregateId}`,
-                  empty ? "No retained events returned" : summary?.events,
-                  summary?.contexts,
-                  chain.truncated && "truncated · incomplete evidence",
-                ]
-                  .filter(Boolean)
-                  .join(" · ")
-              : "Choose an anchor and its aggregate ID, then select a correlation."}
-        </p>
+        {loading ? (
+          <p>Reading retained events…</p>
+        ) : chain ? (
+          <>
+            {anchor && (
+              <p>
+                Anchor {anchor.label}: <code>{anchor.aggregateId}</code>
+              </p>
+            )}
+            <p>{empty ? "No retained events returned" : summary?.events}</p>
+            {summary?.contexts && <p>{summary.contexts}</p>}
+            {chain.truncated && (
+              <p className="text-warning">
+                Truncated read; evidence is incomplete.
+              </p>
+            )}
+          </>
+        ) : null}
       </div>
       {chain && (
         <div className="observation-evidence correlation-snapshot">
@@ -727,10 +738,10 @@ function SourceCutoffs({
           >
             <span>
               {source.context
-                ? `${source.context} · ${source.kind}`
+                ? `${source.context} ${source.kind}`
                 : `Shared ${source.kind}`}
             </span>
-            <Badge variant="neutral">cutoff {source.cutoffSequence}</Badge>
+            <span>cutoff {source.cutoffSequence}</span>
           </li>
         ))}
       </ul>
@@ -746,7 +757,7 @@ function SourceCutoffs({
               >
                 <span>{source.stream}</span>
                 <small>
-                  {source.context ?? "Shared"} · {source.kind} · cutoff{" "}
+                  {source.context ?? "Shared"} {source.kind} source; cutoff{" "}
                   {source.cutoffSequence}
                 </small>
               </li>
@@ -843,7 +854,7 @@ function summarize(correlation: CorrelationChain) {
               : reference.messageId)
         ) ?? first
       )?.eventType ?? "No retained events returned",
-    events: `${refs.length} ${refs.length === 1 ? "event" : "events"} · ${domain} domain · ${integration} integration`,
+    events: `${refs.length} ${refs.length === 1 ? "event" : "events"}: ${domain} domain, ${integration} integration`,
     contexts: contexts.length
       ? `${contexts.length === 1 ? "Context" : `${contexts.length} contexts`}: ${contexts.join(", ")}`
       : undefined,

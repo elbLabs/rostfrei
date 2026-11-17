@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { ArrowLeft, Check, Copy, ScanSearch, X } from "lucide-react"
+import { EvidenceDisclosure } from "@rostfrei/ui/evidence"
+import type { ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
 import { kindLabels, messageState } from "@/lib/message-presentation"
@@ -12,6 +14,7 @@ interface MessageInspectorProps {
   view: FlowView
   hidden: boolean
   closable: boolean
+  progressive?: boolean
   onBack: () => void
 }
 
@@ -22,6 +25,7 @@ export function MessageInspector({
   view,
   hidden,
   closable,
+  progressive = false,
   onBack,
 }: MessageInspectorProps) {
   return (
@@ -77,7 +81,7 @@ export function MessageInspector({
             <h3>{node.context ? "Fixture context" : "Relationship"}</h3>
             <p className="relationship-description">
               {node.context
-                ? `Given domain event${node.streamVersion === undefined ? "" : ` · stream version ${node.streamVersion}`}. This is setup state for the test.`
+                ? `Given domain event${node.streamVersion === undefined ? "" : ` at stream version ${node.streamVersion}`}. This is setup state for the test.`
                 : node.edgeRelationship === "context"
                   ? "Root command. Evaluates the fixture state; the fixture is not its cause."
                   : parent && node.edgeFidelity === "exact"
@@ -98,8 +102,11 @@ export function MessageInspector({
             </p>
           </section>
 
-          <section className="inspector-section">
-            <h3>{node.kind === "command" ? "Request" : "Payload"}</h3>
+          <InspectorSection
+            title={node.kind === "command" ? "Request" : "Payload"}
+            disclose={progressive}
+            payload
+          >
             <PayloadList
               payload={node.payload}
               unavailable={
@@ -110,7 +117,7 @@ export function MessageInspector({
                   : undefined
               }
             />
-          </section>
+          </InspectorSection>
 
           {node.kind === "command" && (
             <section className="inspector-section" data-command-response>
@@ -145,8 +152,7 @@ export function MessageInspector({
             </section>
           )}
 
-          <section className="inspector-section">
-            <h3>Metadata</h3>
+          <InspectorSection title="Metadata" disclose={progressive}>
             <dl className="payload-list">
               <Metadata
                 label="Schema version"
@@ -192,7 +198,7 @@ export function MessageInspector({
                 )}
               </div>
             )}
-          </section>
+          </InspectorSection>
         </div>
       ) : (
         <div className="inspector-empty">
@@ -205,6 +211,34 @@ export function MessageInspector({
         </div>
       )}
     </aside>
+  )
+}
+
+function InspectorSection({
+  title,
+  disclose,
+  payload,
+  children,
+}: {
+  title: string
+  disclose: boolean
+  payload?: boolean
+  children: ReactNode
+}) {
+  return (
+    <section
+      className="inspector-section"
+      data-inspection-payload={payload || undefined}
+    >
+      {disclose ? (
+        <EvidenceDisclosure title={title}>{children}</EvidenceDisclosure>
+      ) : (
+        <>
+          <h3>{title}</h3>
+          {children}
+        </>
+      )}
+    </section>
   )
 }
 

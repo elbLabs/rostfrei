@@ -89,8 +89,8 @@ GitHub Pages deployment is configured in
 
 Use an unframed, documentation-like page with an open sidebar, generous spacing,
 and restrained separators. The neutral grey surfaces and rust accents take
-inspiration from [elbtech.ai](https://elbtech.ai); the website's palette lives in
-`src/theme.css`. Avoid an outer bordered box and card-based landing sections.
+inspiration from [elbtech.ai](https://elbtech.ai); shared palette tokens live in
+`packages/ui/src/tokens.css`. Avoid an outer bordered box and card-based landing sections.
 Keep the duck branding, use self-hosted Signika Negative for headings, and use a
 readable system font for body text. Code uses self-hosted JetBrains Mono at 15px,
 generous line spacing, and a dedicated light/dark syntax palette. File browsers
@@ -101,7 +101,8 @@ and getting-started entry point.
 The footer follows the page content in normal document flow. On short pages,
 the layout keeps it at the bottom of the viewport.
 
-The fonts and their SIL Open Font Licenses are served from `public/fonts/`.
+The fonts and their SIL Open Font Licenses live in `packages/ui/src/fonts/` and
+are bundled through `@rostfrei/ui/fonts.css`.
 JetBrains Mono Regular comes from the upstream v2.304 release. The same
 Signika Negative face is used by elbtech.ai; font files
 are local so reading the site does not require a third-party font request.

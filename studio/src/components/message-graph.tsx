@@ -14,6 +14,7 @@ import {
 } from "lucide-react"
 import {
   Background,
+  BackgroundVariant,
   Handle,
   Position,
   ReactFlow,
@@ -43,7 +44,6 @@ import {
 import type {
   FlowView,
   MessageGraphNode,
-  StudioLayout,
   OperationMessageSeries,
 } from "@/lib/types"
 import { useMediaQuery } from "@/lib/use-media-query"
@@ -52,8 +52,8 @@ import { cn } from "@/lib/utils"
 interface MessageGraphProps {
   nodes: MessageGraphNode[]
   view: FlowView
-  layoutMode: StudioLayout
   emptyMessage?: string
+  emptyTitle?: string
   capture?: OperationMessageSeries["capture"]
 }
 
@@ -85,19 +85,15 @@ const kindIcons = {
 export function MessageGraph({
   nodes,
   view,
-  layoutMode,
   emptyMessage,
+  emptyTitle = "No flow to display",
   capture,
 }: MessageGraphProps) {
   const { resolvedTheme } = useTheme()
   const compact = useMediaQuery("(max-width: 1100px)")
-  const canvas = layoutMode === "canvas"
   const [selectedId, setSelectedId] = useState<string>()
   const [detailsOpen, setDetailsOpen] = useState(false)
-  const [canvasInspectorOpen, setCanvasInspectorOpen] = useState(false)
-  const inspectorVisible = compact
-    ? detailsOpen
-    : !canvas || canvasInspectorOpen
+  const inspectorVisible = detailsOpen
   const [controlsRoot, setControlsRoot] = useState<HTMLDivElement | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const mobileTrigger = useRef<HTMLElement | null>(null)
@@ -123,18 +119,14 @@ export function MessageGraph({
     ) ??
     nodes[0]
   const highlightedId = inspectorVisible ? selected?.id : undefined
-  const select = useCallback(
-    (id: string) => {
-      mobileTrigger.current =
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null
-      setSelectedId(id)
-      setDetailsOpen(true)
-      if (canvas || view === "retained") setCanvasInspectorOpen(true)
-    },
-    [canvas, view]
-  )
+  const select = useCallback((id: string) => {
+    mobileTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
+    setSelectedId(id)
+    setDetailsOpen(true)
+  }, [])
   const flowNodes = useMemo<MessageFlowNode[]>(
     () =>
       layout.nodes.map((node) => ({
@@ -232,9 +224,28 @@ export function MessageGraph({
               : "Observed flow"
   const dismissInspector = () => {
     setDetailsOpen(false)
-    setCanvasInspectorOpen(false)
     window.requestAnimationFrame(() => mobileTrigger.current?.focus())
   }
+  const overlayInspector = !compact
+  const inspector = (
+    <MessageInspector
+      hidden={!inspectorVisible}
+      closable
+      node={selected}
+      parent={nodes.find((node) => node.id === selected?.parentId)}
+      siblings={
+        selected?.causationId && !selected.parentId
+          ? nodes.filter(
+              (node) =>
+                node.id !== selected.id &&
+                node.causationId === selected.causationId
+            ).length
+          : 0
+      }
+      view={view}
+      onBack={dismissInspector}
+    />
+  )
 
   return (
     <div
@@ -252,10 +263,15 @@ export function MessageGraph({
           </div>
           <span>
             {nodes.length - fixtureCount}{" "}
-            {nodes.length - fixtureCount === 1 ? "message" : "messages"} ·{" "}
-            {fixtureCount} fixture {fixtureCount === 1 ? "event" : "events"}
+            {nodes.length - fixtureCount === 1 ? "message" : "messages"}
+            {fixtureCount > 0 && (
+              <>
+                , {fixtureCount} fixture{" "}
+                {fixtureCount === 1 ? "event" : "events"}
+              </>
+            )}
           </span>
-          {canvas && !compact && (
+          {!compact && (
             <Button
               className="inspector-toggle"
               variant="ghost"
@@ -271,7 +287,7 @@ export function MessageGraph({
                 if (inspectorVisible) dismissInspector()
                 else {
                   mobileTrigger.current = event.currentTarget
-                  setCanvasInspectorOpen(true)
+                  setDetailsOpen(true)
                 }
               }}
             >
@@ -283,7 +299,7 @@ export function MessageGraph({
           {nodes.length === 0 ? (
             <div className="graph-empty">
               <Workflow />
-              <h3>No flow to display</h3>
+              <h3>{emptyTitle}</h3>
               <p>
                 {emptyMessage ??
                   "Select a test to explore its expected messages."}
@@ -299,16 +315,16 @@ export function MessageGraph({
                   <li key={node.id}>
                     <p className="list-relationship">
                       {node.context
-                        ? "Given · fixture state"
+                        ? "Fixture state"
                         : node.edgeRelationship === "context"
-                          ? "When · root command"
+                          ? "Root command"
                           : node.subject === true
                             ? "Root command"
                             : parent && node.edgeFidelity === "exact"
                               ? `${view === "expected" ? "Expected after" : "Caused by"} ${parent.name}`
                               : view === "retained"
-                                ? `${node.boundedContext ?? "Unknown context"} · ${node.causationId && node.causationId === node.messageId ? "origin" : "cause not returned"}`
-                                : "Associated message · no resolved cause"}
+                                ? `${node.boundedContext ?? "Unknown context"}: ${node.causationId && node.causationId === node.messageId ? "origin" : "cause not returned"}`
+                                : "No resolved cause"}
                     </p>
                     <MessageCard
                       node={node}
@@ -338,6 +354,7 @@ export function MessageGraph({
               fitView
               fitViewOptions={{ padding: 0.04, maxZoom: 1 }}
               onInit={setFlow}
+              onPaneClick={() => setDetailsOpen(false)}
               nodesDraggable={false}
               nodesConnectable={false}
               nodesFocusable={false}
@@ -350,10 +367,16 @@ export function MessageGraph({
               zoomOnDoubleClick={false}
               proOptions={{ hideAttribution: true }}
             >
-              <Background color="var(--border)" gap={24} size={1} />
+              <Background
+                variant={BackgroundVariant.Dots}
+                gap={20}
+                size={1.2}
+                color="var(--canvas-dot)"
+              />
               <GraphControls container={controlsRoot} />
             </ReactFlow>
           )}
+          {overlayInspector && inspector}
         </div>
         <footer className="flow-legend">
           <span>
@@ -390,23 +413,7 @@ export function MessageGraph({
           )}
         </footer>
       </section>
-      <MessageInspector
-        hidden={!inspectorVisible}
-        closable={canvas || compact}
-        node={selected}
-        parent={nodes.find((node) => node.id === selected?.parentId)}
-        siblings={
-          selected?.causationId && !selected.parentId
-            ? nodes.filter(
-                (node) =>
-                  node.id !== selected.id &&
-                  node.causationId === selected.causationId
-              ).length
-            : 0
-        }
-        view={view}
-        onBack={dismissInspector}
-      />
+      {!overlayInspector && inspector}
     </div>
   )
 }

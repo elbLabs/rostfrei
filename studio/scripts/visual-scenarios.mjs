@@ -16,8 +16,18 @@ import {
 } from "./observation-fixture.mjs"
 
 export const scenarios = {
-  overview: "Expected rental flow in the Workbench layout",
+  "saved-accepted":
+    "Result-first inspection of the unchanged real accepted capture",
+  "saved-rejected": "Passing test with a recorded business rejection",
+  "saved-details": "Saved rejected command with request disclosure open",
+  "saved-partial":
+    "Synthetic grouped, unsettled capture with a recorded diagnostic",
+  "saved-report": "Report-only run with no capture-window metadata",
+  "saved-branch": "Synthetic fork with an explicit nonadjacent causal edge",
+  overview: "Expected rental flow on the canvas",
+  test: "Run a test panel with its definition disclosed",
   command: "Populated catalog-driven Command panel",
+  "commands-empty": "Commands tab before sending a command",
   handler: "Uncommitted handler decision and proposed domain events",
   "handler-rejected": "Rejected handler diagnostic with no proposed events",
   "handler-empty": "Accepted handler diagnostic with no proposed events",
@@ -30,6 +40,7 @@ export const scenarios = {
   narrow: "Accepted command details at 390 × 844",
   observation: "Externally initiated flow in the continuous Observe panel",
   correlations: "Anchor correlations and retained events across two contexts",
+  "correlations-empty": "Correlations tab before choosing a recorded chain",
   "correlations-match":
     "Payload match with automatic include, applied chips and source cutoffs",
   "correlations-missing":
@@ -79,6 +90,37 @@ const catalog = {
 }
 
 export async function installScenario(page, scene, samples, diagnostics) {
+  if (scene.startsWith("saved-")) {
+    const runs = structuredClone(samples.SAVED_CAPTURE_RUNS)
+    if (scene === "saved-report") delete runs[0].capture
+    if (scene === "saved-branch") {
+      const root = runs[0].nodes.find((node) => node.subject)
+      const child = runs[0].nodes.at(-1)
+      child.parentId = root.id
+      child.causationId = root.id
+    }
+    if (scene === "saved-partial") {
+      runs[0].capture = {
+        fidelity: "grouped",
+        settled: false,
+        settledFor: "500ms",
+        note: "Capture window expired",
+      }
+      runs[0].diagnostics = [
+        {
+          code: "CAPTURE_GAP",
+          message: "Some messages were not captured",
+          path: "/capture",
+        },
+      ]
+    }
+    await page.evaluateOnNewDocument((runs) => {
+      localStorage.setItem(
+        "rostfrei-tracer-studio-runs-v1",
+        JSON.stringify(runs)
+      )
+    }, runs)
+  }
   if (scene === "observation") {
     await page.evaluateOnNewDocument((snapshot) => {
       const fetch = window.fetch.bind(window)
@@ -355,8 +397,141 @@ export async function prepareScenario(page, scene) {
   `,
   })
   await settlePage(page)
-  if (scene === "overview") {
-    await page.click('[data-layout="workbench"]')
+  if (scene.startsWith("saved-")) {
+    await page.click('[data-workspace-tab="runs"]')
+    await setPanel(page, "tests", true)
+    const index =
+      scene === "saved-rejected" || scene === "saved-details" ? 1 : 0
+    await page.$$eval(".run-row", (rows, index) => rows[index].click(), index)
+    await page.locator("button::-p-text(Run summary)").click()
+    await page.waitForSelector(".run-inspection")
+    await settlePage(page)
+    if (scene === "saved-partial") {
+      const visible = await page.$eval(
+        ".run-inspection",
+        (root) => root.innerText
+      )
+      assert.match(visible, /Capture.*Grouped, not settled/is)
+      assert.match(visible, /CAPTURE_GAP/)
+    }
+    assert.equal(
+      await page.$$eval("[data-evidence-edge]", (edges) => edges.length),
+      index === 0 ? 2 : 0,
+      "the compact saved flow draws recorded causal links without fixture arrows"
+    )
+    const facts = await page.$$eval(".rf-evidence-facts > div", (facts) =>
+      Object.fromEntries(
+        facts.map((fact) => [
+          fact.querySelector("dt").textContent,
+          fact.querySelector("dd").textContent,
+        ])
+      )
+    )
+    assert.equal(facts.Test, "Passed")
+    assert.equal(facts.Command, index ? "Rejected" : "Accepted")
+    assert.equal(
+      facts.Capture,
+      scene === "saved-report"
+        ? "Unavailable"
+        : scene === "saved-partial"
+          ? "Grouped, not settled"
+          : "Exact, settled"
+    )
+    assert.equal(
+      Object.keys(facts).length,
+      3,
+      "the summary keeps distinct test, command and capture facts without routine zero-count metrics"
+    )
+    assert.doesNotMatch(
+      await page.$eval(".rf-evidence-summary", (node) => node.textContent),
+      /·/
+    )
+    if (scene === "saved-report")
+      assert.match(
+        await page.$eval(".rf-evidence-summary", (node) => node.textContent),
+        /No capture-window or settling metadata/
+      )
+    const described = await page.$$eval("[data-evidence-edge]", (edges) =>
+      edges.every((edge) => {
+        const nodes = [...document.querySelectorAll("[data-evidence-message]")]
+        const source = nodes.find(
+          (node) => node.dataset.evidenceMessage === edge.dataset.from
+        )
+        const target = nodes.find(
+          (node) => node.dataset.evidenceMessage === edge.dataset.to
+        )
+        const description = document.getElementById(
+          target.querySelector("button").getAttribute("aria-describedby")
+        )
+        return (
+          description?.textContent.includes(
+            `Caused by ${source.querySelector("strong").textContent}`
+          ) && description.getBoundingClientRect().width <= 1
+        )
+      })
+    )
+    assert.ok(
+      described,
+      "causal names remain linked accessible descriptions without repeating the visible labels"
+    )
+    if (index === 0 && page.viewport().width < 720) {
+      const connections = await page.$$eval("[data-evidence-edge]", (edges) =>
+        edges.map((edge) => {
+          const nodes = [
+            ...document.querySelectorAll("[data-evidence-message]"),
+          ]
+          const source = nodes
+            .find((node) => node.dataset.evidenceMessage === edge.dataset.from)
+            .getBoundingClientRect()
+          const target = nodes
+            .find((node) => node.dataset.evidenceMessage === edge.dataset.to)
+            .getBoundingClientRect()
+          const origin = edge.ownerSVGElement.getBoundingClientRect()
+          const start = edge.getPointAtLength(0)
+          const end = edge.getPointAtLength(edge.getTotalLength())
+          return {
+            startsBelowSource:
+              Math.abs(origin.top + start.y - source.bottom) < 1,
+            endsAboveTarget:
+              Math.abs(origin.top + end.y - (target.top - 4)) < 1,
+            centered:
+              Math.abs(
+                origin.left + start.x - (source.left + source.width / 2)
+              ) < 1 && Math.abs(start.x - end.x) < 1,
+            bypassesIntermediateNode:
+              Math.abs(origin.left + start.x - source.left) < 1 &&
+              Math.abs(
+                origin.top + start.y - (source.top + source.height / 2)
+              ) < 1 &&
+              Math.abs(origin.top + end.y - (target.top + target.height / 2)) <
+                1,
+          }
+        })
+      )
+      assert.ok(
+        connections.every((edge, index) =>
+          scene === "saved-branch" && index === 1
+            ? edge.bypassesIntermediateNode
+            : edge.startsBelowSource && edge.endsAboveTarget && edge.centered
+        ),
+        "a narrow chain connects each source bottom to its next target top, without a shared branching spine"
+      )
+    }
+    if (scene === "saved-details") {
+      await page.click("[data-evidence-message] button")
+      await page.waitForSelector(".run-inspection .message-inspector", {
+        visible: true,
+      })
+      await page.click("[data-inspection-payload] summary")
+    }
+    await settlePage(page)
+    return
+  }
+  if (scene === "overview" || scene === "test") {
+    if (scene === "test") {
+      await page.click(".test-panel-trigger")
+      await page.click(".test-definition summary")
+    }
     await settlePage(page)
     return
   }
@@ -365,9 +540,7 @@ export async function prepareScenario(page, scene) {
     return
   }
   if (scene === "observation") {
-    if (page.viewport().width >= 768)
-      await page.click('[data-layout="workbench"]')
-    await page.click('[aria-label="Open observation panel"]')
+    await page.click('[data-workspace-tab="observation"]')
     await page.waitForSelector('[data-observation-status="live"]')
     await page.click('[data-observed-flow="test-external-flow"]')
     await page.waitForSelector('[data-message-id="published"]')
@@ -386,6 +559,8 @@ export async function prepareScenario(page, scene) {
     return
   }
   await setPanel(page, "tests", false)
+  await page.click('[data-workspace-tab="commands"]')
+  if (scene === "commands-empty") return
   await setPanel(page, "command", true)
   const select = 'select[aria-label="Command and schema"]'
   const value = await page.$eval(select, (element) => element.options[1]?.value)
@@ -447,9 +622,28 @@ export async function prepareScenario(page, scene) {
     await page.click('button[aria-label="Fit graph to view"]')
     return
   }
+  const graphBeforeInspection =
+    page.viewport().width > 1100 ? await graphGeometry(page) : undefined
   await page.click('[data-message-id="visual-command"]')
   await page.waitForSelector("[data-command-response]", { visible: true })
   await settlePage(page)
+  if (graphBeforeInspection) {
+    assert.deepEqual(
+      await graphGeometry(page),
+      graphBeforeInspection,
+      "opening message details must overlay the canvas without resizing, panning or zooming it"
+    )
+    await page.click(".inspector-close")
+    await page.waitForSelector(".message-inspector", { hidden: true })
+    await settlePage(page)
+    assert.deepEqual(
+      await graphGeometry(page),
+      graphBeforeInspection,
+      "closing message details must preserve the canvas viewport and node positions"
+    )
+    await page.keyboard.press("Enter")
+    await page.waitForSelector("[data-command-response]", { visible: true })
+  }
   const popup = await page.$eval(".inspector-scroll", (element) => {
     const rect = element.getBoundingClientRect()
     const maximumScroll = element.scrollHeight - element.clientHeight
@@ -479,14 +673,23 @@ export async function prepareScenario(page, scene) {
   )
 }
 
+async function graphGeometry(page) {
+  return page.$eval(".message-graph", (graph) => ({
+    bounds: graph.getBoundingClientRect().toJSON(),
+    transform: graph.querySelector(".react-flow__viewport")?.style.transform,
+    nodes: [...graph.querySelectorAll("[data-graph-node]")].map((node) => ({
+      id: node.dataset.nodeId,
+      bounds: node.getBoundingClientRect().toJSON(),
+    })),
+  }))
+}
+
 async function prepareCorrelations(page, scene) {
-  const wide = page.viewport().width >= 1400
-  if (page.viewport().width >= 768)
-    await page.click('[data-layout="workbench"]')
-  await page.click('[aria-label="Open correlations panel"]')
+  await page.click('[data-workspace-tab="correlations"]')
   await page.waitForSelector(
     '[aria-label="Anchor aggregate type"] option[value="bike-rental/rental-fleet"]'
   )
+  if (scene === "correlations-empty") return
   await page.type(
     '[aria-label="Anchor aggregate ID"]',
     scene === "correlations-missing" ? "bike-42" : "city-fleet"
@@ -501,7 +704,8 @@ async function prepareCorrelations(page, scene) {
     await page.type('[aria-label="Correlation ID"]', "visual-not-retained")
     await page.click('[aria-label="Open a correlation by ID"] button')
     await page.waitForSelector('[data-correlation-failure="not-found"]')
-    if (!wide) await page.click('[aria-label="Expand sidebar"]')
+    if (await page.$('[aria-label="Expand sidebar"]'))
+      await page.click('[aria-label="Expand sidebar"]')
     await settlePage(page)
     return
   }
@@ -579,8 +783,6 @@ async function prepareCorrelations(page, scene) {
       .querySelector(".correlation-heading")
       ?.textContent.includes("9007199254740993")
   )
-  if (!wide && page.viewport().width >= 768)
-    await page.click('[aria-label="Expand sidebar"]')
   if (page.viewport().width >= 1100) {
     await page.waitForSelector(
       '[data-graph-node][data-bounded-context="billing"]'

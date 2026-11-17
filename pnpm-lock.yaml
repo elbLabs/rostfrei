@@ -8,6 +8,16 @@ importers:
 
   .: {}
 
+  packages/tracer-presentation:
+    dependencies:
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
+    devDependencies:
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.3
+
   packages/ui:
     dependencies:
       class-variance-authority:

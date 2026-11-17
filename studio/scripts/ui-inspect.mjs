@@ -29,13 +29,14 @@ const { values } = parseArgs({
     headed: { type: "boolean" },
     list: { type: "boolean" },
     help: { type: "boolean" },
+    timeout: { type: "string" },
   },
 })
 
 if (values.help || values.list) {
   console.log(`Usage: pnpm inspect:ui [--scene NAME|all] [--viewport WIDTHxHEIGHT]
                        [--theme light|dark|system] [--out DIRECTORY]
-                       [--headed] [--url STUDIO_URL]
+                       [--headed] [--url STUDIO_URL] [--timeout MILLISECONDS]
 
 Scenarios (default: overview):
 ${Object.entries(scenarios)
@@ -52,6 +53,15 @@ Named scenarios mock every API fetch. Only live uses the connected Tracer.`)
 }
 
 async function main() {
+  const navigationTimeout = Number(values.timeout ?? 20_000)
+  if (
+    !Number.isInteger(navigationTimeout) ||
+    navigationTimeout < 1000 ||
+    navigationTimeout > 300_000
+  )
+    throw new Error(
+      "--timeout must be a navigation deadline from 1000 to 300000 milliseconds"
+    )
   if (values.theme && !["light", "dark", "system"].includes(values.theme))
     throw new Error("--theme must be light, dark, or system")
   const scene = values.scene ?? (values.url ? "live" : "overview")
@@ -130,7 +140,12 @@ async function main() {
       })
       server = started.server
       url = started.url
-      samples = await server.ssrLoadModule("/scripts/fixtures.mjs")
+      const fixtures = await server.ssrLoadModule("/scripts/fixtures.mjs")
+      const { reportGraph } = await server.ssrLoadModule("/src/lib/graph.ts")
+      samples = {
+        ...fixtures,
+        SAVED_CAPTURE_RUNS: fixtures.savedCaptureRuns(reportGraph),
+      }
     }
     browser = await launchStudioBrowser({ headless: !values.headed })
     for (const name of scene === "all" ? Object.keys(scenarios) : [scene]) {
@@ -174,7 +189,10 @@ async function main() {
       try {
         if (name !== "live")
           await installScenario(page, name, samples, diagnostics)
-        await page.goto(url, { waitUntil: "networkidle0", timeout: 20_000 })
+        await page.goto(url, {
+          waitUntil: "networkidle0",
+          timeout: navigationTimeout,
+        })
         if (name !== "live") await prepareScenario(page, name)
         await settlePage(page)
         if (hasInspectionErrors(diagnostics)) {

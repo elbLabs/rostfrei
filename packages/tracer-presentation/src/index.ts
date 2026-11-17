@@ -1,0 +1,5 @@
+export { readEvidence, createSelection, resolveSelection } from './evidence.ts'
+export { renderText } from './text.ts'
+export { summarizeEvidence } from './summary.ts'
+export { renderMermaid } from './mermaid.ts'
+export type { Presentation, Selection, ResolvedSelection, RenderOptions, Diagnostic, RawJsonNumber, EvidenceSummary, MermaidOptions } from './types.ts'
