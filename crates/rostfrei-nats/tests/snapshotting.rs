@@ -41,6 +41,32 @@ async fn seed(store: &NatsEventStore, id: &StreamId, count: u64) -> TestResult {
     Ok(())
 }
 
+async fn snapshot_command_worker(
+    fixture: &Fixture,
+    processor: Arc<CommandProcessor>,
+) -> TestResult<(Worker, CommandBus)> {
+    // Replay and the gated competing write must fit before processing cancellation;
+    // reserve the rest of the scenario budget for delivery and durable responses.
+    let config = ConsumerConfig::new(
+        fixture.context.consumer_name("act", 1)?,
+        fixture.context.durable_name("act", 1)?,
+        fixture.context.command_address("act")?,
+        WAIT,
+        WAIT.checked_div(2).unwrap(),
+        2,
+        1000,
+    )?;
+    provision_durable_consumer(&fixture.js, fixture.messaging.topology(), &config).await?;
+    let factory =
+        NatsConsumerFactory::new(fixture.js.clone(), fixture.messaging.topology().clone());
+    let consumer =
+        <NatsConsumerFactory as MessageConsumerFactory<CommandAddress>>::create(&factory, config)?;
+    let adapter = Arc::new(fixture.adapter.as_ref().clone().with_response_timeout(WAIT));
+    let handler = Arc::new(adapter.command_handler(processor));
+    let worker = Worker(tokio::spawn(async move { consumer.run(handler).await }));
+    Ok((worker, CommandBus::new(fixture.context.clone(), adapter)))
+}
+
 #[tokio::test]
 async fn selected_version_restores_only_the_tail_and_commands_preserve_history() -> TestResult {
     let fixture = Fixture::new("snapshots").await?;
@@ -88,8 +114,7 @@ async fn selected_version_restores_only_the_tail_and_commands_preserve_history()
     let mut processor = CommandProcessor::new(fixture.context.name().clone(), store.clone())
         .with_event_codecs(codecs);
     processor.register::<Act, _>(Handler(Arc::new(AtomicUsize::new(0))), map_rejection)?;
-    let _worker = fixture.command_worker(Arc::new(processor)).await?;
-    let bus = CommandBus::new(fixture.context.clone(), fixture.adapter.clone());
+    let (_worker, bus) = snapshot_command_worker(&fixture, Arc::new(processor)).await?;
     let command = request("after-snapshot", "large", "add")?;
     assert_eq!(
         bus.dispatch(command.clone()).await?.response().outcome(),
@@ -244,8 +269,7 @@ async fn unqualified_history_replays_full_prefix_for_real_commands() -> TestResu
     let mut processor = CommandProcessor::new(fixture.context.name().clone(), store.clone())
         .with_event_codecs(codecs);
     processor.register::<Act, _>(Handler(calls.clone()), map_rejection)?;
-    let _worker = fixture.command_worker(Arc::new(processor)).await?;
-    let bus = CommandBus::new(fixture.context.clone(), fixture.adapter.clone());
+    let (_worker, bus) = snapshot_command_worker(&fixture, Arc::new(processor)).await?;
     let command = request("unqualified-command", "one", "add")?;
     assert_eq!(
         bus.dispatch(command.clone()).await?.response().outcome(),
@@ -685,8 +709,7 @@ async fn checkpoint_only_participants_keep_read_guards_and_completed_rejections(
     let mut processor = CommandProcessor::new(fixture.context.name().clone(), store.clone())
         .with_event_codecs(codecs);
     processor.register::<Act, _>(GuardedHandler, map_rejection)?;
-    let _worker = fixture.command_worker(Arc::new(processor)).await?;
-    let bus = CommandBus::new(fixture.context.clone(), fixture.adapter.clone());
+    let (_worker, bus) = snapshot_command_worker(&fixture, Arc::new(processor)).await?;
     for action in ["read", "reject", "write"] {
         let command = request(action, "one", action)?;
         let first = bus.dispatch(command.clone()).await?;
@@ -756,8 +779,7 @@ async fn concurrent_writer_forces_a_fresh_tail_and_retries_at_the_new_head() -> 
         },
         map_rejection,
     )?;
-    let _worker = fixture.command_worker(Arc::new(processor)).await?;
-    let bus = CommandBus::new(fixture.context.clone(), fixture.adapter.clone());
+    let (_worker, bus) = snapshot_command_worker(&fixture, Arc::new(processor)).await?;
     let writer = async {
         loaded.acquire().await?.forget();
         let operation = OperationId::new("racing-write")?;
