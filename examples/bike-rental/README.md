@@ -1,6 +1,7 @@
 # Bike-rental example
 
-This application models a rental fleet and runs it through NATS-backed command
+This application models category reservations with fixed rental quotes, sandbox
+payments and deposit refunds, and damaged returns handed to a workshop. It runs through real NATS-backed command
 handlers, event storage, and Tracer. Start with the
 [getting-started guide](https://elblabs.github.io/rostfrei/docs/getting-started)
 for a walkthrough. Run the commands below from the repository root. Requirements:
@@ -10,6 +11,57 @@ Compose configuration provides NATS).
 The application's only direct Rostfrei dependency is `rostfrei`, with `nats` and
 `tracer` features plus `testing` for development. All framework imports use
 `rostfrei::…`; see [dependency setup](../../docs/getting-started.mdx#one-framework-dependency).
+
+## Customer showcase
+
+With the pinned Rust toolchain and Docker running, launch a self-checking walkthrough:
+
+```sh
+cargo xtask test -- cargo run --locked -p bike-rental --bin bike-rental-showcase
+```
+
+The runner starts a disposable NATS broker. The showcase uses a fresh Test
+application and `reservable-branch` revision 3: categorized city bikes and a
+tariff with a refundable deposit. It stops its workers and removes
+its streams afterward, retaining evidence under the printed
+`target/bike-rental-showcase/<run>/` directory.
+
+| Moment | What the customer sees | What Rostfrei demonstrates |
+| --- | --- | --- |
+| Book ahead | Alex receives a €25 rental quote and a €100 refundable deposit amount. | Category capacity and the fixed quote are recorded together. |
+| Collect and pay | Staff selects bike-42; sandbox approval starts the rental. | A durable hold/request precedes payment; finance and rental completion share one operation receipt. |
+| Report faulty brakes at return | The return is accepted and damage is recorded. | Rental completion and the maintenance condition commit atomically. |
+| Workshop takes over automatically | A repair job contains the bike, fleet and reported fault. | A committed domain event becomes a public notification, then a typed command to another aggregate. |
+| Repeat the same request | The same operation is returned; there is still one repair job. | Idempotent execution protects business effects. |
+| Try to hire the damaged bike | `BICYCLE_UNAVAILABLE`. | Executable domain rules protect the rider, with a recorded business rejection. |
+| Register and transfer a spare | `bike-77` moves from the harbor to the city station. | Both fleets change in one atomic event transaction. |
+| Return the next rental on time | Sam receives the full €100 deposit refund; the €25 rental charge stays paid. | A committed return triggers an idempotent sandbox refund to the original charge. |
+| Assess the damaged rental | Alex's deposit stays held. | Recording the physical return is separate from releasing its deposit. |
+
+Open `reservation.json`, `collection.json`, `return.json` and `blocked-rental.json`
+to inspect operations and Tracer captures. `payment.json` and `repair-job.json`
+contain independently read persisted decisions;
+`transfer.json` captures the two-station transfer. `satisfactory-return.json` and
+`refund.json` show the second customer's return and confirmed deposit refund.
+Live captures include automatic payment, workshop and settlement reactions; their
+generated commands are not captured nodes, so these captures have grouped
+fidelity. Explain the recorded correlation and explicit causation IDs using the
+[observation contract](../../docs/continuous-observation.md).
+
+For an interactive presentation, start the API below, reset isolated Test to
+`rental-workshop`, and submit `return-bicycle` schema 2 with:
+
+```json
+{
+  "fleet_id": "city-fleet",
+  "bicycle_id": "bike-42",
+  "damage_report": "Rear brake does not engage"
+}
+```
+
+Inspect the return before submitting `rent-bicycle` for the same bike with a new
+idempotency key. Use [the guided agent workflow](../../docs/agent-tutorial.md)
+to explore the recorded messages and source rules with the customer.
 
 ## Completed-outcome cutover
 
@@ -64,17 +116,25 @@ Use [Tracer Studio](../../studio/README.md) to inspect and run behavioral tests.
 
 | Concept | Example |
 | --- | --- |
-| Aggregate | `RentalFleetAggregate` owns a fleet and its bicycles. |
-| Commands | `RentBicycle`, `ReturnBicycle`, `AddBicycle`, and `TransferBicycle` belong to the `BikeRental` bounded context. |
+| Aggregates | `RentalFleetAggregate` owns fleet, reservations and collection holds; `RentalTariffAggregate` owns category pricing; `RentalPaymentAggregate` records payment attempts and separate rental/deposit amounts; `RepairJobAggregate` owns a workshop job. |
+| Commands | `ConfigureRentalTariff`, `ReserveBicycleCategory`, `CollectReservedBicycle`, `ProcessRentalPayment`, `SettleRentalDeposit`, `RentBicycle`, `ReturnBicycle`, `AddBicycle`, `TransferBicycle`, and `OpenRepairJob` belong to the `BikeRental` bounded context. |
+| Reservation | A customer books category capacity at one branch for a rental period; the confirmation does not assign a physical bicycle or collect payment. |
 | Domain service | `BicycleTransfer` coordinates a transfer between two fleets. |
 | Policy | `RentalEligibilityPolicy` evaluates bicycle condition and whether the rental lifecycle permits renting. |
-| Lifecycle | A bicycle can be available, rented, or retired. |
+| Lifecycle | A bicycle can be available, awaiting payment, rented, or retired. |
 | Invariant | `FleetConsistency` demonstrates a rule over bicycle identities. |
 | Value object | `RegistrationNumber` demonstrates local actions, policies, and invariants. |
 | Query | `BicycleAvailabilityQuery` reads availability from fleet state. |
 
 Command payloads carry all required fleet and bicycle IDs. `AddBicycle` takes
 `fleet_id`, `bicycle_id`, and `condition`; it rejects an ID already in the fleet.
+Its optional `category` records a category alongside the addition in one commit.
+Existing uncategorized bicycles retain their original meaning and do not count
+toward category reservations. Transfers preserve a bicycle's category.
+`ReturnBicycle` accepts an optional `damage_report`; omitting it or passing `null`
+keeps the ordinary return behavior. A supplied report records maintenance-required
+condition alongside the return. Its payload schema remains 2; deploy readers
+accepting the optional field before clients start sending it.
 `RetireBicycleAction` demonstrates domain behavior but is not registered as a
 command.
 
@@ -101,6 +161,13 @@ belong to one event transaction.
 After `BicycleRented` commits, a durable domain-event consumer maps it to the
 public `BicycleRentalStarted` integration event. `IntegrationEventBus` publishes
 it, and a separate durable consumer handles it.
+
+After `BicycleDamageReported` commits, the [workshop mapping](src/workshop.rs)
+publishes `BicycleMaintenanceRequested`. A registered integration-command mapper
+dispatches `OpenRepairJob` through NATS. Each damage event supplies a stable repair
+job identity. Reopening that job with identical details is event-free; conflicting
+details are rejected with `REPAIR_JOB_ALREADY_OPENED`. Rental and workshop are
+separate aggregates in the `BikeRental` bounded context.
 
 For the routing details, see [subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
 or the [same guide in this checkout](../../docs/messaging/subjects.mdx).
@@ -210,6 +277,169 @@ fresh `ROSTFREI_APPLICATION` namespace or deletion of disposable NATS streams.
 For example, renting `bike-42` once succeeds. A second rental with a new
 idempotency key is rejected with `BICYCLE_UNAVAILABLE`. Inspect that recorded
 outcome without submitting again. Reset restores the initial state.
+
+### Advance reservations
+
+`reserve-bicycle-category` schema 1 confirms a reservation immediately when the
+branch has capacity and a configured category tariff. A reservation contains a
+customer reference, category, fixed rental quote and RFC 3339 start/end timestamps.
+The end is exclusive, so adjacent bookings can use
+the same capacity. Capacity is checked at every overlapping boundary, rather
+than by summing all bookings that touch the requested period.
+
+Only serviceable bicycles in the requested category count. A bicycle held for
+collection stays in category capacity while its reservation occupies a slot;
+it cannot be hired or transferred during payment. Existing
+rentals have no recorded due time, so they remain excluded until returned;
+maintenance-required and retired bikes are excluded too. The fleet owns both
+inventory and reservations, so competing confirmations use the same optimistic
+concurrency boundary. Identical reservation details under the same reservation
+ID are event-free; conflicting details are refused. Payment is due at collection,
+and confirmation records no financial transaction.
+
+Configure pricing with `configure-rental-tariff` schema 1. The category identifies
+the company-wide tariff; monetary amounts are integer minor units:
+
+```json
+{
+  "category": "city",
+  "terms": { "currency": "EUR", "hourly_rate_minor": 500, "daily_cap_minor": 2500, "security_deposit_minor": 10000 }
+}
+```
+
+Each started hour is billed, capped within each elapsed 24-hour block from the
+reserved start. With this tariff, 1h10m costs €10, 8h costs €25, and 25h10m costs
+€35. A cap never increases the hourly charge. Tariffs require a three-letter
+uppercase currency, positive rates and a configured security-deposit amount
+(zero explicitly waives the deposit). An unrepresentable rental total cannot
+become a quote. A missing or incomplete tariff rejects a new booking with
+`quote-unavailable`.
+
+The confirmation stores `quote.currency`, `quote.rental_charge_minor` and
+`quote.security_deposit_minor`. The deposit is separate from the rental charge:
+the sample booking has €25 rent and a €100 refundable deposit due at collection.
+Later tariff changes apply to new bookings; retrying an existing reservation
+preserves both original amounts. The tariff is a read participant in the reservation
+commit, so concurrent pricing changes use the framework's read guards.
+Historical events without a quote or deposit still replay with that information
+unknown; they are never silently repriced or treated as a zero deposit.
+
+With the API running, execute the [reservation definition](tests/tracer/reserve-city-bike.json):
+
+```sh
+cargo rostfrei-dev test examples/bike-rental/tests/tracer/reserve-city-bike.json \
+  --output reservation-evidence.json
+```
+
+It resets isolated Test to `reservable-branch` revision 3: the tariff above, one
+serviceable city bike and one city bike awaiting repair. It confirms a booking
+for `customer-alex` on 1 December 2026, 09:00–17:00 UTC with €25 rent and a €100 deposit. The
+[NATS runtime suite](tests/nats_runtime_integration.rs) also checks that a retry
+does not duplicate the booking and an overlapping request cannot consume the
+unserviceable bike as spare capacity, and that tariff changes preserve earlier
+quotes while affecting new bookings.
+
+### Collection and sandbox payment
+
+Reset isolated Test to `booked-city-bike` revision 1, then submit
+`collect-reserved-bicycle` schema 1:
+
+```json
+{
+  "fleet_id": "city-fleet",
+  "reservation_id": "booking-42",
+  "bicycle_id": "bike-42",
+  "payment_id": "payment-42",
+  "payment_method": "sandbox-approved"
+}
+```
+
+The clerk selects a serviceable, available bicycle in the booked category.
+Collection atomically records its `awaiting-payment` hold and a payment request
+for the reservation's original rental charge and refundable deposit. An accepted
+collection command means payment was requested; handover waits for approval.
+
+A post-commit integration message triggers `process-rental-payment`. The
+deterministic sandbox approves `sandbox-approved`; `sandbox-declined` and unknown
+references decline. It moves no real money. Approval records the provider
+reference and payment outcome in the same commit that starts the rental and
+marks the reservation collected. Decline records the outcome, releases the
+bicycle, and retains the confirmed booking. Use a new `payment_id` for a later
+attempt; repeating an old attempt replays that attempt rather than charging again.
+
+Payment identities cannot be reused with a different branch, reservation, bicycle
+or payment method. A pending reservation cannot start a second attempt. Completed
+processing is event-free on retry, and an old decline cannot release a newer
+rental. The provider receives the payment identity as its idempotency key across
+handler retries; this sandbox returns a deterministic result for it. It is not a
+real payment-gateway adapter.
+
+Run [the payment approval definition](tests/tracer/approve-collection-payment.json) with:
+
+```sh
+cargo rostfrei-dev test examples/bike-rental/tests/tracer/approve-collection-payment.json \
+  --output collection-evidence.json
+```
+
+The definition starts from `pending-city-collection` revision 1: the bike is
+held and payment requested. It invokes the actual processing command and checks
+approval, rental start and the linked integration event. Fixture replay does not
+trigger the payment worker. Worker-generated commands are absent from this
+version's Tracer capture, so the full automatic handoff has grouped fidelity and
+cannot be represented by its strict behavior comparator. The
+[NATS runtime tests](tests/nats_runtime_integration.rs) gate provider confirmation
+to verify the hold, then independently inspect the authoritative operation
+receipt, payment/rental state, retry protection and decline recovery.
+
+### Returns and deposit settlement
+
+Record a return with `return-bicycle` schema 2, including the actual RFC 3339
+return time for a collected reservation:
+
+```json
+{
+  "fleet_id": "city-fleet",
+  "bicycle_id": "bike-42",
+  "returned_at": "2026-12-01T17:00:00Z"
+}
+```
+
+The physical return and its reservation/payment association commit together.
+`reserved-bicycle-returned` becomes `rental-return-recorded`, which automatically
+dispatches `settle-rental-deposit`. The bike is returned before settlement finishes.
+A serviceable return with no damage report, at or after the booked start and no
+later than the booked end, refunds the full agreed deposit to the original charge.
+Returning exactly at the end is on time; equivalent timezone offsets compare as
+instants. The rental charge stays paid, including after an early return.
+
+A damaged or late return keeps the deposit held for later assessment. Damage also
+blocks hire and opens the workshop job. Missing return times remain unknown and
+keep the deposit held; historical events never invent a timestamp. `returned_at`
+is an optional compatible addition to schema 2: deploy readers before clients
+start sending it. Invalid timestamp strings fail payload decoding.
+
+Settlement verifies the persisted return against the payment's original branch,
+reservation and bicycle before contacting the provider. The sandbox confirms the
+refund with `sandbox:deposit-refund:<payment-id>`; its idempotency namespace is
+separate from charging. `security-deposit-refunded` records the currency, deposit
+amount, original charge reference and refund reference only after approval.
+Zero deposits require no provider call. Completed settlement retries are event-free
+and do not contact the provider again. A declined refund leaves the deposit held;
+an explicit later settlement attempt uses a new command operation identity.
+
+Run the [refund definition](tests/tracer/refund-security-deposit.json) against the
+running isolated host:
+
+```sh
+cargo rostfrei-dev test examples/bike-rental/tests/tracer/refund-security-deposit.json \
+  --output refund-evidence.json
+```
+
+Its `returned-city-bike` revision 1 fixture establishes a paid €25 rental, €100
+deposit and a satisfactory return at the booked deadline. The definition checks
+the actual settlement command and refund event. The NATS runtime suite verifies
+the complete automatic handoff, pending-provider state, retained deposits and
+duplicate protection.
 
 ### Submission and observation
 
@@ -327,5 +557,6 @@ ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
 ```
 
 They cover cross-fleet transactions, command transport, scope isolation,
-integration-command reactions, and five behavioral definitions. They fail if the
-NATS URL is missing or unreachable, or the server version is unsupported.
+integration-command reactions, damaged-return protection, reservation capacity,
+and nine behavioral definitions. They fail if the NATS URL is missing or
+unreachable, or the server version is unsupported.

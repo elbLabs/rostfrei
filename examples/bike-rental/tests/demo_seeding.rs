@@ -110,6 +110,12 @@ async fn normal_demo_startup_persists_command_receipts_and_retries_without_write
         )?;
 
         for event in &retried {
+            let original_payload: serde_json::Value = serde_json::from_slice(event.payload())?;
+            let original_fingerprint = rostfrei::ContentFingerprint::digest(serde_json::to_vec(&(
+                "bike-rental", "add-bicycle", 2, original_payload,
+            ))?);
+            ensure(event.operation_fingerprint() == original_fingerprint,
+                "seed fingerprints must remain compatible with payloads predating optional category")?;
             let key = OutcomeKey::new(
                 restarted.authority().clone(),
                 context.name().clone(),

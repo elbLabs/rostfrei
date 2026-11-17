@@ -1,6 +1,6 @@
 use rostfrei::{Entity, EntityDefinition};
 
-use super::{BicycleCondition, BicycleId, BicycleStatus};
+use super::{BicycleCategory, BicycleCondition, BicycleId, BicycleStatus};
 use crate::domain::rental_fleet::RentalFleetAggregate;
 
 #[allow(
@@ -13,6 +13,7 @@ pub struct Bicycle {
     pub(super) bicycle_id: BicycleId,
     pub(super) status: BicycleStatus,
     pub(super) condition: BicycleCondition,
+    pub(in crate::domain::bike_rental::rental_fleet) category: Option<BicycleCategory>,
 }
 
 impl EntityDefinition for Bicycle {
@@ -34,6 +35,7 @@ impl Bicycle {
             bicycle_id,
             status,
             condition,
+            category: None,
         }
     }
 
@@ -49,12 +51,26 @@ impl Bicycle {
         self.condition
     }
 
+    pub const fn category(&self) -> Option<&BicycleCategory> {
+        self.category.as_ref()
+    }
+
     pub(in crate::domain::bike_rental::rental_fleet) const fn apply_rented(&mut self) {
         self.status = BicycleStatus::Rented;
     }
 
+    pub(in crate::domain::bike_rental::rental_fleet) const fn apply_collection_requested(
+        &mut self,
+    ) {
+        self.status = BicycleStatus::AwaitingPayment;
+    }
+
     pub(in crate::domain::bike_rental::rental_fleet) const fn apply_returned(&mut self) {
         self.status = BicycleStatus::Available;
+    }
+
+    pub(in crate::domain::bike_rental::rental_fleet) const fn apply_damage_reported(&mut self) {
+        self.condition = BicycleCondition::MaintenanceRequired;
     }
 
     pub(in crate::domain::bike_rental::rental_fleet) const fn apply_retired(&mut self) {

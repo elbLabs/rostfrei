@@ -227,8 +227,8 @@ pub fn bike_host(studio: bool) -> Result<()> {
         let definitions =
             client.get(text(&catalog["behavioralTest"]["definitionsHref"])?, "test")?;
         ensure!(
-            array(&definitions["items"])?.len() == 5,
-            "expected five host definitions"
+            array(&definitions["items"])?.len() == 9,
+            "expected nine host definitions"
         );
         for definition in array(&definitions["items"])? {
             let report = client

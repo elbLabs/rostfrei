@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "id": "open-repair-job",
+  "name": "Workshop opens a repair job for a damaged bicycle",
+  "setup": {
+    "fixture": "no-rental-fleets"
+  },
+  "expected": {
+    "within": "35s",
+    "settleFor": "1s",
+    "graphs": [
+      {
+        "nodes": [
+          {
+            "kind": "command",
+            "key": "open-job",
+            "name": "open-repair-job",
+            "context": "bike-rental",
+            "schemaVersion": 1,
+            "payload": {
+              "repair_job_id": "brake-service-42",
+              "fleet_id": "city-fleet",
+              "bicycle_id": "bike-42",
+              "damage_report": "Rear brake does not engage"
+            },
+            "outcome": "accepted"
+          },
+          {
+            "kind": "domain-event",
+            "key": "job-opened",
+            "parentKey": "open-job",
+            "name": "repair-job-opened",
+            "schemaVersion": 1,
+            "payload": {
+              "repair_job_id": "brake-service-42",
+              "fleet_id": "city-fleet",
+              "bicycle_id": "bike-42",
+              "damage_report": "Rear brake does not engage"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

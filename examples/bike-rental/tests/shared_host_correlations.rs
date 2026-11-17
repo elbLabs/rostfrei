@@ -586,6 +586,10 @@ async fn inspect_runtime_source(inspection_only: bool) -> TestResult {
             "aggregateType": "bike-rental/rental-fleet",
             "label": "Rental fleet",
             "correlationsHrefTemplate": format!("{FLEET}/{{aggregateId}}/correlations")
+        }, {
+            "aggregateType": "bike-rental/repair-job",
+            "label": "Repair job",
+            "correlationsHrefTemplate": "/aggregates/bike-rental%2Frepair-job/{aggregateId}/correlations"
         }]))
     );
 

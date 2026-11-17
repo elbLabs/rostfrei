@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 2,
+  "id": "reserve-city-bike",
+  "name": "Confirm a category reservation with payment due at collection",
+  "setup": { "fixture": "reservable-branch" },
+  "expected": {
+    "within": "35s",
+    "settleFor": "1s",
+    "graphs": [{
+      "nodes": [{
+        "kind": "command",
+        "key": "reserve",
+        "name": "reserve-bicycle-category",
+        "context": "bike-rental",
+        "schemaVersion": 1,
+        "payload": {
+          "fleet_id": "city-fleet",
+          "reservation_id": "booking-42",
+          "customer_id": "customer-alex",
+          "category": "city",
+          "period": {
+            "starts_at": "2026-12-01T09:00:00Z",
+            "ends_at": "2026-12-01T17:00:00Z"
+          }
+        },
+        "outcome": "accepted"
+      }, {
+        "kind": "domain-event",
+        "key": "confirmed",
+        "parentKey": "reserve",
+        "name": "bicycle-reservation-confirmed",
+        "schemaVersion": 1,
+        "payload": {
+          "fleet_id": "city-fleet",
+          "reservation_id": "booking-42",
+          "customer_id": "customer-alex",
+          "category": "city",
+          "quote": { "currency": "EUR", "rental_charge_minor": 2500, "security_deposit_minor": 10000 },
+          "period": {
+            "starts_at": "2026-12-01T09:00:00Z",
+            "ends_at": "2026-12-01T17:00:00Z"
+          }
+        }
+      }]
+    }]
+  }
+}

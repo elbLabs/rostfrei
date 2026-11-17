@@ -14,6 +14,10 @@ docs change.
 For an existing application's release-matched skills, see
 [Agent Skills setup](agent-skills-install.md).
 
+For a customer presentation, the [rental-to-workshop showcase](../examples/bike-rental/README.md#customer-showcase)
+adds an automatic repair job, a repeated request and a refused rental. Its
+one-command walkthrough saves real evidence that an agent can explain afterward.
+
 ## Instructions for the agent
 
 Read the selected checkout's `AGENTS.md`, [documentation index](README.md),

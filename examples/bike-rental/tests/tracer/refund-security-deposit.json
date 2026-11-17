@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 2,
+  "id": "refund-security-deposit",
+  "name": "Refund the full deposit after a satisfactory on-time return",
+  "setup": { "fixture": "returned-city-bike" },
+  "expected": {
+    "within": "35s", "settleFor": "1s",
+    "graphs": [{ "nodes": [
+      { "kind": "command", "key": "settle", "name": "settle-rental-deposit", "context": "bike-rental", "schemaVersion": 1,
+        "payload": { "payment_id": "payment-42" }, "outcome": "accepted" },
+      { "kind": "domain-event", "key": "refunded", "parentKey": "settle", "name": "security-deposit-refunded", "schemaVersion": 1,
+        "payload": { "payment_id": "payment-42", "currency": "EUR", "amount_minor": 10000,
+          "charge_reference": "sandbox:payment-42", "refund_reference": "sandbox:deposit-refund:payment-42" } }
+    ]}]
+  }
+}

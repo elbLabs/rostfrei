@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 pub enum BicycleStatus {
     #[state(id = "available", label = "Available")]
     Available,
+    #[state(id = "awaiting-payment", label = "Awaiting payment")]
+    AwaitingPayment,
     #[state(id = "rented", label = "Rented")]
     Rented,
     #[state(id = "retired", label = "Retired")]
