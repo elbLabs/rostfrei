@@ -130,6 +130,7 @@ export async function checkCommandRefresh(browser, url) {
     })
     await page.goto(url, { waitUntil: "networkidle0" })
     await page.waitForSelector('[data-tracer-source="live"]')
+    await page.click('[data-workspace-tab="commands"]')
     await page.click('button[aria-controls="studio-command-panel"]')
     await page.select(
       'select[aria-label="Command and schema"]',

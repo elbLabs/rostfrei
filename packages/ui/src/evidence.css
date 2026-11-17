@@ -1,0 +1,134 @@
+.rf-evidence-summary,
+.rf-evidence-disclosure,
+.rf-evidence-messages {
+  color: var(--foreground, #1f1f23);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 14px;
+  line-height: 1.6;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.rf-evidence-summary h1 {
+  margin: 0;
+  font: 600 clamp(24px, 3vw, 32px)/1.25 var(--font-heading, system-ui, sans-serif);
+  letter-spacing: -0.02em;
+}
+.rf-evidence-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 36px;
+  margin: 24px 0 16px;
+}
+.rf-evidence-facts > div { min-width: 0; }
+.rf-evidence-facts dt,
+.rf-evidence-kind { color: var(--muted-foreground, #5c5c66); font-size: 12px; }
+.rf-evidence-facts dd { margin: 3px 0 0; font-weight: 600; }
+.rf-evidence-facts [data-tone="positive"] dd { color: var(--success, #326341); }
+.rf-evidence-facts [data-tone="negative"] dd { color: var(--destructive, #a12f35); }
+.rf-evidence-facts [data-tone="warning"] dd { color: var(--warning, #805719); }
+.rf-evidence-disclosure { margin-block: 12px; }
+.rf-evidence-disclosure > summary {
+  width: fit-content;
+  max-width: 100%;
+  padding-block: 6px;
+  color: var(--link, #7e342a);
+  cursor: pointer;
+}
+.rf-evidence-disclosure-content { padding-block: 12px; }
+.rf-evidence-disclosure-content pre {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.7 var(--font-mono, monospace);
+}
+.rf-evidence-messages { padding: 0; margin: 0; list-style: none; }
+.rf-evidence-messages button {
+  --kind-color: var(--muted-foreground, #5c5c66);
+  --message-outline: color-mix(in srgb, var(--control-border, #6f6f7b) 62%, var(--background, #f4f4f5));
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 14px 12px;
+  border: 1px solid var(--message-outline);
+  border-left: 3px solid var(--kind-color);
+  border-radius: 3px;
+  background: var(--background, #f4f4f5);
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.rf-evidence-messages button[data-tone="command"] { --kind-color: var(--command, #245b82); }
+.rf-evidence-messages button[data-tone="domain-event"] { --kind-color: var(--domain-event, #326341); }
+.rf-evidence-messages button[data-tone="integration-event"] { --kind-color: var(--integration-event, #765324); }
+.rf-evidence-messages .rf-evidence-kind { color: var(--kind-color); }
+.rf-evidence-messages strong { font-size: 15px; font-weight: 550; }
+.rf-evidence-messages button:hover {
+  background: var(--muted, #eaeaed);
+  box-shadow: 0 0 0 1px var(--message-outline);
+}
+.rf-evidence-messages button[aria-pressed="true"] {
+  background: var(--accent, #ede5e3);
+  box-shadow: inset 0 0 0 1px var(--primary, #7e342a);
+}
+.rf-evidence-message-detail { color: var(--muted-foreground, #5c5c66); font-size: 12px; }
+.rf-evidence-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.rf-evidence-messages button:focus-visible {
+  outline: 2px solid var(--ring, #7e342a);
+  outline-offset: 4px;
+}
+.rf-evidence-disclosure > summary:focus-visible {
+  outline: 2px solid var(--ring, #7e342a);
+  outline-offset: 3px;
+}
+@media (forced-colors: active) {
+  .rf-evidence-messages button[aria-pressed="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+.rf-evidence-flow { container-type: inline-size; min-width: 0; }
+.rf-evidence-flow-scroll { overflow-x: auto; }
+.rf-evidence-flow-body { position: relative; min-width: calc(var(--flow-columns) * 238px); }
+.rf-evidence-flow .rf-evidence-messages {
+  display: grid;
+  grid-template-columns: repeat(var(--flow-columns), minmax(190px, 1fr));
+  gap: 24px 48px;
+  padding: 16px 24px;
+  position: relative;
+}
+.rf-evidence-flow .rf-evidence-messages li { min-width: 0; }
+.rf-evidence-flow .rf-evidence-messages button { height: 100%; min-height: 96px; }
+.rf-evidence-flow-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.rf-evidence-flow-edges path {
+  fill: none;
+  stroke: var(--control-border, #6f6f7b);
+  stroke-width: 1.5;
+}
+@container (max-width: 720px) {
+  .rf-evidence-flow-body { min-width: 0; }
+  .rf-evidence-flow .rf-evidence-messages { grid-template-columns: minmax(0, 1fr); gap: 20px; padding-inline: 24px 4px; }
+  .rf-evidence-flow .rf-evidence-messages li { grid-column: 1 !important; grid-row: auto !important; }
+}

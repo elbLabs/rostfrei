@@ -1,10 +1,9 @@
 # @rostfrei/ui
 
-The shared Reference ’15 interface for the website, documentation, and Tracer
-Studio. React 19, Tailwind 4, and shadcn-style Radix primitives; source is consumed
-directly by each application's bundler. The visual contract is cool steel,
-compact Arial/Helvetica and Consolas typography, flat square panels, rust actions
-and selection, and blue links.
+Shared open grey/rust surfaces for the website, Studio, and embedded evidence
+readers. React 19, Tailwind 4, and Radix primitives; source is consumed by the
+application's bundler. Signika Negative headings, system body text, and JetBrains
+Mono use packaged local fonts. Applications own layout and progressive disclosure.
 
 ## Application setup
 
@@ -76,6 +75,35 @@ import { NativeSelect } from "@rostfrei/ui/components/native-select"
 ```
 
 ## Theme
+
+### Embedded evidence views
+
+`@rostfrei/ui/evidence` exports UI-only React components:
+
+- `EvidenceSummary({ title, facts, children? })`: facts have `label`, `value`, and
+  optional `tone` (`neutral`, `positive`, `negative`, or `warning`).
+- `EvidenceDisclosure({ title, children, defaultOpen? })`: native keyboard-accessible disclosure.
+- `EvidenceMessageList({ messages, selectedId?, onSelect })`: messages have `id`,
+  `kind`, `name`, and optional `detail` and `tone` (`command`, `domain-event`, or
+  `integration-event`). The optional tone colors the kind label and left rail;
+  omitted tones stay neutral. Selection is controlled by the caller.
+- `EvidenceFlow({ messages, edges, selectedId?, onSelect })`: the same messages
+  with explicit `{ from, to }` links. Draws only supplied links between displayed
+  messages, with accessible parent descriptions and a narrow vertical layout.
+  Adjacent vertical links run from bottom to top; nonadjacent links bypass the
+  intervening messages, preserving branches without a shared chain spine.
+
+Message cards use a thin grey outline and a colored left rail. Selection adds
+a rust inset outline while retaining the kind color; keyboard focus has an outer ring.
+
+Import `@rostfrei/ui/tokens.css` and `@rostfrei/ui/evidence.css` for plain CSS
+without Tailwind. The host owns `.light`/`.dark`, selection, and evidence meaning.
+Optional `@rostfrei/ui/fonts.css` references package-relative WOFF2 assets; iframe
+bundlers can inline these as data URLs. These views perform no acquisition or
+evidence interpretation and install no theme provider. `styles.css` includes all
+four stylesheets for workspace applications.
+
+### Application theme
 
 `ThemeProvider` accepts `defaultTheme` (default `"system"`), `storageKey` (default
 `"rostfrei-theme"`), and `disableTransitionOnChange` (default `true`). Mount one
@@ -155,7 +183,7 @@ Additional semantic colors each have matching Tailwind aliases (`text-link`,
 
 Semantic foreground colors are designed for their corresponding soft surface.
 Keep state/message labels or icons alongside color distinctions. Both palettes
-are defined in `src/styles.css`; core colors match the selected design study.
+are defined in `src/tokens.css`.
 
 ## Brand and assets
 
@@ -194,7 +222,7 @@ pnpm --filter @rostfrei/ui typecheck
 
 `components.json` declares the shadcn workspace paths. After generating a
 primitive, retain relative imports inside the package and adapt its tokens and
-spacing to Reference ’15. Preserve existing public APIs while extending the
+spacing to the shared grey/rust system. Preserve existing public APIs while extending the
 shared package. Consumers exercise visual/interaction behavior through the live
 local component gallery and Studio's browser fixtures.
 

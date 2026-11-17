@@ -37,6 +37,8 @@ or API inspection alone establishes how the frontend looks.
 
 The inspector creates its own Vite server on an available port and cleans up
 its server/browser. Set `CHROME_BIN` when Chrome is outside the known locations.
+For slow cold starts, `--timeout 120000` raises the navigation deadline in
+milliseconds (default 20000).
 If a local server must be stopped manually, identify listeners with
 `lsof -ti :<port> -sTCP:LISTEN`.
 
@@ -59,22 +61,25 @@ with synthetic responses; real command behavior is verified through Tracer.
 
 ## Code and presentation
 
-- `src/App.tsx`: catalog discovery, layouts, panels, command execution, and run state.
+- `src/App.tsx`: catalog discovery, canvas, panels, command execution, and run state.
 - `src/components/command-panel.tsx`: catalog-driven command forms and results.
+- `src/components/test-panel.tsx`: test selection, definition disclosure, and explicit execution.
 - `src/components/message-graph.tsx`: message cards, React Flow, and the mobile list.
 - `src/components/message-inspector.tsx`: selected message request, response, and metadata.
+- `src/components/run-inspection.tsx`: optional saved-run summary, verdict, flow, and disclosures.
 - `src/components/studio-sidebar.tsx`: Tests and run-history navigation.
-- `src/components/draggable-panel.tsx`: draggable Command panel shell.
+- `src/components/draggable-panel.tsx`: shared draggable Command and Test panel shell.
 - `src/lib/graph.ts`: message-to-graph conversion and layout.
 - `src/lib/api.ts`: Tracer HTTP client.
 - `scripts/fixtures.mjs`: test-only imports of the canonical bike-rental fixtures
   and behavioral definitions. Runtime demo fallback is intentionally absent.
 - `src/index.css`: Studio layout and visual styling.
 
-Use the shared Reference ’15 palette, system typography, square panels, compact
-controls, and theme-aware command/domain-event/integration-event colors from
-`@rostfrei/ui`. Import its primitives and theme provider rather than duplicating
-them locally. Studio CSS owns application layout and graph presentation.
+Use the shared open grey/rust palette, Signika headings, system body typography,
+and theme-aware message colors from `@rostfrei/ui`. Prefer open reading surfaces
+and details on demand. Reuse `@rostfrei/ui/evidence` for result summaries, message
+lists, and disclosure; those components display supplied facts without interpreting
+evidence. Studio CSS owns application layout and graph presentation.
 Prefer accessible control names and existing `data-graph-node`/`data-graph-edge`
 attributes for automation. Preserve the distinction between causation, fixture
 stream order, and fixture context when changing graph presentation.

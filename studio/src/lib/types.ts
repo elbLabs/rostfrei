@@ -1,5 +1,4 @@
 export type MessageKind = "command" | "domain-event" | "integration-event"
-export type StudioLayout = "canvas" | "workbench"
 export type FlowView =
   "expected" | "running" | "observed" | "predicted" | "retained" | "unavailable"
 
@@ -467,4 +466,5 @@ export interface StoredRun {
   source?: "live" | "demo"
   definition?: TestDefinitionRevision
   diagnostics?: MessageSeriesComparison["diagnostics"]
+  capture?: OperationMessageSeries["capture"]
 }

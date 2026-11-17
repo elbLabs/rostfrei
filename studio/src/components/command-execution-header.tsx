@@ -1,5 +1,4 @@
-import { CircleDot, LoaderCircle, Pencil, TriangleAlert } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { CircleDot, LoaderCircle, TriangleAlert } from "lucide-react"
 import type { CommandExecutionRequest } from "@/components/command-panel"
 import type { CommandExecutionResult, MessageGraphNode } from "@/lib/types"
 
@@ -13,12 +12,10 @@ export function CommandExecutionHeader({
   execution,
   root,
   running,
-  onEdit,
 }: {
   execution: CommandView
   root?: MessageGraphNode
   running: boolean
-  onEdit: () => void
 }) {
   const { request, result, error } = execution
   const resultValue = result?.operation.result
@@ -52,14 +49,8 @@ export function CommandExecutionHeader({
     >
       <div className="execution-title-row">
         <div>
-          <p className="eyebrow">
-            Command execution <span>/</span> Isolated Test
-          </p>
-          <h1>{request.commandLabel} · Test</h1>
+          <h1>{request.commandLabel}</h1>
         </div>
-        <Button variant="outline" onClick={onEdit}>
-          <Pencil /> Edit command
-        </Button>
       </div>
       <div className="execution-result" data-status={status} role="status">
         {running ? (

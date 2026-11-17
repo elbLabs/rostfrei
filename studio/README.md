@@ -5,26 +5,41 @@ Explore what your domain does, one command at a time.
 Tracer Studio is a React/Vite client for command execution, Tracer behavioral
 tests, and causal message-series visualization.
 
-Select a test to read its Given/When/Then summary and expected message flow.
-Run it to inspect the observed flow, test verdict, and command outcome. Message
-cards expose payload summaries; selecting a card opens its request, response,
-relationship, and metadata in a persistent inspector. Narrow screens use a
-message list with a dedicated details view.
+Open the **Runs** tab to inspect a saved run on the canvas without
+executing it again. **Run summary** opens its verdict, command outcome, capture
+quality, and diagnostic details; **Back to graph** returns to the canvas. Reports
+from the live behavioral-run endpoint contain no capture-window metadata and show
+quality/settling unavailable. Separately saved finite captures retain their own
+quality metadata; settled is not proof
+of downstream completion. Select a message for its response and causal relationship;
+expand request, metadata, scenario, or run details when needed. **Run again** is
+an explicit action using the current test definition and isolated Test state.
 
-Use the **Canvas / Workbench** switch in the top bar to compare layouts. Canvas
-gives the flow the full working area, with navigation and message details opened
-on demand and a collapsible scenario summary. Workbench retains the expanded
-summary and persistent inspector. Switching keeps the current test, run, and
-message selection; the layout preference is saved in this browser.
-Keyboard shortcuts: **1** selects Canvas and **2** selects Workbench. Shortcuts
-are ignored while editing text or using modifier keys.
+Use **Run a test** in the **Tests** tab to choose and execute a test. Its floating panel
+includes the optional Given/When/Then definition. Submitting uses the current
+definition and resets isolated Test state to its fixture, then shows the result
+on the canvas. Selecting a test from **Test library** in that tab
+previews its expected flow without executing it.
+
+The canvas is the single workspace, with a dotted background and graph controls.
+The fixed tabs on the Tracer Studio line are **Commands**, **Tests**, **Runs**,
+**Observe**, and **Correlations**, selected with **Ctrl+1–5**. Arrow keys, Home,
+and End also navigate the focused tab bar. Switching tabs preserves each mode’s
+selected command, test, or saved run; it does not execute anything. Each mode has
+its own heading and actions below the tab bar.
+Its desktop message inspector overlays the flow without changing node positions,
+pan, or zoom. Click an empty area of the canvas to close it. Navigation and details
+open on demand. Narrow screens use a message list and a back-to-flow detail view.
 
 The theme picker in the top bar supports **Light**, **Dark**, and **System**.
 System is the default; the browser preference is shared with the website through
-`rostfrei-theme`. Reference ’15 colors, controls, typography, and duck branding
-come from the workspace package `@rostfrei/ui`.
+`rostfrei-theme`. Open grey/rust surfaces, Signika headings, controls, and duck
+branding come from `@rostfrei/ui`. Its UI-only evidence summary, disclosure, and
+causal flow are also reusable in embedded readers; hosts own theme and data.
+Message cards share a thin grey outline and a kind-colored left rail that remains
+visible when selected. Fixture context retains a dashed rail in the full graph.
 
-Open **Command** (or **Ctrl/⌘ Shift K**) to use the catalog-driven command form.
+Open **Commands → Send command** (or **Ctrl/⌘ Shift K**) to use the catalog-driven command form.
 **Test bus** uses
 the isolated command pipeline and can append events and trigger integrations.
 Test bus is the default; submission is disabled when unavailable. Commands
@@ -34,7 +49,7 @@ and numeric options retain their exact JSON representation. An unconfirmed Test
 submission keeps its idempotency key and payload for an explicit retry.
 **Simulate handler** is an optional explicit choice when advertised. It shows
 the real handler decision, starting stream versions and proposed domain events
-in a separate **Uncommitted · no acceptance receipt** panel, never an observed
+in a separate panel labelled **Uncommitted. There is no acceptance receipt**, never an observed
 message graph. Injected dependencies are not automatically sandboxed; this does
 not test delivery, persistence/concurrency or downstream integrations.
 Start with the [bike-rental walkthrough](https://elblabs.github.io/rostfrei/docs/getting-started)
@@ -46,8 +61,8 @@ integration events. It supports Test/Production scope discovery, filtering,
 flow selection, pause/resume, reconnect, and explicit partial/retention status.
 See [continuous observation](../docs/continuous-observation.md) for backend wiring
 and the optional `VITE_TRACER_INSPECTION_TOKEN` used for production observation.
-It uses the same Canvas/Workbench message cards and inspector as command and
-test execution. **Executions** returns to the previous execution view; closing
+It uses the same canvas, message cards, and inspector as command and
+test execution. **Commands** and **Tests** return to their saved view state; closing
 the observation sidebar does not stop capture.
 
 The **Correlations** panel reads [retained correlation events](../docs/continuous-observation.md#retained-correlation-inspection)
@@ -93,7 +108,8 @@ pnpm test:ui
 
 The smoke test intercepts every Tracer request and uses deterministic HTTP
 fixtures from `scripts/fixtures.mjs`, including connection failures and retry,
-reruns, rejection, failed expectations, storage failure, and responsive layouts.
+the test panel, graph-first saved runs, reruns, rejection, failed expectations,
+storage failure, and responsive views.
 It also checks pre-paint theme initialization, theme selection/persistence,
 system-theme changes, canvas colors, and the mobile theme picker above raised
 command panels.
@@ -101,6 +117,10 @@ These fixtures are test-only and are not included in the application bundle.
 The smoke test does not publish to a running Tracer. Set `CHROME_BIN` if Chrome
 is installed outside the standard
 locations; container environments that require it can set `CHROME_NO_SANDBOX=1`.
+
+Use `pnpm test:ui --check saved-runs` to run just the saved-run inspection journey
+at desktop and mobile widths. Selection failures retain screenshots, DOM state,
+accessibility, and browser diagnostics under `artifacts/review/saved-run-inspection-<width>/`.
 
 ## Browser inspection
 
@@ -118,7 +138,7 @@ pnpm inspect:ui --scene all --theme dark --out artifacts/after-dark
 
 The inspector starts Vite on an available port and launches a fresh Chrome
 session. Named scenarios intercept every API request and label their synthetic
-responses as visual fixtures. They cover the workbench overview, command form,
+responses as visual fixtures. They cover the canvas overview, test panel, command form,
 accepted/rejected Test, pending and indeterminate results, a 25-message
 branching graph, long payloads, continuous observation, anchored correlations
 with their error states, and the narrow-screen inspector. Unknown API

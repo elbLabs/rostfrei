@@ -38,11 +38,28 @@ export async function checkContinuousObservation() {
     page.on("pageerror", (error) => errors.push(error.message))
     await page.setViewport({ width: 1440, height: 900 })
     await page.goto(url, { waitUntil: "networkidle0" })
-    await page.waitForSelector(".studio-shell")
+    await page.waitForSelector(
+      '[data-tracer-source="live"], [data-tracer-source="disconnected"]'
+    )
+    assert.equal(
+      await page.$eval(
+        "[data-tracer-source]",
+        (element) => element.dataset.tracerSource
+      ),
+      "live",
+      await page.$eval(".studio-heading", (element) => element.textContent)
+    )
     assert.deepEqual(errors, [])
-    await page.click('[data-layout="workbench"]')
-    await page.click('[aria-label="Open observation panel"]')
+    await page.click('[data-workspace-tab="observation"]')
     await page.waitForSelector('[data-observation-status="live"]')
+    assert.equal(
+      await page.$eval(
+        '[aria-label="Observation scope"]',
+        (select) => select.value
+      ),
+      "test"
+    )
+    await page.waitForSelector('[data-observed-flow="test-external-flow"]')
     await page.click('[data-observed-flow="test-external-flow"]')
     await page.waitForSelector('[data-graph-node][data-node-id="received"]')
     backend.publish(2)
@@ -65,7 +82,7 @@ export async function checkContinuousObservation() {
         [...document.querySelectorAll("[data-graph-node]")].every((node) => {
           const bounds = node.getBoundingClientRect()
           return (
-            bounds.x >= 280 &&
+            bounds.x >= 0 &&
             bounds.right <= innerWidth &&
             node.contains(
               document.elementFromPoint(
@@ -77,6 +94,7 @@ export async function checkContinuousObservation() {
         })
     )
     // Re-selecting an unchanged flow must not clear its graph.
+    await page.click('[aria-label="Expand sidebar"]')
     await page.click('[data-observed-flow="test-external-flow"]')
     assert.equal(
       await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
@@ -98,6 +116,7 @@ export async function checkContinuousObservation() {
         .length,
       streamRequests
     )
+    await page.click('[aria-label="Expand sidebar"]')
     await page.click('[aria-label="Pause observation"]')
     await page.waitForSelector('[data-observation-status="paused"]')
     backend.publish(3)
@@ -113,14 +132,15 @@ export async function checkContinuousObservation() {
         element.textContent.includes("message-published")
       )
     )
-    await page.click('[data-layout="canvas"]')
+    await page.click('[aria-label="Collapse sidebar"]')
+    await page.click(".inspector-close")
     await page.click('[aria-label="Open message details"]')
     assert.ok(
       await page.$eval(".message-inspector", (element) =>
         element.textContent.includes("message-published")
       )
     )
-    await page.click('[data-layout="workbench"]')
+    await page.click('[aria-label="Expand sidebar"]')
     await page.type('[aria-label="Filter observed flows"]', "unrelated")
     assert.equal(
       await page.$$eval("[data-observed-flow]", (flows) => flows.length),
@@ -152,9 +172,9 @@ export async function checkContinuousObservation() {
     )
     await page.click('[aria-label="Collapse sidebar"]')
     await page.waitForFunction(() =>
-      document
-        .querySelector(".observation-evidence")
-        ?.textContent.includes("retained snapshot")
+      /retained snapshot/i.test(
+        document.querySelector(".observation-evidence")?.textContent ?? ""
+      )
     )
     await page.click('[aria-label="Expand sidebar"]')
     await page.select('[aria-label="Observation scope"]', "production")
@@ -202,7 +222,6 @@ export async function checkContinuousObservation() {
     }
     assert.ok(backend.requests.every((request) => request.method === "GET"))
     await page.setViewport({ width: 390, height: 844 })
-    await page.click('[aria-label="Close observation panel"]')
     await page.waitForSelector('.message-list [data-message-id="received"]')
     await page.click('.message-list [data-message-id="received"]')
     await page.waitForFunction(() =>
@@ -220,7 +239,7 @@ export async function checkContinuousObservation() {
     await page.close()
     await checkObservationApiSafety(browser, url, backend)
     console.log(
-      "Continuous observation: external flows, long-lived streams, shared cards/inspector, layout selection, pause/resume, filtering, reconnect, reset, scope credentials and mobile details passed"
+      "Continuous observation: external flows, long-lived streams, overlay inspector, pause/resume, filtering, reconnect, reset, scope credentials and mobile details passed"
     )
   } catch (error) {
     if (page && !page.isClosed()) {
@@ -248,7 +267,7 @@ async function checkObservationApiSafety(browser, url, backend) {
     backend.inspectionOnly(true)
     await page.goto(url, { waitUntil: "networkidle0" })
     await page.waitForSelector('[data-tracer-source="disconnected"]')
-    await page.click('[aria-label="Open observation panel"]')
+    await page.click('[data-workspace-tab="observation"]')
     await page.waitForSelector(
       '[data-observed-flow="production-external-flow"]'
     )
@@ -260,7 +279,7 @@ async function checkObservationApiSafety(browser, url, backend) {
     )
     await page.click('[data-observed-flow="production-external-flow"]')
     await page.waitForSelector('[data-graph-node][data-node-id="received"]')
-    await page.click('[aria-label="Return to executions"]')
+    await page.click('[data-workspace-tab="tests"]')
     backend.inspectionOnly(false)
     const results = await page.evaluate(async () => {
       const { followObservation } = await import("/src/lib/observation-api.ts")

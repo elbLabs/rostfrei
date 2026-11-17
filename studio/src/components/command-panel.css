@@ -1,7 +1,7 @@
 .studio-floating-panel {
   position: fixed;
   width: 380px;
-  height: min(680px, calc(100dvh - 90px));
+  height: min(680px, calc(100dvh - var(--header-height) - var(--workspace-toolbar-height) - 20px));
   z-index: 80;
   visibility: hidden;
   background: var(--card);
@@ -14,9 +14,9 @@
   visibility: visible;
 }
 .studio-panel-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   flex-shrink: 0;
   gap: 12px;
   height: 46px;
@@ -32,6 +32,9 @@
   gap: 8px;
   font-size: 12px;
   font-weight: 600;
+}
+.studio-panel-header > button {
+  justify-self: end;
 }
 .studio-panel-grip {
   color: var(--muted-foreground);
@@ -292,8 +295,8 @@
 @media (max-width: 767px) {
   .studio-floating-panel {
     left: 8px !important;
-    top: 54px !important;
+    top: calc(var(--header-height) + var(--workspace-toolbar-height) + 8px) !important;
     width: calc(100vw - 16px);
-    height: calc(100dvh - 66px);
+    height: calc(100dvh - var(--header-height) - var(--workspace-toolbar-height) - 20px);
   }
 }

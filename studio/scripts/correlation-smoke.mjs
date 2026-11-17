@@ -185,9 +185,8 @@ export async function checkCorrelations() {
       try {
         await page.setViewport({ width: 1440, height: 900 })
         await page.goto(url, { waitUntil: "domcontentloaded" })
-        await page.waitForSelector('[data-layout="workbench"]')
-        await page.click('[data-layout="workbench"]')
-        await page.click('[aria-label="Open correlations panel"]')
+        await page.waitForSelector(".studio-shell")
+        await page.click('[data-workspace-tab="correlations"]')
         await page.waitForSelector(
           '[aria-label="Anchor aggregate type"] option[value="bike-rental/rental-fleet"]'
         )
@@ -244,7 +243,7 @@ async function checkAnchorInteractions(page, backend) {
   )
   assert.match(
     await text(page, '[data-correlation-id="visual-rent-bike-42"]'),
-    /4 events · 2 domain · 2 integration.*2 contexts: bike-rental, billing/
+    /4 events: 2 domain, 2 integration.*2 contexts: bike-rental, billing/s
   )
 
   await page.click('[data-correlation-id="visual-rent-bike-42"]')
@@ -297,6 +296,7 @@ async function checkAnchorInteractions(page, backend) {
     /index|projector/i
   )
 
+  await showSidebar(page)
   await page.click('[data-correlation-id="visual-transfer-bike-7"]')
   await page.waitForSelector(
     '[data-graph-node][data-node-id="event:bicycle-transferred-in"]'
@@ -308,6 +308,7 @@ async function checkAnchorInteractions(page, backend) {
       ?.textContent.includes("1 other event shares this cause")
   )
 
+  await showSidebar(page)
   await page.click("::-p-aria(billing)")
   await page.waitForFunction(
     () =>
@@ -404,8 +405,8 @@ async function checkAnchorInteractions(page, backend) {
     "a self-caused origin is a root, not a cycle"
   )
 
-  await page.click('[aria-label="Return to executions"]')
-  await page.waitForSelector('[aria-label="Open correlations panel"]')
+  await page.click('[data-workspace-tab="tests"]')
+  await page.waitForSelector('[data-workspace="tests"]')
   assert.equal(
     await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
     0
@@ -440,6 +441,7 @@ async function checkSourceCutoffs(page, backend) {
   next.sources[0].cutoff_sequence = "9007199254740995"
   next.sources[2].cutoff_sequence = "0"
   backend.setSnapshot(next)
+  await showSidebar(page)
   await page.click('[aria-label="Refresh anchor correlations"]')
   await page.waitForFunction(() =>
     document
@@ -501,15 +503,14 @@ async function checkSnapshotSelection(page, backend) {
   assert.ok(
     !(await text(page, ".correlation-heading")).includes("9007199254740995")
   )
-  await page.click('[data-layout="canvas"]')
+  await page.click(".inspector-close")
+  await page.click('[aria-label="Open message details"]')
   await page.waitForSelector(".message-inspector", { visible: true })
   assert.match(await text(page, ".message-inspector"), /city-fleet/)
   assert.equal(
     await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
     4
   )
-  await page.click('[data-layout="workbench"]')
-  assert.match(await text(page, ".message-inspector"), /city-fleet/)
 }
 
 async function checkRetentionEvidence(page) {
@@ -666,7 +667,7 @@ async function checkSelectionRace(page, backend) {
     "a delayed direct-ID response cannot replace a newer anchor search"
   )
   assert.doesNotMatch(
-    await text(page, ".correlation-heading"),
+    await text(page, ".workspace-content"),
     /visual-rent-bike-42/
   )
 }
@@ -693,6 +694,7 @@ async function checkFilteredSelection(page, backend) {
   )
   filtered.body.correlations = []
   backend.setAnchorResult(filtered)
+  await showSidebar(page)
   await page.click('[aria-label="Refresh anchor correlations"]')
   await page.waitForFunction(
     () => !document.querySelector("[data-correlation-id]")
@@ -704,7 +706,7 @@ async function checkFilteredSelection(page, backend) {
     "a refreshed/filtered anchor result must clear a selected chain absent from that response"
   )
   assert.doesNotMatch(
-    await text(page, ".correlation-heading"),
+    await text(page, ".workspace-content"),
     /visual-rent-bike-42/
   )
 }
@@ -725,6 +727,7 @@ async function checkSameContextIncludes(page, backend) {
   )
   await page.click('[data-message-id="event:bicycle-transferred-in"]')
   assert.match(await text(page, ".message-inspector"), /Not loaded/)
+  await showSidebar(page)
   await page.click("::-p-aria(bike-rental)")
   await page.waitForFunction(() =>
     document.querySelector(".message-inspector")?.textContent.includes("bike-7")
@@ -782,6 +785,7 @@ async function checkMobileLayouts(page) {
 }
 
 async function openCorrelation(page, id) {
+  await showSidebar(page)
   await setValue(page, '[aria-label="Correlation ID"]', id)
   await page.click('[aria-label="Open a correlation by ID"] button')
 }
@@ -839,7 +843,7 @@ async function checkMatches(page, backend) {
   )
 
   await page.reload({ waitUntil: "networkidle0" })
-  await page.click('[aria-label="Open correlations panel"]')
+  await page.click('[data-workspace-tab="correlations"]')
   await page.waitForFunction(
     () =>
       document.querySelector('[aria-label="Match 1 context"]')?.value ===
@@ -919,6 +923,7 @@ async function setValue(page, selector, value) {
 }
 
 async function loadAnchor(page, aggregateId) {
+  await showSidebar(page)
   await page.$eval('[aria-label="Anchor aggregate ID"]', (input) => {
     const setter = Object.getOwnPropertyDescriptor(
       HTMLInputElement.prototype,
@@ -933,6 +938,11 @@ async function loadAnchor(page, aggregateId) {
 
 async function text(page, selector) {
   return page.$eval(selector, (element) => element.textContent ?? "")
+}
+
+async function showSidebar(page) {
+  if (await page.$('[aria-label="Expand sidebar"]'))
+    await page.click('[aria-label="Expand sidebar"]')
 }
 
 if (process.argv[1]?.endsWith("correlation-smoke.mjs"))

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { PanelLeft, Radio, Send, Waypoints } from "lucide-react"
+import { FlaskConical, PanelLeft, Send } from "lucide-react"
 import { Brand } from "@rostfrei/ui/brand"
 import { ThemeToggle } from "@rostfrei/ui/theme"
 
@@ -20,11 +20,15 @@ import {
 } from "@/components/correlation-panel"
 import { ExecutionHeader } from "@/components/execution-header"
 import { MessageGraph } from "@/components/message-graph"
+import { RunInspection } from "@/components/run-inspection"
 import {
   ObservationPanel,
   type ObservationConnection,
 } from "@/components/observation-panel"
 import { StudioSidebar } from "@/components/studio-sidebar"
+import { TestPanel } from "@/components/test-panel"
+import { WorkspaceTabs } from "@/components/workspace-tabs"
+import { workspaceModes, type Workspace } from "@/lib/workspace"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
@@ -48,7 +52,6 @@ import type {
   CommandExecutionResult,
   MessageGraphNode,
   StoredRun,
-  StudioLayout,
   TestDefinitionRevision,
   TestDefinitionSummary,
   TestReport,
@@ -59,12 +62,12 @@ import { cn } from "@/lib/utils"
 
 const STORED_RUNS_KEY = "rostfrei-tracer-studio-runs-v1"
 const MAXIMUM_STORED_RUNS = 16
-const STORED_LAYOUT_KEY = "rostfrei-tracer-studio-layout-v1"
-
-type Workspace = "executions" | "observation" | "correlations"
 
 function App() {
-  const [workspace, setWorkspace] = useState<Workspace>("executions")
+  const [workspace, setWorkspace] = useState<Workspace>("tests")
+  const commandsActive = workspace === "commands"
+  const testsActive = workspace === "tests"
+  const runsActive = workspace === "runs"
   const observationActive = workspace === "observation"
   const correlationsActive = workspace === "correlations"
   const [correlationSelection, setCorrelationSelection] =
@@ -75,52 +78,8 @@ function App() {
   const [observationExpired, setObservationExpired] = useState(false)
   const [observationConnection, setObservationConnection] =
     useState<ObservationConnection>("connecting")
-  const [layout, setLayout] = useState<StudioLayout>(readStoredLayout)
-  const [canvasNavigationOpen, setCanvasNavigationOpen] = useState(false)
-  const [workbenchNavigationOpen, setWorkbenchNavigationOpen] = useState(
-    () => window.matchMedia("(min-width: 1400px)").matches
-  )
-  const sidebarOpen =
-    layout === "canvas" ? canvasNavigationOpen : workbenchNavigationOpen
-  const setSidebarOpen =
-    layout === "canvas" ? setCanvasNavigationOpen : setWorkbenchNavigationOpen
-  const changeLayout = useCallback((next: StudioLayout) => {
-    setLayout(next)
-    try {
-      localStorage.setItem(STORED_LAYOUT_KEY, next)
-    } catch {
-      // The layout switch remains available when browser storage is disabled.
-    }
-  }, [])
-
-  useEffect(() => {
-    const handleLayoutShortcut = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented ||
-        event.isComposing ||
-        event.repeat ||
-        event.altKey ||
-        event.ctrlKey ||
-        event.metaKey ||
-        event.shiftKey ||
-        (event.key !== "1" && event.key !== "2")
-      )
-        return
-      const target = event.composedPath()[0]
-      if (
-        target instanceof Element &&
-        (target.closest(
-          "input, textarea, select, [role='textbox'], [role='combobox']"
-        ) ||
-          (target instanceof HTMLElement && target.isContentEditable))
-      )
-        return
-      event.preventDefault()
-      changeLayout(event.key === "1" ? "canvas" : "workbench")
-    }
-    window.addEventListener("keydown", handleLayoutShortcut)
-    return () => window.removeEventListener("keydown", handleLayoutShortcut)
-  }, [changeLayout])
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [testOpen, setTestOpen] = useState(false)
 
   const [source, setSource] = useState<"connecting" | "live" | "disconnected">(
     "connecting"
@@ -133,18 +92,38 @@ function App() {
   const [commandResult, setCommandResult] = useState<CommandExecutionResult>()
   const [commandError, setCommandError] = useState<string>()
   const [activeCommand, setActiveCommand] = useState<CommandView>()
+  const [commandNodes, setCommandNodes] = useState<MessageGraphNode[]>([])
   const [testStateRevision, setTestStateRevision] = useState(0)
   const [tests, setTests] = useState<TestDefinitionSummary[]>([])
   const [selectedTestId, setSelectedTestId] = useState<string>()
   const [selectedRunId, setSelectedRunId] = useState<string>()
+  const [historyRunId, setHistoryRunId] = useState<string>()
+  const [inspectingRun, setInspectingRun] = useState(false)
   const [definition, setDefinition] = useState<TestDefinitionRevision>()
   const [nodes, setNodes] = useState<MessageGraphNode[]>([])
   const [runs, setRuns] = useState<StoredRun[]>(readStoredRuns)
-  const [running, setRunning] = useState(false)
+  const [executing, setExecuting] = useState<"commands" | "tests">()
+  const running = Boolean(executing)
+  const commandRunning = executing === "commands"
+  const testRunning = executing === "tests"
   const [loading, setLoading] = useState(true)
   const [resultUnavailable, setResultUnavailable] = useState(false)
   const [error, setError] = useState<string>()
   const [storageNote, setStorageNote] = useState<string>()
+
+  const changeWorkspace = useCallback(
+    (next: Workspace) => {
+      if (next === workspace) return
+      setWorkspace(next)
+      setSidebarOpen(
+        next === "runs" || next === "observation" || next === "correlations"
+      )
+      setCommandOpen(false)
+      setTestOpen(false)
+      setInspectingRun(false)
+    },
+    [workspace]
+  )
 
   useEffect(() => {
     const toggleCommand = (event: KeyboardEvent) => {
@@ -156,6 +135,9 @@ function App() {
         catalog
       ) {
         event.preventDefault()
+        setWorkspace("commands")
+        setSidebarOpen(false)
+        setTestOpen(false)
         setCommandOpen((open) => !open)
       }
     }
@@ -226,6 +208,7 @@ function App() {
     setTestDiscoveryError(undefined)
     setCatalog(undefined)
     setActiveCommand(undefined)
+    setCommandNodes([])
     setCommandResult(undefined)
     setCommandError(undefined)
     setError(undefined)
@@ -248,17 +231,16 @@ function App() {
 
   const selectTest = async (test: TestDefinitionSummary) => {
     if (running || loading || source !== "live") return
-    setWorkspace("executions")
+    setWorkspace("tests")
     setLoading(true)
-    setActiveCommand(undefined)
-    setCommandResult(undefined)
-    setCommandError(undefined)
+    setInspectingRun(false)
     setSelectedTestId(test.id)
     setSelectedRunId(undefined)
     setError(undefined)
     setResultUnavailable(false)
     setDefinition(undefined)
     setNodes([])
+    setSidebarOpen(false)
     try {
       const { revision, fixture } = await loadTest(test)
       setDefinition(revision)
@@ -268,18 +250,15 @@ function App() {
     } finally {
       setLoading(false)
     }
-    if (layout === "canvas" || window.matchMedia("(max-width: 1399px)").matches)
-      setSidebarOpen(false)
   }
 
   const executeSelectedTest = async () => {
     const selected = tests.find((test) => test.id === selectedTestId)
     if (!selected || running || loading || source !== "live") return
-    setWorkspace("executions")
-    setRunning(true)
-    setActiveCommand(undefined)
-    setCommandResult(undefined)
-    setCommandError(undefined)
+    setTestOpen(false)
+    setInspectingRun(false)
+    setWorkspace("tests")
+    setExecuting("tests")
     setError(undefined)
     setResultUnavailable(false)
     setSelectedRunId(undefined)
@@ -312,7 +291,7 @@ function App() {
       )
     } finally {
       setTestStateRevision((current) => current + 1)
-      setRunning(false)
+      setExecuting(undefined)
     }
   }
 
@@ -347,33 +326,28 @@ function App() {
   }
 
   const selectRun = (run: StoredRun) => {
-    if (running || loading) return
-    setWorkspace("executions")
-    setSelectedRunId(run.runId)
-    setActiveCommand(undefined)
-    setCommandResult(undefined)
-    setCommandError(undefined)
-    setSelectedTestId(run.testId)
-    setNodes(run.nodes)
-    setDefinition(run.definition)
-    setResultUnavailable(false)
-    setError(undefined)
-    if (layout === "canvas" || window.matchMedia("(max-width: 1399px)").matches)
-      setSidebarOpen(false)
+    setWorkspace("runs")
+    setHistoryRunId(run.runId)
+    setInspectingRun(false)
+    setTestOpen(false)
+    setSidebarOpen(false)
+  }
+
+  const prepareRerun = async (run: StoredRun) => {
+    const test = tests.find((test) => test.id === run.testId)
+    if (!test || running || loading) return
+    await selectTest(test)
+    setTestOpen(true)
   }
 
   const executeCommand = async (
     request: CommandExecutionRequest
   ): Promise<boolean> => {
     if (running || loading || source !== "live") return false
-    setWorkspace("executions")
-    setRunning(true)
-    setError(undefined)
+    setWorkspace("commands")
+    setExecuting("commands")
     setCommandError(undefined)
     setCommandResult(undefined)
-    setSelectedRunId(undefined)
-    setSelectedTestId(undefined)
-    setResultUnavailable(false)
     setActiveCommand({ request })
     const pending: MessageGraphNode = {
       id: `${request.mode}-${crypto.randomUUID()}`,
@@ -385,7 +359,7 @@ function App() {
       payload: request.payload,
       status: "running",
     }
-    setNodes([pending])
+    setCommandNodes([pending])
     let rotateKey = false
     try {
       const result = await submitCommand(
@@ -400,7 +374,7 @@ function App() {
         result.operation.status === "failed"
       setCommandResult(result)
       setActiveCommand({ request, result })
-      setNodes(
+      setCommandNodes(
         result.series
           ? operationGraph(result.operation, result.series)
           : [
@@ -415,7 +389,7 @@ function App() {
       const message = errorMessage(commandFailure)
       setCommandError(message)
       setActiveCommand({ request, error: message })
-      setNodes([
+      setCommandNodes([
         {
           ...pending,
           response: { message },
@@ -428,23 +402,37 @@ function App() {
     } finally {
       if (request.mode === "test" && rotateKey)
         setTestStateRevision((current) => current + 1)
-      setRunning(false)
+      setExecuting(undefined)
     }
     return rotateKey
   }
 
-  const selectedRun = runs.find((run) => run.runId === selectedRunId)
+  const selectedRun = runsActive
+    ? (runs.find((run) => run.runId === historyRunId) ?? runs[0])
+    : runs.find((run) => run.runId === selectedRunId)
   const selectedTest = tests.find((test) => test.id === selectedTestId)
+  const canRunTest =
+    source === "live" &&
+    Boolean(selectedTest) &&
+    !loading &&
+    !running &&
+    (Boolean(definition) || Boolean(selectedRun))
+  const inspectionRun =
+    (testsActive || runsActive) && !testRunning && inspectingRun
+      ? selectedRun
+      : undefined
   const view = correlationsActive
     ? "retained"
     : observationActive
       ? "observed"
-      : running
+      : (commandsActive ? commandRunning : testsActive && testRunning)
         ? "running"
-        : resultUnavailable || activeCommand?.error
-          ? "unavailable"
-          : activeCommand
-            ? "observed"
+        : commandsActive
+          ? activeCommand?.error
+            ? "unavailable"
+            : "observed"
+          : testsActive && resultUnavailable
+            ? "unavailable"
             : selectedRun
               ? "observed"
               : "expected"
@@ -456,127 +444,35 @@ function App() {
       ? observedFlow
         ? observedGraph(observedFlow.messageSeries)
         : []
-      : nodes
+      : commandsActive
+        ? commandNodes
+        : runsActive
+          ? (selectedRun?.nodes ?? [])
+          : nodes
+  const mode = workspaceModes.find((mode) => mode.id === workspace)!
+  const sidebarLabel = testsActive
+    ? "Test library"
+    : runsActive
+      ? "Recent runs"
+      : observationActive
+        ? "Flows"
+        : "Find correlation"
 
   return (
     <TooltipProvider>
       <div
         className={cn(
           "studio-shell",
-          `studio-layout-${layout}`,
-          workspace !== "executions" && "observation-active",
+          (observationActive || correlationsActive) && "observation-active",
           sidebarOpen && "sidebar-is-open"
         )}
       >
         <header className="studio-topbar">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="sidebar-toggle"
-            onClick={() => setSidebarOpen((open) => !open)}
-            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-            aria-expanded={sidebarOpen}
-            aria-controls={
-              observationActive
-                ? "studio-observation-panel"
-                : correlationsActive
-                  ? "studio-correlation-panel"
-                  : "studio-navigation"
-            }
-          >
-            <PanelLeft />
-          </Button>
           <div className="studio-logo" aria-label="Rostfrei Tracer Studio">
             <Brand compact className="studio-brand" />
             <strong>Tracer Studio</strong>
           </div>
-          <Button
-            className="command-panel-trigger"
-            variant="ghost"
-            size="sm"
-            disabled={!catalog}
-            onClick={() => setCommandOpen((open) => !open)}
-            aria-controls="studio-command-panel"
-            aria-expanded={commandOpen}
-            aria-label={
-              commandOpen ? "Close command panel" : "Open command panel"
-            }
-            aria-keyshortcuts="Meta+Shift+K Control+Shift+K"
-            title="Command (Ctrl/⌘ Shift K)"
-          >
-            <Send />
-            <span>Command</span>
-          </Button>
-          <Button
-            className="observation-panel-trigger"
-            variant="ghost"
-            size="sm"
-            disabled={running || loading}
-            aria-label={
-              observationActive
-                ? "Return to executions"
-                : "Open observation panel"
-            }
-            aria-pressed={observationActive}
-            onClick={() => {
-              setWorkspace(observationActive ? "executions" : "observation")
-              setSidebarOpen(true)
-              setCommandOpen(false)
-            }}
-          >
-            <Radio />
-            <span>{observationActive ? "Executions" : "Observe"}</span>
-          </Button>
-          <Button
-            className="correlation-panel-trigger"
-            variant="ghost"
-            size="sm"
-            disabled={running || loading}
-            aria-label={
-              correlationsActive
-                ? "Return to executions"
-                : "Open correlations panel"
-            }
-            aria-pressed={correlationsActive}
-            onClick={() => {
-              setWorkspace(correlationsActive ? "executions" : "correlations")
-              setSidebarOpen(true)
-              setCommandOpen(false)
-            }}
-          >
-            <Waypoints />
-            <span>{correlationsActive ? "Executions" : "Correlations"}</span>
-          </Button>
-          <div
-            className="layout-switch"
-            role="group"
-            aria-label="Studio layout"
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              type="button"
-              data-layout="canvas"
-              aria-keyshortcuts="1"
-              title="Canvas (1)"
-              aria-pressed={layout === "canvas"}
-              onClick={() => changeLayout("canvas")}
-            >
-              Canvas<kbd aria-hidden="true">1</kbd>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              type="button"
-              data-layout="workbench"
-              aria-keyshortcuts="2"
-              title="Workbench (2)"
-              aria-pressed={layout === "workbench"}
-              onClick={() => changeLayout("workbench")}
-            >
-              Workbench<kbd aria-hidden="true">2</kbd>
-            </Button>
-          </div>
+          <WorkspaceTabs value={workspace} onChange={changeWorkspace} />
           <div
             className="connection-status"
             data-source={
@@ -591,16 +487,16 @@ function App() {
             <span className="connection-dot" />
             <span className="connection-label">
               {observationActive
-                ? `Observation · ${observationConnection}`
+                ? `Observation ${observationConnection}`
                 : correlationsActive
-                  ? `Correlations · ${correlationConnection}`
+                  ? `Correlations ${correlationConnection}`
                   : source === "connecting"
                     ? "Connecting"
                     : source === "live"
                       ? "Isolated Test"
                       : "Disconnected"}
             </span>
-            {workspace === "executions" && selectedRun && (
+            {runsActive && selectedRun && (
               <span className="connection-detail">Saved run</span>
             )}
           </div>
@@ -608,12 +504,13 @@ function App() {
         </header>
 
         <StudioSidebar
-          open={sidebarOpen && workspace === "executions"}
+          open={sidebarOpen && (testsActive || runsActive)}
+          mode={runsActive ? "runs" : "tests"}
           tests={tests}
           selectedTestId={selectedTestId}
-          selectedRunId={selectedRunId}
+          selectedRunId={runsActive ? selectedRun?.runId : selectedRunId}
           runs={runs}
-          busy={running || loading}
+          busy={!runsActive && (running || loading)}
           storageNote={storageNote}
           onClose={() => setSidebarOpen(false)}
           onSelectTest={(test) => void selectTest(test)}
@@ -624,13 +521,7 @@ function App() {
           active={observationActive}
           catalog={catalog}
           onClose={() => setSidebarOpen(false)}
-          onSelect={() => {
-            if (
-              layout === "canvas" ||
-              window.matchMedia("(max-width: 1399px)").matches
-            )
-              setSidebarOpen(false)
-          }}
+          onSelect={() => setSidebarOpen(false)}
           onFlow={setObservedFlow}
           onExpired={setObservationExpired}
           onStatus={setObservationConnection}
@@ -639,18 +530,12 @@ function App() {
           open={sidebarOpen && correlationsActive}
           active={correlationsActive}
           onClose={() => setSidebarOpen(false)}
-          onSelect={() => {
-            if (
-              layout === "canvas" ||
-              window.matchMedia("(max-width: 1399px)").matches
-            )
-              setSidebarOpen(false)
-          }}
+          onSelect={() => setSidebarOpen(false)}
           onSelection={setCorrelationSelection}
           onStatus={setCorrelationConnection}
         />
         <CommandPanel
-          open={commandOpen}
+          open={commandsActive && commandOpen}
           catalog={catalog}
           busy={running || loading}
           result={commandResult}
@@ -666,131 +551,284 @@ function App() {
             setTestStateRevision((current) => current + 1)
           }
         />
-        {(sidebarOpen || commandOpen) && (
+        {catalog && (
+          <TestPanel
+            open={testsActive && testOpen}
+            tests={tests}
+            selectedTestId={selectedTestId}
+            definition={definition}
+            nodes={nodes}
+            busy={running || loading}
+            running={testRunning}
+            canRun={canRunTest}
+            onClose={() => setTestOpen(false)}
+            onSelect={(test) => void selectTest(test)}
+            onRun={() => void executeSelectedTest()}
+          />
+        )}
+        {(sidebarOpen ||
+          (commandsActive && commandOpen) ||
+          (testsActive && testOpen)) && (
           <button
             type="button"
             className="sidebar-scrim"
             onClick={() => {
               setSidebarOpen(false)
               setCommandOpen(false)
+              setTestOpen(false)
             }}
             aria-label="Close sidebar"
           />
         )}
 
-        <main className="studio-main">
-          <div className="studio-heading">
-            {workspace === "executions" &&
-              (source !== "live" || testDiscoveryError) && (
-                <ConnectionNotice
-                  connecting={source === "connecting"}
-                  testsOnly={source === "live"}
-                  error={testDiscoveryError ?? connectionError}
-                  onRetry={retryConnection}
-                />
-              )}
-            {correlationsActive ? (
-              <CorrelationHeading
-                selection={correlationSelection}
-                status={correlationConnection}
-              />
-            ) : observationActive ? (
-              <section className="observation-heading" aria-live="polite">
-                <div>
-                  <h1>{observedFlow?.name ?? "Observe application traffic"}</h1>
-                  <p>
-                    {observedFlow
-                      ? `${observedFlow.application} · ${observedFlow.scope} · ${observedFlow.correlationId}`
-                      : "Choose a flow from the observation sidebar."}
-                  </p>
+        <main
+          id="studio-workspace"
+          className="studio-main"
+          role="tabpanel"
+          aria-labelledby={`studio-tab-${workspace}`}
+          data-workspace={workspace}
+        >
+          <header className="workspace-toolbar">
+            <div className="workspace-identity">
+              <span className="workspace-icon">
+                <mode.icon size={21} />
+              </span>
+              <div>
+                <div className="workspace-title">
+                  <h1>{mode.label}</h1>
+                  <span>{mode.scope}</span>
                 </div>
-                <p className="observation-evidence">
-                  {observedFlow
-                    ? `${observedFlow.fidelity} observation · partial${observationExpired ? " · retained snapshot" : ""}${observedFlow.truncated ? " · truncated" : ""}${observedFlow.conflicted ? " · conflicting evidence" : ""}`
-                    : observationConnection}
-                  <span>
-                    {observationExpired
-                      ? "This graph was evicted or reset; select another flow for live updates."
-                      : "Rolling window; silence does not establish completion."}
-                  </span>
-                </p>
-              </section>
-            ) : activeCommand ? (
-              <CommandExecutionHeader
-                execution={activeCommand}
-                root={
-                  nodes.find((node) => node.subject) ??
-                  nodes.find(
-                    (node) => node.kind === "command" && node.subject !== false
-                  )
+                <p>{mode.description}</p>
+              </div>
+            </div>
+            <div className="workspace-actions">
+              {!commandsActive && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="sidebar-toggle"
+                  onClick={() => setSidebarOpen((open) => !open)}
+                  aria-label={
+                    sidebarOpen ? "Collapse sidebar" : "Expand sidebar"
+                  }
+                  aria-expanded={sidebarOpen}
+                  aria-controls={
+                    observationActive
+                      ? "studio-observation-panel"
+                      : correlationsActive
+                        ? "studio-correlation-panel"
+                        : "studio-navigation"
+                  }
+                >
+                  <PanelLeft />
+                  <span>{sidebarLabel}</span>
+                </Button>
+              )}
+              {commandsActive && (
+                <Button
+                  className="command-panel-trigger"
+                  size="sm"
+                  disabled={!catalog}
+                  onClick={() => setCommandOpen((open) => !open)}
+                  aria-controls="studio-command-panel"
+                  aria-expanded={commandOpen}
+                  aria-label={
+                    commandOpen ? "Close command panel" : "Open command panel"
+                  }
+                  aria-keyshortcuts="Meta+Shift+K Control+Shift+K"
+                >
+                  <Send />
+                  <span>Send command</span>
+                </Button>
+              )}
+              {testsActive && (
+                <Button
+                  className="test-panel-trigger"
+                  size="sm"
+                  disabled={!catalog}
+                  onClick={() => setTestOpen((open) => !open)}
+                  aria-controls="studio-test-panel"
+                  aria-expanded={testOpen}
+                  aria-label={testOpen ? "Close test panel" : "Open test panel"}
+                >
+                  <FlaskConical />
+                  <span>Run a test</span>
+                </Button>
+              )}
+              {runsActive && selectedRun && (
+                <Button
+                  className="saved-run-rerun"
+                  size="sm"
+                  disabled={
+                    source !== "live" ||
+                    running ||
+                    loading ||
+                    !tests.some((test) => test.id === selectedRun.testId)
+                  }
+                  onClick={() => void prepareRerun(selectedRun)}
+                >
+                  <FlaskConical /> Run again
+                </Button>
+              )}
+            </div>
+          </header>
+          <div
+            className={cn(
+              "workspace-content",
+              inspectionRun && "is-inspecting-run"
+            )}
+          >
+            {inspectionRun ? (
+              <RunInspection
+                key={inspectionRun.runId}
+                run={inspectionRun}
+                canRun={
+                  source === "live" &&
+                  tests.some((test) => test.id === inspectionRun.testId) &&
+                  !loading &&
+                  !running
                 }
-                running={running}
-                onEdit={() => setCommandOpen(true)}
+                onRun={() => void prepareRerun(inspectionRun)}
+                onFullGraph={() => setInspectingRun(false)}
               />
             ) : (
-              (source === "live" || selectedRun) && (
-                <ExecutionHeader
-                  layout={layout}
-                  name={selectedRun?.testName ?? selectedTest?.name}
-                  definition={definition}
-                  run={selectedRun}
-                  nodes={nodes}
-                  view={view}
-                  loading={loading}
-                  connected={source === "live"}
-                  canRun={
-                    source === "live" &&
-                    Boolean(selectedTest) &&
-                    !loading &&
-                    !running &&
-                    (Boolean(definition) || Boolean(selectedRun))
+              <>
+                <div className="studio-heading">
+                  {(commandsActive || testsActive || runsActive) &&
+                    (source !== "live" || testDiscoveryError) && (
+                      <ConnectionNotice
+                        connecting={source === "connecting"}
+                        testsOnly={source === "live"}
+                        error={testDiscoveryError ?? connectionError}
+                        onRetry={retryConnection}
+                      />
+                    )}
+                  {correlationsActive ? (
+                    <CorrelationHeading
+                      selection={correlationSelection}
+                      status={correlationConnection}
+                    />
+                  ) : observationActive ? (
+                    observedFlow && (
+                      <section
+                        className="observation-heading"
+                        aria-live="polite"
+                      >
+                        <div>
+                          <h1>
+                            {observedFlow?.name ??
+                              "Observe application traffic"}
+                          </h1>
+                          <p>
+                            {observedFlow ? (
+                              <>
+                                {observedFlow.application} ({observedFlow.scope}
+                                )
+                                <code className="block">
+                                  {observedFlow.correlationId}
+                                </code>
+                              </>
+                            ) : (
+                              "Choose a flow from the observation sidebar."
+                            )}
+                          </p>
+                        </div>
+                        <p className="observation-evidence">
+                          {observedFlow
+                            ? `${observedFlow.fidelity === "exact" ? "Exact" : "Grouped"} observation. Capture is partial.${observationExpired ? " Retained snapshot." : ""}${observedFlow.truncated ? " Capture truncated." : ""}${observedFlow.conflicted ? " Conflicting evidence." : ""}`
+                            : observationConnection}
+                          <span>
+                            {observationExpired
+                              ? "This graph was evicted or reset; select another flow for live updates."
+                              : "Rolling window; silence does not establish completion."}
+                          </span>
+                        </p>
+                      </section>
+                    )
+                  ) : commandsActive ? (
+                    activeCommand && (
+                      <CommandExecutionHeader
+                        execution={activeCommand}
+                        root={
+                          commandNodes.find((node) => node.subject) ??
+                          commandNodes.find(
+                            (node) =>
+                              node.kind === "command" && node.subject !== false
+                          )
+                        }
+                        running={commandRunning}
+                      />
+                    )
+                  ) : (
+                    (source === "live" || selectedRun) && (
+                      <ExecutionHeader
+                        name={
+                          selectedRun?.testName ??
+                          (testsActive ? selectedTest?.name : undefined)
+                        }
+                        run={selectedRun}
+                        nodes={displayNodes}
+                        view={view}
+                        loading={testsActive && loading}
+                        connected={source === "live"}
+                        canRun={
+                          runsActive
+                            ? tests.some(
+                                (test) => test.id === selectedRun?.testId
+                              ) && source === "live"
+                            : canRunTest
+                        }
+                        error={testsActive ? error : undefined}
+                        onInspect={() => setInspectingRun(true)}
+                      />
+                    )
+                  )}
+                </div>
+                <MessageGraph
+                  key={
+                    correlationsActive
+                      ? `correlation-${correlationSelection.correlationId ?? "empty"}`
+                      : observationActive
+                        ? `observation-${observedFlow?.scope ?? "empty"}-${observedFlow?.id ?? "empty"}`
+                        : commandsActive
+                          ? "command-execution"
+                          : `${workspace}-${selectedRun?.runId ?? (testsActive ? selectedTestId : "empty")}`
                   }
-                  error={error}
-                  onRun={() => void executeSelectedTest()}
+                  nodes={displayNodes}
+                  view={view}
+                  capture={
+                    correlationsActive
+                      ? undefined
+                      : observationActive
+                        ? observedFlow
+                          ? {
+                              fidelity: observedFlow.fidelity,
+                              settled: false,
+                              settledFor: "0ms",
+                            }
+                          : undefined
+                        : commandsActive
+                          ? activeCommand?.result?.series?.capture
+                          : selectedRun?.capture
+                  }
+                  emptyTitle={mode.emptyTitle}
+                  emptyMessage={
+                    correlationsActive
+                      ? correlationSelection.loading
+                        ? "Reading retained events…"
+                        : correlationSelection.chain
+                          ? "No events returned in this retained-history read."
+                          : mode.emptyMessage
+                      : observationActive
+                        ? mode.emptyMessage
+                        : source !== "live" && !runsActive
+                          ? "Connect to Tracer to load tests and message flows."
+                          : mode.emptyMessage
+                  }
                 />
-              )
+              </>
             )}
           </div>
-          <MessageGraph
-            key={
-              correlationsActive
-                ? `correlation-${correlationSelection.correlationId ?? "empty"}`
-                : observationActive
-                  ? `observation-${observedFlow?.scope ?? "empty"}-${observedFlow?.id ?? "empty"}`
-                  : activeCommand
-                    ? "command-execution"
-                    : (selectedRunId ?? selectedTestId ?? "empty")
-            }
-            layoutMode={layout}
-            nodes={displayNodes}
-            view={view}
-            capture={
-              correlationsActive
-                ? undefined
-                : observationActive
-                  ? observedFlow
-                    ? {
-                        fidelity: observedFlow.fidelity,
-                        settled: false,
-                        settledFor: "0ms",
-                      }
-                    : undefined
-                  : activeCommand?.result?.series?.capture
-            }
-            emptyMessage={
-              correlationsActive
-                ? correlationSelection.loading
-                  ? "Reading retained events…"
-                  : correlationSelection.chain
-                    ? "No events returned in this retained-history read."
-                    : "Select a correlation to see its retained events."
-                : observationActive
-                  ? "Select an observed flow. Only real captured messages will appear here."
-                  : source !== "live"
-                    ? "Connect to Tracer to load tests and message flows."
-                    : undefined
-            }
-          />
         </main>
       </div>
     </TooltipProvider>
@@ -836,18 +874,26 @@ function readStoredRuns(): StoredRun[] {
           )
       )
       .slice(0, MAXIMUM_STORED_RUNS)
+      .map((run) => ({ ...run, capture: readCapture(run.capture) }))
   } catch {
     return []
   }
 }
 
-function readStoredLayout(): StudioLayout {
-  try {
-    return localStorage.getItem(STORED_LAYOUT_KEY) === "workbench"
-      ? "workbench"
-      : "canvas"
-  } catch {
-    return "canvas"
+function readCapture(value: unknown): StoredRun["capture"] {
+  if (!value || typeof value !== "object") return undefined
+  const capture = value as Record<string, unknown>
+  if (
+    (capture.fidelity !== "exact" && capture.fidelity !== "grouped") ||
+    typeof capture.settled !== "boolean" ||
+    typeof capture.settledFor !== "string"
+  )
+    return undefined
+  return {
+    fidelity: capture.fidelity,
+    settled: capture.settled,
+    settledFor: capture.settledFor,
+    ...(typeof capture.note === "string" ? { note: capture.note } : {}),
   }
 }
 

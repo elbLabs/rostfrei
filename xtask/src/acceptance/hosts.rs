@@ -245,7 +245,10 @@ pub fn bike_host(studio: bool) -> Result<()> {
                 report["status"] == "passed" && report["comparison"]["status"] == "passed",
                 "HTTP suite failed: {report}"
             );
-            println!("HTTP passed: {}", definition["id"]);
+            println!(
+                "HTTP scenario passed: {} (command: {})",
+                definition["id"], report["operation"]["command"]
+            );
         }
         dispatch("rent-bicycle", "normal-after-test-reset", "rejected")?;
         dispatch("return-bicycle", "normal-return", "accepted")?;
@@ -259,7 +262,7 @@ pub fn bike_host(studio: bool) -> Result<()> {
                 "VITE_TRACER_TOKEN".into(),
                 env["ROSTFREI_API_TOKEN"].clone(),
             );
-            process::run(
+            let output = process::run(
                 &[
                     "node",
                     &root()
@@ -270,6 +273,7 @@ pub fn bike_host(studio: bool) -> Result<()> {
                 &root().join("studio"),
                 &browser,
             )?;
+            print!("{output}");
         }
         Ok::<_, anyhow::Error>(())
     })();

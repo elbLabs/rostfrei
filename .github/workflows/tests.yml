@@ -13,6 +13,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  presentation:
+    name: Saved evidence and MCP Apps
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.22.3
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Check the shared evidence reader and installed package
+        run: |
+          pnpm --filter @rostfrei/tracer-presentation typecheck
+          pnpm --filter @rostfrei/tracer-presentation test
+          pnpm --filter @rostfrei/tracer-presentation test:package
+      - name: Stage unchanged real-NATS captures
+        run: |
+          mkdir -p "$RUNNER_TEMP/tracer-evidence"
+          cp packages/tracer-presentation/test/canonical/accepted.json "$RUNNER_TEMP/tracer-evidence/rent-available-bicycle.json"
+          cp packages/tracer-presentation/test/canonical/rejected.json "$RUNNER_TEMP/tracer-evidence/reject-unavailable-bicycle.json"
+      - name: Qualify the installed MCP app in Inspector
+        working-directory: experiments/studio-adapters/mcp-apps
+        env:
+          EVIDENCE_DIR: ${{ runner.temp }}/tracer-evidence
+          ARTIFACT_DIR: ${{ runner.temp }}/mcp-apps
+          CHROME_BIN: /usr/bin/google-chrome
+          MCP_TEST_STARTUP_TIMEOUT_MS: 30000
+        run: npm run qualify
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-presentation
+          path: ${{ runner.temp }}/mcp-apps/
+          if-no-files-found: ignore
+
   scaffold:
     name: External generated project
     runs-on: ubuntu-latest
@@ -119,6 +159,8 @@ jobs:
           path: |
             studio/artifacts/inspect/
             studio/artifacts/inspect-dark/
+            studio/artifacts/review/
+            artifacts/studio-live/
           if-no-files-found: ignore
 
   website:

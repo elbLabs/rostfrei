@@ -253,6 +253,7 @@ export async function checkCommandExecution(browser, url) {
     })
     await page.goto(url, { waitUntil: "networkidle0" })
     await page.waitForSelector('[data-tracer-source="live"]')
+    await page.click('[data-workspace-tab="commands"]')
     assert.equal(
       await page.$$eval(".test-row", (rows) => rows.length),
       0,
@@ -465,6 +466,26 @@ export async function checkCommandExecution(browser, url) {
     assert.equal(
       await page.$$eval("[data-graph-edge]", (edges) => edges.length),
       2
+    )
+    const commandNodes = await page.$$eval("[data-graph-node]", (nodes) =>
+      nodes.map((node) => node.dataset.nodeId)
+    )
+    await page.click('[data-workspace-tab="tests"]')
+    assert.equal(
+      await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
+      0
+    )
+    await page.click('[data-workspace-tab="commands"]')
+    assert.deepEqual(
+      await page.$$eval("[data-graph-node]", (nodes) =>
+        nodes.map((node) => node.dataset.nodeId)
+      ),
+      commandNodes
+    )
+    assert.equal(
+      testCount,
+      1,
+      "returning to Commands preserves the result without resubmitting"
     )
     await page.click('button[aria-controls="studio-command-panel"]')
     await page.waitForFunction(

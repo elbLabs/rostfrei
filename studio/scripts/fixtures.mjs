@@ -8,6 +8,26 @@ import reject from "../../examples/bike-rental/tests/tracer/reject-unavailable-b
 import returned from "../../examples/bike-rental/tests/tracer/return-rented-bicycle.json" with { type: "json" }
 import add from "../../examples/bike-rental/tests/tracer/add-first-bicycle.json" with { type: "json" }
 import duplicate from "../../examples/bike-rental/tests/tracer/reject-duplicate-bicycle.json" with { type: "json" }
+import acceptedCapture from "../../packages/tracer-presentation/test/canonical/accepted.json" with { type: "json" }
+import rejectedCapture from "../../packages/tracer-presentation/test/canonical/rejected.json" with { type: "json" }
+
+export function savedCaptureRuns(reportGraph) {
+  return [acceptedCapture, rejectedCapture].map((capture) => ({
+    runId: capture.report.runId,
+    testId: capture.report.testId,
+    testName: capture.definition.name,
+    status: capture.report.status,
+    createdAt: "2026-11-08T12:00:00.000Z",
+    source: "live",
+    nodes: reportGraph(
+      { ...capture.report, observed: capture.messageSeries.messageSeries },
+      capture.fixture
+    ),
+    definition: { revision: "saved-capture", definition: capture.definition },
+    diagnostics: capture.report.comparison.diagnostics,
+    capture: capture.messageSeries.capture,
+  }))
+}
 
 export const SAMPLE_DEFINITIONS = Object.fromEntries(
   [rent, reject, returned, add, duplicate].map((definition) => [

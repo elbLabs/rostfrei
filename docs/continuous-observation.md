@@ -128,17 +128,17 @@ The host must have the corresponding control/inspection tokens configured. The
 inspection token is optional when observing only Test. As with the existing Studio
 control token, Vite credentials are browser configuration, not server-side secrets.
 
-1. Open **Observe** and choose Test or Production.
+1. Select the **Observe** tab and choose Test or Production in **Flows**.
 2. Wait for **Live**, then trigger an action through the application.
 3. Filter by event name or correlation ID and select a flow.
 4. Inspect events and payloads as the flow grows. Only explicit causation IDs draw
    graph edges; an unobserved command remains absent.
 5. **Pause** freezes browser updates. **Resume** reconnects to the current window.
 
-Observe shares the execution workspace's Canvas/Workbench layouts, message cards,
-and details inspector. Canvas closes navigation after choosing a flow; Workbench
-keeps it alongside the graph on wide screens. Closing navigation does not pause
-observation. Use **Executions** to return to the previous command/test view.
+Observe shares the execution canvas, message cards, and overlay details inspector.
+Choosing a flow closes navigation. Reopen **Flows** to filter or pause; closing
+navigation does not pause observation. Use the fixed **Commands**, **Tests**, or
+**Runs** tabs to return to those views.
 
 Disconnected, unavailable, resetting, paused, and live states are distinct. A
 selected flow that is evicted or reset is labelled as a retained snapshot, and

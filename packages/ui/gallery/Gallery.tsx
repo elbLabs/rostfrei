@@ -129,7 +129,7 @@ export function Gallery() {
         <p className="section-kicker">@rostfrei/ui / Local component gallery</p>
         <h1 className="page-title">A shared working language.</h1>
         <p className="mt-4 max-w-2xl text-sm leading-7 text-muted-foreground">
-          The same components, steel surfaces, rust actions, and blue links used
+          The same components, open grey surfaces, and rust accents used
           by the rostfrei website and Tracer Studio. Every control below is live.
         </p>
         <div className="my-5 flex flex-wrap gap-3 text-xs">

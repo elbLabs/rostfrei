@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils"
 
 interface StudioSidebarProps {
   open: boolean
+  mode: "tests" | "runs"
   tests: TestDefinitionSummary[]
   selectedTestId?: string
   selectedRunId?: string
@@ -19,6 +20,7 @@ interface StudioSidebarProps {
 
 export function StudioSidebar({
   open,
+  mode,
   tests,
   selectedTestId,
   selectedRunId,
@@ -34,11 +36,19 @@ export function StudioSidebar({
       id="studio-navigation"
       className={cn("studio-sidebar", open && "studio-sidebar-open")}
       inert={!open}
-      aria-label="Tests and run history"
+      aria-label={mode === "tests" ? "Test library" : "Run history"}
     >
       <div className="sidebar-section-heading">
         <h2>
-          <FlaskConical size={15} /> Tests <span>{tests.length}</span>
+          {mode === "tests" ? (
+            <>
+              <FlaskConical size={15} /> Tests <span>{tests.length}</span>
+            </>
+          ) : (
+            <>
+              <History size={15} /> Recent runs <span>{runs.length}</span>
+            </>
+          )}
         </h2>
         <Button
           className="sidebar-close"
@@ -50,20 +60,20 @@ export function StudioSidebar({
           <X />
         </Button>
       </div>
-      <nav className="test-list" aria-label="Behavioral tests">
+      <nav
+        className="test-list"
+        aria-label="Behavioral tests"
+        hidden={mode !== "tests"}
+      >
         {tests.map((test) => (
           <button
             type="button"
             key={test.id}
             className={cn(
               "test-row",
-              selectedTestId === test.id &&
-                !selectedRunId &&
-                "test-row-selected"
+              selectedTestId === test.id && "test-row-selected"
             )}
-            aria-current={
-              selectedTestId === test.id && !selectedRunId ? "page" : undefined
-            }
+            aria-current={selectedTestId === test.id ? "page" : undefined}
             disabled={busy}
             onClick={() => onSelectTest(test)}
           >
@@ -73,12 +83,7 @@ export function StudioSidebar({
         ))}
         {!tests.length && <p className="sidebar-empty">No tests registered.</p>}
       </nav>
-      <div className="sidebar-section-heading">
-        <h2>
-          <History size={15} /> Recent runs <span>{runs.length}</span>
-        </h2>
-      </div>
-      <div className="past-runs-scroll">
+      <div className="past-runs-scroll" hidden={mode !== "runs"}>
         {runs.length ? (
           runs.map((run) => (
             <button
@@ -117,7 +122,7 @@ export function StudioSidebar({
           </div>
         )}
       </div>
-      <footer className="sidebar-footer">
+      <footer className="sidebar-footer" hidden={mode !== "runs"}>
         <span>History saved in this browser</span>
         {storageNote && <p role="status">{storageNote}</p>}
       </footer>

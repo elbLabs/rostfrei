@@ -112,9 +112,10 @@ cargo xtask test -- cargo test --locked -p rostfrei-nats --test domain_event_con
 
 The frontends use one pnpm workspace and root `pnpm-lock.yaml`. Install with
 `pnpm install --frozen-lockfile` from the repository root. The internal
-[`@rostfrei/ui`](../packages/ui/README.md) package supplies Reference ’15 tokens,
-shadcn/Radix controls, theme selection, and duck branding to both apps. Its source
-is consumed by Vite directly; it does not require a separate publish/build step.
+[`@rostfrei/ui`](../packages/ui/README.md) supplies grey/rust tokens, packaged fonts,
+Radix controls, theme selection, and duck branding. Its UI-only evidence components
+also expose plain CSS for embedded readers. Source is consumed by the application's
+bundler directly; it does not require a separate publish/build step.
 
 ```sh
 pnpm lint
@@ -129,14 +130,20 @@ See [website development](../website/README.md) and
 in `packages/ui/gallery`, which shows shared components and their interactive states. The **Tests**
 workflow runs Rust checks, the standalone starter acceptance check, shared UI
 lint/typechecking, website lint, a deployment-base build and browser checks, and Studio
-lint/build, mocked-API browser tests, a live application-linked host/Studio
-journey against real NATS, and visual inspection. Screenshots, layout
+lint/build, mocked-API browser tests, a live application-linked host journey with
+Studio's production bundle against real NATS, and visual inspection. Screenshots, layout
 state, and browser diagnostics are uploaded as artifacts. The mocked browser
 fixtures exercise presentation and interactions; the separate host journey
 exercises live backend wiring. Both browser checks use Chrome; set
 `CHROME_BIN` if it is not installed in a standard location. Website captures go
 to `artifacts/website/`. Set `VITE_BASE_PATH` to the same value for the website
 build and its browser check when verifying a non-root deployment.
+
+The [saved-evidence reader](../packages/tracer-presentation/README.md) owns text
+and Mermaid rendering; run `pnpm test:presentation` for its contracts. CI also
+checks its installed package and qualifies the experimental
+[MCP Apps reader](../experiments/studio-adapters/mcp-apps/README.md) in the official
+Inspector. These checks reopen saved captures without executing the application.
 
 ## Benchmarks
 
