@@ -8,7 +8,7 @@ evidence or weaken its integrity.
 
 ## What follows
 
-- Keep the NATS journal append-only, checksummed, and without age expiry. Finite
+- Keep the domain decision journal append-only, checksummed, and without age expiry. Finite
   capacity refuses new writes rather than evicting authoritative history.
 - Publish events, read guards, and permanent outcome evidence in one atomic batch.
   Prepared result details alone do not establish completion; only the journal
@@ -34,6 +34,13 @@ Permanent history needs capacity planning. Trusted reads avoid repeated deep
 audits but assume supported writes; explicit audits check historical transaction
 consistency. Atomicity stops at one journal, and authority lifecycle management
 adds coordination work.
+
+Inspection access journals have a distinct, explicitly configured privacy-retention
+window. Each atomic audit write carries the current authorization snapshot; native
+JetStream age expiry removes old audit entries without reviving an old grant.
+If the entire authority window expires while idle, reads fail closed and require
+explicit reprovisioning. This trades snapshot write amplification and idle recovery
+for bounded retention without a second, inconsistently updated authorization store.
 
 ### Subject-addressed inspection
 

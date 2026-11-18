@@ -116,7 +116,7 @@ function requestPath(url) {
 }
 
 export async function settlePage(page) {
-  await page.waitForSelector(".studio-shell", { timeout: 10_000 })
+  await page.waitForSelector(".studio-shell, .insights-shell", { timeout: 10_000 })
   await page.waitForFunction(() => document.fonts.status === "loaded")
   // Poll actual layout rather than sleeping through an assumed animation duration.
   let previous
@@ -126,7 +126,7 @@ export async function settlePage(page) {
       JSON.stringify(
         [
           ...document.querySelectorAll(
-            "[data-graph-node], .studio-sidebar, .studio-floating-panel, .message-inspector"
+            "[data-graph-node], .studio-sidebar, .studio-floating-panel, .message-inspector, .insights-shell section"
           ),
         ].map((element) => {
           const rect = element.getBoundingClientRect()

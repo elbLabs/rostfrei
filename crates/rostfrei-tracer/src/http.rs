@@ -44,6 +44,8 @@ pub struct HttpConfig {
     control_token: Option<Arc<str>>,
     dispatch_token: Option<Arc<str>>,
     inspection_token: Option<Arc<str>>,
+    #[cfg(feature = "insights")]
+    insights: Option<crate::insights::http::InsightsHttp>,
 }
 
 impl HttpConfig {
@@ -53,6 +55,8 @@ impl HttpConfig {
             control_token: Some(bearer_token.into()),
             dispatch_token: None,
             inspection_token: None,
+            #[cfg(feature = "insights")]
+            insights: None,
         })
     }
 
@@ -76,6 +80,8 @@ impl HttpConfig {
             control_token: None,
             dispatch_token: None,
             inspection_token: Some(validate_token(token.into())?.into()),
+            #[cfg(feature = "insights")]
+            insights: None,
         })
     }
 
@@ -91,6 +97,18 @@ impl HttpConfig {
         }
         self.inspection_token = Some(token.into());
         Ok(self)
+    }
+
+    /// Serve the governed HTTP/MCP surface exclusively. Legacy capabilities cannot
+    /// bypass its data policy, grant checks or disclosure journal.
+    #[cfg(feature = "insights")]
+    pub const fn governed(insights: crate::insights::http::InsightsHttp) -> Self {
+        Self {
+            control_token: None,
+            dispatch_token: None,
+            inspection_token: None,
+            insights: Some(insights),
+        }
     }
 }
 
@@ -125,6 +143,14 @@ struct CommandSubmissionResponse {
 }
 
 pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
+    #[cfg(feature = "insights")]
+    if let Some(insights) = config.insights.clone() {
+        return crate::insights::http::router(insights);
+    }
+    legacy_router(tracer, config)
+}
+
+fn legacy_router(tracer: Tracer, config: HttpConfig) -> Router {
     let control_routes = Router::new()
         .route("/quarantine/test", get(get_test_quarantine))
         .route(
@@ -219,8 +245,17 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
         .layer(DefaultBodyLimit::max(
             MAX_COMMAND_PAYLOAD_LEN + SIMULATION_REQUEST_OVERHEAD,
         ))
+        .route("/insights/query", post(insights_not_configured))
         .layer(middleware::map_response(add_private_no_store))
         .with_state(HttpState { tracer, config })
+}
+
+async fn insights_not_configured() -> impl IntoResponse {
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, "Bearer")],
+        Json(serde_json::json!({"error":"identity-protected Insights is not configured"})),
+    )
 }
 
 async fn add_private_no_store(response: Response) -> Response {

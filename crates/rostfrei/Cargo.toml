@@ -18,6 +18,7 @@ default = []
 nats = ["dep:rostfrei-nats", "rostfrei-tracer?/nats-host"]
 http = ["dep:rostfrei-http"]
 tracer = ["dep:rostfrei-tracer", "rostfrei-tracer/http", "fixtures"]
+insights = ["tracer", "nats", "rostfrei-tracer/insights"]
 fixtures = ["dep:rostfrei-fixtures"]
 testing = ["dep:rostfrei-testing", "fixtures"]
 

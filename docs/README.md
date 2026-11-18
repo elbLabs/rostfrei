@@ -38,6 +38,7 @@ the same Markdown/MDX sources without requiring JavaScript.
 - [Evolving private domain events](event-schema-evolution.md)
 - [Continuous observation](continuous-observation.md) and
   [retained correlation inspection](continuous-observation.md#retained-correlation-inspection)
+- [Governed Insights: Keycloak, field approvals, HTTP/MCP and access auditing](continuous-observation.md#governed-insights)
 - [Handler simulation](handler-simulation.md)
 - [Quarantine inspection](quarantine-inspection.md) and [example walkthrough](../examples/bike-rental/QUARANTINE.md)
 - [Domain-event workers and durable migration](domain-event-workers.md)
