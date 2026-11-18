@@ -83,8 +83,8 @@ impl StoredSnapshot {
         }
         Ok(())
     }
-    /// Replay anchors may contain differently sized derived indexes. Publication
-    /// converges when the same logical boundary and replay semantics produce identical state.
+    /// Compare logical state and replay identity independently of the adapter's
+    /// checkpoint position. Matching state permits refreshing that position.
     pub fn same_state(&self, other: &Self) -> bool {
         self.format == other.format
             && self.replay_revision == other.replay_revision
@@ -119,7 +119,8 @@ pub trait SnapshotStore: Send + Sync {
         key: &SnapshotKey,
         at_or_before: StreamVersion,
     ) -> Result<Option<StoredSnapshot>, EventStoreError>;
-    /// Idempotent publication; different content at the same key/version is a conflict.
+    /// Idempotent state publication. Matching state refreshes the supplied checkpoint;
+    /// different state or replay identity at the same key/version is a conflict.
     async fn save(
         &self,
         key: &SnapshotKey,
@@ -203,10 +204,9 @@ impl SnapshotStore for InMemorySnapshotStore {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let versions = entries.entry(key.clone()).or_default();
-        if let Some(old) = versions.get(&snapshot.checkpoint.version) {
-            if old.same_state(snapshot) {
-                return Ok(());
-            }
+        if let Some(old) = versions.get(&snapshot.checkpoint.version)
+            && !old.same_state(snapshot)
+        {
             return Err(EventStoreError::new(
                 crate::EventStoreErrorKind::Conflict,
                 "snapshot target already has different state",

@@ -328,3 +328,108 @@ async fn foreign_cached_checkpoint_replays_history_with_warning() -> TestResult 
     assert_eq!(report.events_applied, 10);
     assert_snapshot_warning(&report, "checkpoint belongs to another history")
 }
+
+#[tokio::test]
+async fn pending_snapshot_work_survives_authority_replacement() -> TestResult {
+    let mut codecs =
+        AggregateCodecs::default().with_snapshot_store(Arc::new(InMemorySnapshotStore::default()));
+    codecs.register_snapshot::<Counter, _>(
+        "counter-v1",
+        1,
+        BinaryState(Arc::default()),
+        SnapshotPolicy::EveryEvents(std::num::NonZeroU64::new(1).ok_or("nonzero")?),
+    )?;
+    let codecs = Arc::new(codecs);
+    let old = InMemoryEventStore::new();
+    let executor = CommandExecutor::with_codecs(old.clone(), codecs.clone());
+    for index in 0..127 {
+        let stream = StreamId::new(
+            AggregateType::new("counter")?,
+            AggregateId::new(format!("queued-{index}"))?,
+        );
+        let operation = OperationId::new(format!("seed-{index}"))?;
+        let commit = derive_commit_id(&stream, &operation);
+        let event = <JsonEventCodec as EventCodec<Counter>>::encode(
+            &JsonEventCodec,
+            &Added(1),
+            derive_event_id(&commit, 0),
+        )?;
+        old.append_fixture(
+            &stream,
+            ExpectedVersion::NoStream,
+            EventBatch::new(
+                commit,
+                operation,
+                ContentFingerprint::digest(b"seed"),
+                vec![event],
+            )?,
+        )
+        .await?;
+        executor.rehydrate::<Counter>(&stream).await?;
+    }
+    let (other, other_stream) = counter_history().await?;
+    let other_executor = CommandExecutor::with_codecs(other, codecs.clone());
+    other_executor.rehydrate::<Counter>(&other_stream).await?;
+    assert_eq!(codecs.pending_snapshots().len(), 128);
+    drop(executor);
+    drop(old);
+
+    let (replacement, stream) = counter_history().await?;
+    let executor = CommandExecutor::with_codecs(replacement, codecs.clone());
+    assert!(executor.run_snapshot_jobs(128).await.is_empty());
+    assert_eq!(executor.rehydrate::<Counter>(&stream).await?.state().0, 55);
+    let jobs = executor.run_snapshot_jobs(128).await;
+    assert_eq!(
+        jobs.len(),
+        1,
+        "retired-authority work must not permanently prevent snapshots in the replacement"
+    );
+    assert!(jobs.into_iter().all(|result| result.is_ok()));
+    let other_jobs = other_executor.run_snapshot_jobs(128).await;
+    assert_eq!(
+        other_jobs.len(),
+        1,
+        "another live authority retains its work"
+    );
+    assert!(other_jobs.into_iter().all(|result| result.is_ok()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn in_memory_snapshot_publication_refreshes_only_checkpoints() -> TestResult {
+    let (history, stream, original) = snapshot_fixture().await?;
+    let key = SnapshotKey::new(
+        history.history_authority().ok_or("missing authority")?,
+        &stream,
+        "counter-v1",
+        1,
+    );
+    let mut checkpoint = original.checkpoint.clone();
+    checkpoint.position = b"invalid cached prefix digest".to_vec();
+    let broken = StoredSnapshot::new(
+        original.replay_revision.clone(),
+        original.schema_version,
+        checkpoint,
+        original.state.clone(),
+    )?;
+    let snapshots = InMemorySnapshotStore::default();
+    snapshots.save(&key, &broken).await?;
+    snapshots.save(&key, &original).await?;
+    assert_eq!(
+        snapshots.load(&key, original.version()).await?,
+        Some(original.clone())
+    );
+    let different_state = StoredSnapshot::new(
+        original.replay_revision.clone(),
+        original.schema_version,
+        original.checkpoint.clone(),
+        99_u64.to_le_bytes().to_vec(),
+    )?;
+    let conflict = snapshots.save(&key, &different_state).await;
+    assert!(matches!(conflict, Err(error) if error.kind() == EventStoreErrorKind::Conflict));
+    assert_eq!(
+        snapshots.load(&key, original.version()).await?,
+        Some(original)
+    );
+    Ok(())
+}

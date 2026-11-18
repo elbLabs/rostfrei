@@ -312,7 +312,13 @@ fn queue_recommendation(
             .find(|request| &request.stream == stream && request.authority == authority)
         {
             request.version = request.version.max(version);
-        } else if requests.len() < 128 {
+        } else {
+            // Recommendations are disposable. Admit fresh work even when retired
+            // authorities occupy the bounded queue; their jobs cannot be drained
+            // by a replacement store sharing these codecs.
+            if requests.len() >= 128 {
+                requests.pop_front();
+            }
             requests.push_back(crate::SnapshotRequest {
                 authority: authority.to_owned(),
                 stream: stream.clone(),

@@ -39,6 +39,53 @@ impl NatsSnapshotStore {
             .await?,
         })
     }
+
+    async fn save_value(
+        &self,
+        key: &ReadModelKey,
+        snapshot: &StoredSnapshot,
+    ) -> Result<(), EventStoreError> {
+        for _ in 0..16 {
+            let existing = self.values.read(key).await.map_err(map_error)?;
+            let write = match existing {
+                Some(entry) => {
+                    if !entry.value.same_state(snapshot) {
+                        return Err(EventStoreError::new(
+                            EventStoreErrorKind::Conflict,
+                            "snapshot target already has different state",
+                        ));
+                    }
+                    if entry.value == *snapshot {
+                        return Ok(());
+                    }
+                    // Native KV CAS refreshes only the version we inspected.
+                    // A competing publication is reread before deciding again.
+                    self.values.update(key, &entry.revision, snapshot).await
+                }
+                None => self.values.create(key, snapshot).await,
+            };
+            match write {
+                Ok(_) => return Ok(()),
+                Err(error) if error.kind() == ReadModelErrorKind::Conflict => {}
+                Err(error) => {
+                    // A missing acknowledgement may still have persisted the value.
+                    if self
+                        .values
+                        .read(key)
+                        .await
+                        .is_ok_and(|entry| entry.is_some_and(|entry| entry.value == *snapshot))
+                    {
+                        return Ok(());
+                    }
+                    return Err(map_error(error));
+                }
+            }
+        }
+        Err(EventStoreError::new(
+            EventStoreErrorKind::Conflict,
+            "snapshot publication contention budget exhausted",
+        ))
+    }
 }
 #[allow(clippy::needless_pass_by_value, reason = "owned map_err adapter")]
 fn map_error(error: ReadModelError) -> EventStoreError {
@@ -91,17 +138,7 @@ impl SnapshotStore for NatsSnapshotStore {
         snapshot.validate()?;
         let version = snapshot.checkpoint.version;
         let value_key = value_key(key, version)?;
-        match self.values.create(&value_key, snapshot).await {
-            Ok(_) => {}
-            Err(error) => {
-                let existing = self.values.read(&value_key).await.map_err(map_error)?;
-                if existing.is_none_or(|entry| {
-                    entry.value.validate().is_err() || !entry.value.same_state(snapshot)
-                }) {
-                    return Err(map_error(error));
-                }
-            }
-        }
+        self.save_value(&value_key, snapshot).await?;
         let key_catalog =
             ReadModelKey::new(format!("catalog.{}", key.as_str())).map_err(map_error)?;
         for _ in 0..16 {

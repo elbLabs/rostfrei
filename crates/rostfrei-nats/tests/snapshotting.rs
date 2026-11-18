@@ -1378,3 +1378,72 @@ async fn history_only_snapshots_reconstruct_without_live_results_and_fence_recre
         Err(SimulationError::Store(error)) if error.kind() == EventStoreErrorKind::ConfigurationMismatch));
     Ok(())
 }
+
+#[tokio::test]
+async fn recapturing_an_unusable_checkpoint_persists_the_repaired_locator() -> TestResult {
+    let (fixture, store, codecs, reports) =
+        setup("snapshot-repair-locator", SnapshotPolicy::Manual).await?;
+    let id = stream("one")?;
+    seed(&store, &id, 8).await?;
+    let scratch = codecs
+        .as_ref()
+        .clone()
+        .with_snapshot_store(Arc::new(InMemorySnapshotStore::default()));
+    let original = CommandExecutor::with_codecs(store.clone(), Arc::new(scratch))
+        .create_snapshot::<Target>(&id, StreamVersion::new(6))
+        .await?;
+    let mut checkpoint = original.checkpoint.clone();
+    let mut position: serde_json::Value = serde_json::from_slice(&checkpoint.position)?;
+    position["sequence"] = serde_json::json!(999_999);
+    checkpoint.position = serde_json::to_vec(&position)?;
+    let broken = StoredSnapshot::new(
+        original.replay_revision.clone(),
+        original.schema_version,
+        checkpoint,
+        original.state.clone(),
+    )?;
+    let snapshots = NatsSnapshotStore::connect(
+        fixture.js.clone(),
+        NatsReadModelConfig::new(&fixture.context, "snapshots")?,
+    )
+    .await?;
+    let key = SnapshotKey::new(store.authority().as_str(), &id, "v1", 1);
+    snapshots.save(&key, &broken).await?;
+    let executor = CommandExecutor::with_codecs(store.clone(), codecs);
+    let (repaired, concurrent) = tokio::join!(
+        executor.create_snapshot::<Target>(&id, StreamVersion::new(6)),
+        executor.create_snapshot::<Target>(&id, StreamVersion::new(6)),
+    );
+    let repaired = repaired?;
+    assert_eq!(concurrent?, repaired);
+    assert_eq!(repaired.checkpoint, original.checkpoint);
+    let persisted = snapshots
+        .load(&key, StreamVersion::new(6))
+        .await?
+        .ok_or("missing persisted snapshot")?;
+    let persisted_position: serde_json::Value =
+        serde_json::from_slice(&persisted.checkpoint.position)?;
+    let repaired_position: serde_json::Value =
+        serde_json::from_slice(&repaired.checkpoint.position)?;
+    assert_eq!(
+        persisted_position["sequence"], repaired_position["sequence"],
+        "successful capture must persist the repaired native locator"
+    );
+    assert_eq!(
+        executor.rehydrate::<Target>(&id).await?.state().items.len(),
+        8
+    );
+    let report = reports.recent().pop().ok_or("missing repaired report")?;
+    assert_eq!(report.snapshot_status, SnapshotStatus::Hit);
+    assert_eq!(report.snapshot_warning, None);
+    assert_eq!(
+        (
+            report.snapshot_version,
+            report.events_read,
+            report.events_applied
+        ),
+        (6, 2, 2)
+    );
+    assert_eq!(store.audit_history(&id).await?.len(), 8);
+    Ok(())
+}

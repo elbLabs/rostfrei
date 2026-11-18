@@ -66,6 +66,9 @@ Change the replay revision when initialization, event decoding or application ch
 
 `CommandExecutor::create_snapshot` captures an exact version; `rehydrate_at` restores
 a selected version and `verify_snapshot` compares against original-event replay.
+Recapturing the same state refreshes its checkpoint, including an unusable cached
+locator. NATS uses KV revision checks for concurrent publication; different state
+at the same version and replay identity remains a conflict.
 Invalid/incompatible caches fall back to original history; authoritative history or
 receipt corruption fails the read. Attach `RebuildDiagnostics` with
 `with_rebuild_diagnostics` to observe replay work and nonfatal snapshot warnings;
@@ -74,7 +77,11 @@ reports failure of the rebuild itself.
 Retained-journal handles opened with `connect_history` support snapshot and
 version-selected replay without command-results storage, while still checking the
 journal incarnation. Live command execution retains its paired-authority checks.
-Applications drain policy requests with `run_snapshot_jobs`. Fixture-v1 `snapshots` entries retain all
+Applications drain policy requests with `run_snapshot_jobs`. The shared registry
+coalesces at most 128 advisory requests. A new request evicts the oldest when full,
+so retired-authority work cannot block a replacement store. Each executor drains
+only its own authority; an evicted recommendation can be made again on a later load.
+Fixture-v1 `snapshots` entries retain all
 backing events: omit `state` to capture during installation, or supply verified state
 that is rebound to the destination history authority.
 
