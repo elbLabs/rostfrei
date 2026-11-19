@@ -37,6 +37,35 @@ const INSPECTION: &str = "inspection";
 const ORDER: &str = "/aggregates/ordering%2Forder/O1/correlations";
 const CUSTOMER: &str = "/aggregates/ordering%2Fcustomer/C7/correlations";
 
+#[cfg(feature = "insights")]
+#[path = "correlations/insights.rs"]
+mod insights;
+
+#[tokio::test]
+async fn insights_requires_identity_instead_of_legacy_inspection_credentials() {
+    let scenario = scenario().await;
+    let app = router(tracer(&scenario, true));
+    for token in [None, Some(INSPECTION), Some(CONTROL)] {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/insights/query")
+            .header("content-type", "application/json");
+        if let Some(token) = token {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::from("{}")).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "Insights requires a verified identity; legacy capabilities cannot authorize it"
+        );
+    }
+}
+
 macro_rules! aggregate {
     ($name:ident, $aggregate_type:literal) => {
         struct $name;

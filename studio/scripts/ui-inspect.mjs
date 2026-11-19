@@ -189,10 +189,12 @@ async function main() {
       try {
         if (name !== "live")
           await installScenario(page, name, samples, diagnostics)
-        await page.goto(url, {
-          waitUntil: "networkidle0",
-          timeout: navigationTimeout,
-        })
+        await page.goto(
+          name.startsWith("insights")
+            ? new URL("/scripts/insights-fixture.html", url).href
+            : url,
+          { waitUntil: "networkidle0", timeout: navigationTimeout }
+        )
         if (name !== "live") await prepareScenario(page, name)
         await settlePage(page)
         if (hasInspectionErrors(diagnostics)) {

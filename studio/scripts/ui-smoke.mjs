@@ -23,11 +23,12 @@ import {
 } from "./fixtures.mjs"
 import { checkContinuousObservation } from "./observation-smoke.mjs"
 import { checkCorrelations } from "./correlation-smoke.mjs"
+import { checkInsights } from "./insights-fixture.mjs"
 import { installScenario } from "./visual-scenarios.mjs"
 
 const { values } = parseArgs({ options: { check: { type: "string" } } })
-if (values.check && !["saved-runs", "navigation"].includes(values.check))
-  throw new Error("--check supports saved-runs or navigation")
+if (values.check && !["saved-runs", "navigation", "insights"].includes(values.check))
+  throw new Error("--check supports saved-runs, navigation or insights")
 
 const { server, url } = await startStudioServer({
   define: { "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api") },
@@ -54,6 +55,9 @@ let page
 
 async function checkStudio() {
   browser = await launchStudioBrowser()
+  if (!values.check || values.check === "insights")
+    await checkInsights(browser, url, observePage)
+  if (values.check === "insights") return
   if (values.check !== "saved-runs")
     await checkWorkspaceNavigation(browser, url)
   if (values.check === "navigation") return
@@ -234,6 +238,11 @@ async function checkStudio() {
   assert.equal(
     await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
     5
+  )
+  // React Flow measures nodes before it can render their connecting edges.
+  await page.waitForFunction(
+    () => document.querySelectorAll("[data-graph-edge]").length === 4,
+    { timeout: 10_000 }
   )
   assert.equal(
     await page.$$eval("[data-graph-edge]", (edges) => edges.length),
@@ -1529,11 +1538,14 @@ async function passed(page) {
 }
 
 async function runSelectedTest(page) {
-  if (await page.$('[data-workspace="runs"]'))
+  if (await page.$('[data-workspace="runs"]')) {
     await page.click(".saved-run-rerun")
-  await page.click('[data-workspace-tab="tests"]')
-  if (await page.$('.test-panel-trigger[aria-expanded="false"]'))
-    await page.click(".test-panel-trigger")
+    // Rerun loads its definition asynchronously and opens the panel itself.
+  } else {
+    await page.click('[data-workspace-tab="tests"]')
+    if (await page.$('.test-panel-trigger[aria-expanded="false"]'))
+      await page.click(".test-panel-trigger")
+  }
   await page.waitForSelector("#studio-test-panel.studio-floating-panel-open")
   await page.click("#studio-test-panel .run-button")
 }
