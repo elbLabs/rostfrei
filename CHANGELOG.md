@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-19
+
+### Added
+
+- Saved-evidence reader with bounded text, Markdown and Mermaid export, plus an
+  experimental read-only MCP Apps reader. Presentations preserve recorded
+  causation, missing evidence and conflicting outcomes, and distinguish command
+  outcomes, test verdicts and capture facts.
+- Shared evidence components and Rust/TypeScript presentation contracts, with
+  installed-package and official MCP Inspector qualification in CI.
+
+### Changed
+
+- Tracer Studio uses a canvas-first layout with fixed Commands, Tests, Runs,
+  Observe and Correlations tabs, Ctrl+1–5 shortcuts and accessible tab navigation.
+  Execution and saved-run history have separate state and mode-local controls.
+- Message inspection overlays preserve graph geometry; saved runs offer optional
+  summaries. Studio, the website and the experimental reader share grey/rust
+  design tokens and packaged fonts.
+
 ## [0.2.2] - 2026-11-11
 
 ### Added
