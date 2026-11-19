@@ -193,6 +193,24 @@ cargo xtask versions check --tag v0.2.3
 
 The workflow creates a draft GitHub release; it does not publish crates.
 
+The **Security** workflow audits both Rust lockfiles and both JavaScript dependency
+graphs and scans the source tree for secrets. It runs on PRs, `main`, weekly, and
+as a required job in release preparation. To run the dependency checks locally:
+
+```sh
+cargo install --locked cargo-audit --version 0.23.0
+cargo audit --deny warnings
+cargo audit --deny warnings --file crates/rostfrei-macros/tests/dependency-matrix/Cargo.lock
+pnpm audit --audit-level low
+npm --prefix experiments/studio-adapters/mcp-apps audit --package-lock-only --audit-level low
+```
+
+The scoped minimatch override patches shadcn's `ts-morph` dependency chain
+(GHSA-g3hv-75wg-m249). `@ts-morph/common` uses the supported `minimatch(path,
+pattern)` API; remove the override when shadcn adopts a patched dependency chain.
+The website explicitly supplies a patched Solid peer for TanStack devtools to
+keep its Seroval dependency chain current.
+
 ### crates.io publication
 
 All 15 public library/tooling packages have registry metadata. The benchmark and

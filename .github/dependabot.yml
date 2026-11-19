@@ -1,0 +1,27 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directories:
+      - /
+      - /crates/rostfrei-macros/tests/dependency-matrix
+    schedule:
+      interval: weekly
+    groups:
+      rust-dependencies:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /experiments/studio-adapters/mcp-apps
+    schedule:
+      interval: weekly
+    groups:
+      javascript-dependencies:
+        patterns: ['*']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
