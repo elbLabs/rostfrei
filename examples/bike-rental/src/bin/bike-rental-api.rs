@@ -1,6 +1,10 @@
 use bike_rental::{
     APPLICATION_NAME, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
-    demo::{demo_fixture, no_rental_fleets_fixture, rented_demo_fixture, seed_demo},
+    demo::{
+        booked_city_bike_fixture, demo_fixture, no_rental_fleets_fixture,
+        pending_city_collection_fixture, rental_workshop_fixture, rented_demo_fixture,
+        reservable_branch_fixture, seed_demo,
+    },
     tracer,
 };
 use rostfrei::nats::{NatsConnectionConfig, ServerVersion, connect};
@@ -87,6 +91,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .with_default_test_fixture(demo_fixture()?)
             .with_test_fixture(no_rental_fleets_fixture()?)
             .with_test_fixture(rented_demo_fixture()?)
+            .with_test_fixture(rental_workshop_fixture()?)
+            .with_test_fixture(reservable_branch_fixture()?)
+            .with_test_fixture(booked_city_bike_fixture()?)
+            .with_test_fixture(bike_rental::demo::returned_city_bike_fixture()?)
+            .with_test_fixture(pending_city_collection_fixture()?)
             .with_tracer(Some(tracer))
             .provision_and_start()
             .await?;

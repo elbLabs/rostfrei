@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "id": "add-first-bicycle",
-  "name": "Add the first bicycle to a new fleet",
+  "name": "Register the first bicycle in a new fleet",
   "setup": {
     "fixture": "no-rental-fleets"
   },
@@ -14,7 +14,7 @@
           {
             "kind": "command",
             "key": "subject",
-            "name": "add-bicycle",
+            "name": "register-bicycle",
             "schemaVersion": 2,
             "payload": {
               "bicycle_id": "bike-01",

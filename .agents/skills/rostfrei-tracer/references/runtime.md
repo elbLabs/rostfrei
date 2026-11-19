@@ -67,7 +67,7 @@ acceptance. Never remap a missing/retired capability to Test or production dispa
 Catalog is **v1**, behavior definitions and observed MessageSeries are **v2**, and
 fixtures are **v1**. Use the versions and links advertised by the running host.
 
-Commands address bounded contexts. For example, `add-bicycle` schema 2 contains
+Commands address bounded contexts. For example, `register-bicycle` schema 2 contains
 `fleet_id`, `bicycle_id` and `condition`. Direct typed HTTP submission wraps it as
 `{"schemaVersion":2,"payload":{...}}`. No aggregate ID is added to the command
 route. Follow advertised links and actual registered payload versions.

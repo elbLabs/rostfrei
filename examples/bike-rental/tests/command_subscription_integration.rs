@@ -5,7 +5,7 @@ use std::{error::Error, sync::Arc, time::Duration};
 use async_nats::jetstream::{Message, consumer::PullConsumer};
 use bike_rental::{
     BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsError, BikeRentalNatsResourceLimits,
-    BikeRentalNatsRuntime, rental_fleet::RentBicycle,
+    BikeRentalNatsRuntime, rental_fleet::ReturnBicycle,
 };
 use futures_util::StreamExt as _;
 use rostfrei::messaging::{CommandAddress, CommandEnvelope, ConsumerConfig};
@@ -48,12 +48,12 @@ impl Fixture {
         let context = self.config.context();
         let current = self
             .config
-            .command_route(BikeRentalCommand::RentBicycle)
+            .command_route(BikeRentalCommand::ReturnBicycle)
             .consumer();
         Ok(ConsumerConfig::new(
-            context.consumer_name(RentBicycle::LOCAL_ID, schema_version)?,
-            context.durable_name(RentBicycle::LOCAL_ID, schema_version)?,
-            context.command_address(RentBicycle::LOCAL_ID)?,
+            context.consumer_name(ReturnBicycle::LOCAL_ID, schema_version)?,
+            context.durable_name(ReturnBicycle::LOCAL_ID, schema_version)?,
+            context.command_address(ReturnBicycle::LOCAL_ID)?,
             current.ack_wait(),
             current.processing_timeout(),
             current.concurrency(),
@@ -71,7 +71,7 @@ impl Fixture {
         );
         let message = bus.encode_dynamic(DynamicCommandRequest::new(
             OperationId::new(operation)?,
-            RentBicycle::LOCAL_ID,
+            ReturnBicycle::LOCAL_ID,
             schema_version,
             json!({ "fleet_id": "city-fleet", "bicycle_id": "bike-42" }),
         )?)?;
@@ -152,11 +152,11 @@ async fn reprovisioning_preserves_existing_durable_progress_and_pending_older_sc
 
         // Reuse the released --v2 identity even with an older payload still queued.
         // Naming independence across typed schema definitions is covered by the unit test.
-        assert_eq!(RentBicycle::SCHEMA_VERSION, 2);
+        assert_eq!(ReturnBicycle::SCHEMA_VERSION, 2);
         let runtime = fixture.reprovision().await?;
         let route = runtime
             .config()
-            .command_route(BikeRentalCommand::RentBicycle);
+            .command_route(BikeRentalCommand::ReturnBicycle);
         assert_eq!(legacy.name(), route.consumer().name());
         assert_eq!(legacy.durable_name(), route.consumer().durable_name());
         assert_eq!(legacy.address(), route.address());

@@ -1,6 +1,10 @@
 use crate::rental_fleet::{
-    AddBicycle, BicycleId, BicycleRented, FleetId, RentBicycle, ReturnBicycle, TransferBicycle,
+    BicycleId, BicycleRented, CollectReservedBicycle, FleetId, RegisterBicycle,
+    ReserveBicycleCategory, ReturnBicycle, TransferBicycle,
 };
+use crate::rental_payment::{CollectRentalPayment, RefundEligibleRentalDeposit};
+use crate::rental_tariff::ConfigureRentalTariff;
+use crate::repair_job::OpenRepairJob;
 use async_trait::async_trait;
 use rostfrei::fixtures::{Fixture, FixtureApplyReport};
 use rostfrei::messaging::{
@@ -106,26 +110,41 @@ fn env_limit<T: std::str::FromStr + PartialOrd + Default>(
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum BikeRentalCommand {
-    RentBicycle,
     ReturnBicycle,
-    AddBicycle,
+    RegisterBicycle,
     TransferBicycle,
+    OpenRepairJob,
+    ReserveBicycleCategory,
+    ConfigureRentalTariff,
+    CollectReservedBicycle,
+    CollectRentalPayment,
+    RefundEligibleRentalDeposit,
 }
 impl BikeRentalCommand {
     pub const fn command_name(self) -> &'static str {
         match self {
-            Self::RentBicycle => RentBicycle::LOCAL_ID,
             Self::ReturnBicycle => ReturnBicycle::LOCAL_ID,
-            Self::AddBicycle => AddBicycle::LOCAL_ID,
+            Self::RegisterBicycle => RegisterBicycle::LOCAL_ID,
             Self::TransferBicycle => TransferBicycle::LOCAL_ID,
+            Self::OpenRepairJob => OpenRepairJob::LOCAL_ID,
+            Self::ReserveBicycleCategory => ReserveBicycleCategory::LOCAL_ID,
+            Self::ConfigureRentalTariff => ConfigureRentalTariff::LOCAL_ID,
+            Self::CollectReservedBicycle => CollectReservedBicycle::LOCAL_ID,
+            Self::CollectRentalPayment => CollectRentalPayment::LOCAL_ID,
+            Self::RefundEligibleRentalDeposit => RefundEligibleRentalDeposit::LOCAL_ID,
         }
     }
     pub const fn schema_version(self) -> u32 {
         match self {
-            Self::RentBicycle => RentBicycle::SCHEMA_VERSION,
             Self::ReturnBicycle => ReturnBicycle::SCHEMA_VERSION,
-            Self::AddBicycle => AddBicycle::SCHEMA_VERSION,
+            Self::RegisterBicycle => RegisterBicycle::SCHEMA_VERSION,
             Self::TransferBicycle => TransferBicycle::SCHEMA_VERSION,
+            Self::OpenRepairJob => OpenRepairJob::SCHEMA_VERSION,
+            Self::ReserveBicycleCategory => ReserveBicycleCategory::SCHEMA_VERSION,
+            Self::ConfigureRentalTariff => ConfigureRentalTariff::SCHEMA_VERSION,
+            Self::CollectReservedBicycle => CollectReservedBicycle::SCHEMA_VERSION,
+            Self::CollectRentalPayment => CollectRentalPayment::SCHEMA_VERSION,
+            Self::RefundEligibleRentalDeposit => RefundEligibleRentalDeposit::SCHEMA_VERSION,
         }
     }
 }
@@ -166,7 +185,7 @@ impl BikeRentalIntegrationEventRoute {
 pub struct BikeRentalNatsConfig {
     runtime: NatsRuntimeConfig,
     resource_limits: BikeRentalNatsResourceLimits,
-    command_routes: [BikeRentalCommandRoute; 4],
+    command_routes: [BikeRentalCommandRoute; 9],
     integration_event_route: BikeRentalIntegrationEventRoute,
 }
 impl BikeRentalNatsConfig {
@@ -239,10 +258,30 @@ impl BikeRentalNatsConfig {
             RetryDelay::new(Duration::from_secs(1))?,
         )?;
         let command_routes = [
-            command_route::<RentBicycle>(&context, BikeRentalCommand::RentBicycle)?,
             command_route::<ReturnBicycle>(&context, BikeRentalCommand::ReturnBicycle)?,
-            command_route::<AddBicycle>(&context, BikeRentalCommand::AddBicycle)?,
+            command_route::<RegisterBicycle>(&context, BikeRentalCommand::RegisterBicycle)?,
             command_route::<TransferBicycle>(&context, BikeRentalCommand::TransferBicycle)?,
+            command_route::<OpenRepairJob>(&context, BikeRentalCommand::OpenRepairJob)?,
+            command_route::<ReserveBicycleCategory>(
+                &context,
+                BikeRentalCommand::ReserveBicycleCategory,
+            )?,
+            command_route::<ConfigureRentalTariff>(
+                &context,
+                BikeRentalCommand::ConfigureRentalTariff,
+            )?,
+            command_route::<CollectReservedBicycle>(
+                &context,
+                BikeRentalCommand::CollectReservedBicycle,
+            )?,
+            command_route::<CollectRentalPayment>(
+                &context,
+                BikeRentalCommand::CollectRentalPayment,
+            )?,
+            command_route::<RefundEligibleRentalDeposit>(
+                &context,
+                BikeRentalCommand::RefundEligibleRentalDeposit,
+            )?,
         ];
         let address = context.integration_event_address(BICYCLE_RENTAL_STARTED_EVENT_NAME)?;
         let consumer = runtime
@@ -280,16 +319,31 @@ impl BikeRentalNatsConfig {
     pub const fn domain_event_consumer(&self) -> &NatsDomainEventConsumerConfig {
         &self.runtime.domain_events
     }
-    pub const fn command_routes(&self) -> &[BikeRentalCommandRoute; 4] {
+    pub const fn command_routes(&self) -> &[BikeRentalCommandRoute; 9] {
         &self.command_routes
     }
     pub const fn command_route(&self, command: BikeRentalCommand) -> &BikeRentalCommandRoute {
-        let [rent, returned, added, transferred] = &self.command_routes;
+        let [
+            returned,
+            added,
+            transferred,
+            repair,
+            reserved,
+            tariff,
+            collect,
+            process,
+            settle,
+        ] = &self.command_routes;
         match command {
-            BikeRentalCommand::RentBicycle => rent,
             BikeRentalCommand::ReturnBicycle => returned,
-            BikeRentalCommand::AddBicycle => added,
+            BikeRentalCommand::RegisterBicycle => added,
             BikeRentalCommand::TransferBicycle => transferred,
+            BikeRentalCommand::OpenRepairJob => repair,
+            BikeRentalCommand::ReserveBicycleCategory => reserved,
+            BikeRentalCommand::ConfigureRentalTariff => tariff,
+            BikeRentalCommand::CollectReservedBicycle => collect,
+            BikeRentalCommand::CollectRentalPayment => process,
+            BikeRentalCommand::RefundEligibleRentalDeposit => settle,
         }
     }
     pub const fn integration_event_route(&self) -> &BikeRentalIntegrationEventRoute {

@@ -9,7 +9,7 @@ capability for these read-only requests. Follow the returned `detailHref` and
 
 ```text
 GET /quarantine/test
-GET /quarantine/test?kind=command&context=bike-rental&name=rent-bicycle&limit=25
+GET /quarantine/test?kind=command&context=bike-rental&name=return-bicycle&limit=25
 GET /quarantine/test/{recordId}
 ```
 

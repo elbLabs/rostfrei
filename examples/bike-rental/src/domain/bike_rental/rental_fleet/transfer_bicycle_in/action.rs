@@ -1,6 +1,6 @@
 use rostfrei::domain_action;
 
-use crate::domain::rental_fleet::{BicycleCondition, BicycleId, FleetId};
+use crate::domain::rental_fleet::{BicycleCategory, BicycleCondition, BicycleId, FleetId};
 
 #[domain_action(id = "transfer-bicycle-in", label = "Transfer bicycle in")]
 pub trait TransferBicycleInAction {
@@ -9,5 +9,6 @@ pub trait TransferBicycleInAction {
         bicycle_id: BicycleId,
         from_fleet_id: FleetId,
         condition: BicycleCondition,
+        category: Option<BicycleCategory>,
     );
 }

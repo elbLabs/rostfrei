@@ -55,7 +55,7 @@ with `.agents/skills/rostfrei-develop-feature/assets/add-first-bicycle.json`.
 | JSON | Meaning |
 | --- | --- |
 | `setup.fixture: no-rental-fleets` | Registered fixture revision `1`: an empty domain-event history. Reset creates an empty Test event store. |
-| Root `kind: command`, `key: add` | The **When**: bounded context `bike-rental`, `add-bicycle` payload schema `2`; payload supplies the fleet and bicycle identities. |
+| Root `kind: command`, `key: add` | The **When**: bounded context `bike-rental`, `register-bicycle` payload schema `2`; payload supplies the fleet and bicycle identities. |
 | Root `outcome: accepted` | The **Then** business decision, separate from HTTP or operation success. |
 | Event `parentKey: add` | A committed `bicycle-added` event schema `1` causally descended from this command, with the expected payload. |
 | `within: 35s`, `settleFor: 1s` | Bounded execution/capture and idle-settling window. These are not sleeps that prove correctness. |

@@ -165,7 +165,7 @@ cargo run --locked -p bike-rental -- --tracer
 Both starts use `tracer::bindings()` and run Normal command consumers, preserving
 the released durable generation `2`. Changing a command payload schema does not
 change its subscription. Both modes seed Normal state through idempotent
-`AddBicycle` commands. Named fixtures are reserved for isolated Test state.
+`RegisterBicycle` commands. Named fixtures are reserved for isolated Test state.
 
 Set `ROSTFREI_NATS_URL`. For Tracer also set `ROSTFREI_API_TOKEN` and the separately
 configured `ROSTFREI_DISPATCH_TOKEN`; optional `ROSTFREI_INSPECTION_TOKEN` enables

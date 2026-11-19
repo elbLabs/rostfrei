@@ -1,10 +1,12 @@
 pub(in crate::domain) mod assess_rental_eligibility;
+mod category;
 mod condition;
 mod entity;
 mod identity;
 mod registration_number;
 mod rental_status;
 
+pub use category::BicycleCategory;
 pub use condition::BicycleCondition;
 pub use entity::Bicycle;
 pub use identity::BicycleId;

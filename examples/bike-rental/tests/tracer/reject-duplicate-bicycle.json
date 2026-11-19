@@ -14,7 +14,7 @@
           {
             "kind": "command",
             "key": "subject",
-            "name": "add-bicycle",
+            "name": "register-bicycle",
             "schemaVersion": 2,
             "payload": {
               "bicycle_id": "bike-42",

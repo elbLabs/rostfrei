@@ -29,6 +29,13 @@ fn declares_rental_status_metadata_and_initial_state() {
                 EntityLifecycleStateDescriptor {
                     id: EntityLifecycleStateId {
                         lifecycle: LIFECYCLE,
+                        local: "awaiting-payment"
+                    },
+                    label: "Awaiting payment",
+                },
+                EntityLifecycleStateDescriptor {
+                    id: EntityLifecycleStateId {
+                        lifecycle: LIFECYCLE,
                         local: "rented",
                     },
                     label: "Rented",

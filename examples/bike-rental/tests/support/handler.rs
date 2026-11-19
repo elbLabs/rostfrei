@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use rostfrei::{CommandDecision, CommandExecution, CommandHandler, CommandHandlingResult};
 
-use super::{BicycleUnavailable, RentBicycle, RentBicycleAction as _};
-use crate::domain::rental_fleet::RentalFleetAggregate;
+use super::RentBicycle;
+use bike_rental::rental_fleet::{BicycleUnavailable, RentBicycleAction as _, RentalFleetAggregate};
 
 pub struct RentBicycleHandler;
 
