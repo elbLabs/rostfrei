@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- Refresh Rust TLS, certificate trust, Tokio and rustix dependencies in both
+  lockfiles, including the lock packaged with future CLI releases.
+- Update frontend and experimental MCP reader dependencies to address known
+  advisories, including deserialization, archive extraction and development
+  tooling issues.
+- Gate release preparation on Rust/JavaScript dependency audits and a source
+  secret scan, also run weekly and on PRs. Pin release/security workflow actions
+  to commits and add scheduled dependency-update PRs.
+
 ## [0.2.3] - 2026-11-19
 
 ### Added
