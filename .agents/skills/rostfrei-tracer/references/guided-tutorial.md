@@ -1,9 +1,10 @@
 # Guided tutorial
 
 Use this workflow when a learner asks to explore Rostfrei with an agent. Read
-[runtime prerequisites](runtime.md) and apply the token, link-safety, execution
-and evidence rules in [the Tracer skill](../SKILL.md). This reference travels
-with the existing Tracer skill and its release metadata.
+[setup](runtime.md#setup), [HTTP requests](runtime.md#http-requests) and
+[behavior suites](runtime.md#behavior-suites); apply the evidence rules in
+[the Tracer skill](../SKILL.md). This reference travels with the skill and its
+release metadata.
 
 ## Teach one step at a time
 
@@ -176,7 +177,7 @@ If the selected live resource expired, use its saved capture or report the gap.
 
 Switching adapters renders the same saved evidence and preserves the selection;
 it never reruns a test. Fall back to text on unavailable/failed rendering. If a
-diagram is requested, apply the skill's explicit-causality and escaping rules;
+diagram is requested, follow [Optional diagrams](runtime.md#optional-diagrams);
 do not require Mermaid rendering to understand the explanation.
 
 ## Finish
