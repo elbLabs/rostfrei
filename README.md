@@ -1,184 +1,106 @@
-# <img src="packages/ui/src/brand/duck-icon.png" width="36" height="36" alt="" align="absmiddle" /> rostfrei
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/elbLabs/rostfrei/main/packages/ui/src/brand/duck-dark.png">
+    <img src="https://raw.githubusercontent.com/elbLabs/rostfrei/main/packages/ui/src/brand/duck.png" width="144" alt="rostfrei duck mascot">
+  </picture>
+</p>
 
-**A Rust framework for event-sourced applications.**
+<h1 align="center">rostfrei</h1>
 
-[Website](https://elblabs.github.io/rostfrei/) | [Documentation](https://elblabs.github.io/rostfrei/docs) | [Getting started](https://elblabs.github.io/rostfrei/docs/getting-started)
+<p align="center">
+  <strong>A batteries-included Rust framework for event-sourced applications.</strong>
+</p>
 
-Business rules stay in ordinary Rust. rostfrei supplies history loading,
-durable commands, atomic event transactions, NATS JetStream adapters, HTTP routes,
-read models, and behavioral tests you can inspect through Tracer.
+<p align="center">
+  <a href="https://elblabs.github.io/rostfrei/">Website</a> |
+  <a href="https://elblabs.github.io/rostfrei/docs">Documentation</a> |
+  <a href="https://elblabs.github.io/rostfrei/docs/getting-started">Getting started</a> |
+  <a href="studio/README.md">Tracer Studio</a>
+</p>
 
-Domain declarations name the model and its ownership; `cargo rostfrei check`
-validates its structure. Applications use the `rostfrei` facade and enable the
-adapters they need.
+<p align="center">
+  <a href="https://crates.io/crates/rostfrei"><img src="https://img.shields.io/crates/v/rostfrei?color=c65d24" alt="Latest version on crates.io"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-526578" alt="License: Apache-2.0"></a>
+</p>
 
-**Status: 0.1.** APIs are evolving. Use the runnable example to evaluate the
-framework. See the [0.1 migration guide](docs/migration-0.1.md) when upgrading.
-
-## Explore with your agent
-
-Copy this prompt into your coding agent. It will guide you through the runnable
-bike-rental example, starting with an ordinary successful rental:
-
-```text
-Help me explore rostfrei through its bike-rental example. Use https://github.com/elbLabs/rostfrei and read docs/agent-tutorial.md from the checkout before setup. Check my environment, prepare an isolated local demo, and guide me through a successful rental and a rejection using real Tracer evidence. Explain one step at a time and let me choose what to inspect next. Use text by default; use a richer display only when its adapter is explicitly available.
-```
-
-The [agent-guided tutorial](docs/agent-tutorial.md) connects setup to the
-checkout's Tracer skill. The text-based journey needs Git, Rust, and NATS
-(usually through Docker); Studio is optional. The agent checks what is available
-before setup. The [reference documentation](docs/README.md) remains directly
-readable by people and agents.
-
-## Why event sourcing?
-
-A bicycle was added, rented, then returned. Applying those recorded facts
-reconstructs its availability. The same history can support another question,
-such as rental activity, through a saved read model. Events are the source of
-domain data, beyond simply recording an audit trail.
-
-Should a returned bicycle be available immediately or need an inspection first?
-That remains a domain decision. Modeling the rule is useful engineering work;
-rostfrei handles the recurring persistence, concurrency, and delivery mechanics.
+Business rules stay in ordinary Rust. rostfrei connects them to durable commands,
+atomic event transactions, messaging, and read models—with Tracer to inspect the results.
 
 ## Use the framework
 
-Use **`rostfrei` as your framework dependency**, enabling the adapters you need:
+One dependency, with the adapters you need:
 
 ```toml
 [dependencies]
 rostfrei = { version = "0.2.3", features = ["nats", "tracer"] }
 ```
 
-See [Framework setup](docs/getting-started.mdx#one-framework-dependency) for
-features, imports, and test dependencies.
+Install the development CLI separately:
 
-Install the development CLI separately with
-`cargo install --locked --version 0.2.3 rostfrei-structure`; see
-[Agent Skills setup](docs/agent-skills-install.md) for dependency-aware installation.
+```sh
+cargo install --locked --version 0.2.3 rostfrei-structure
+```
 
-## Documentation and examples
+See [framework setup](docs/getting-started.mdx#one-framework-dependency) for
+features, imports, and test dependencies. **0.2 APIs are evolving**;
+read the [upgrade guide](docs/getting-started.mdx#upgrading-from-01) for existing applications.
 
-- [Bike-rental example](examples/bike-rental): run a NATS-backed application
-  with rental, return, fleet-addition, and cross-fleet transfer commands.
-- [Official documentation](docs/README.md): shared by developers and agents,
-  [published on the website](https://elblabs.github.io/rostfrei/docs) from the same
-  source. The [machine index](https://elblabs.github.io/rostfrei/llms.txt) exposes
-  the Markdown/MDX pages directly.
-- [Command runtime](docs/command-runtime.md): execution, persistence, and recovery.
-- [Tracer Studio](studio): inspect behavioral tests and their message graphs.
-- [Changelog](CHANGELOG.md): release changes and migration notes.
+## What you get
 
-## Execution model
+- **A checked domain model.** Declare bounded contexts, aggregates, and behavior.
+  `cargo rostfrei check` validates ownership and project structure.
+- **Durable decisions.** Commit events across aggregates in one atomic transaction.
+  Exact retries recover the recorded outcome.
+- **Messaging and HTTP.** Typed buses, NATS JetStream storage and delivery, and
+  HTTP command and query routes.
+- **Event-driven read models.** Saved query views with persistence, source
+  checkpoints, and concurrency retries.
+- **Tests you can inspect.** Given/When/Then scenarios run through the real,
+  isolated NATS-backed pipeline. Explore the evidence with a coding agent or Studio.
 
-A command belongs to a bounded context and carries every aggregate ID it needs.
-Its handler loads those aggregates and calls domain behavior. The runtime
-atomically appends the resulting domain events at the expected stream versions.
-A rejection appends no domain events. Accepted commands persist a receipt even
-when they emit no events. Queries read state without changing it.
+## From command to history
 
-Accepted and rejected decisions are durable across local, NATS, and HTTP execution.
-Retry with the original operation ID and evidence to recover the same decision.
-Result-detail expiry never permits reevaluation. See the
-[command runtime](docs/command-runtime.md) for identity, authorization, and recovery.
+The [bike-rental example](examples/bike-rental) handles a rental like this:
 
-Writable NATS startup selects a fresh journal/results pair with `with_fresh_outcomes()`;
-no epoch label is required. Follow the example's [setup guide](examples/bike-rental/README.md).
-Existing deployments need the [cutover runbook](docs/completed-outcome-cutover.md).
+```mermaid
+flowchart LR
+    command["RentBicycle<br/>Command"] -->|accepted| event["BicycleRented<br/>Committed domain event"]
+    event -->|after commit| integration["BicycleRentalStarted<br/>Public integration event"]
+    command -->|unavailable| rejection["Business rejection<br/>No domain events appended"]
+```
 
-Domain events form private aggregate history. Integration events are separately
-versioned public contracts published after commit. NATS JetStream adapters
-provide durable command delivery, integration-event messaging, and event storage.
-Atomic event transactions require NATS Server 2.12.1 or newer.
+Replaying private domain events reconstructs aggregate state: history is the
+source of truth. Separately versioned integration events share public contracts
+after commit. The example also transfers bicycles between two fleets atomically.
 
-Messaging is scoped to one application name, such as `bike-rental`. Isolated
-test traffic uses separate subjects and streams under that same application.
-Infrastructure is provisioned through explicit APIs; the example calls them
-during local startup. See [subjects and streams](https://elblabs.github.io/rostfrei/docs/messaging/subjects)
-for the routing conventions.
+## Explore with your agent
 
-Tracer exposes two real command actions:
-
-| Action | Effect |
-| --- | --- |
-| Test | Execute through the command pipeline against isolated test state. |
-| Production dispatch | Execute against the production target with a separate capability token. |
-
-Tracer also supports [continuous observation](docs/continuous-observation.md),
-[quarantine inspection](docs/quarantine-inspection.md), and uncommitted
-[handler diagnostics](docs/handler-simulation.md).
-
-For saved query views, [read models](https://elblabs.github.io/rostfrei/docs/read-models)
-combine typed event transformations with KV persistence, checkpoints, and
-concurrency retries. Queries use a read-only handle.
-
-See the [runtime reference](docs/runtime.md) for NATS authentication, history
-reads and audits, command correlation, and worker delivery.
-
-## HTTP API
-
-Applications explicitly mount the routes provided by `rostfrei::http` (feature `http`):
+Copy this prompt into a coding agent with terminal access:
 
 ```text
-POST /contexts/{context}/commands/{command}/schemas/{schema_version}
-POST /contexts/{context}/queries/{query}/schemas/{schema_version}
+Help me explore rostfrei through its bike-rental example. Use https://github.com/elbLabs/rostfrei and read docs/agent-tutorial.md from the checkout before setup. Check my environment, prepare an isolated local demo, and guide me through a successful rental and a rejection using real Tracer evidence. Explain one step at a time and let me choose what to inspect next. Use text by default; use a richer display only when its adapter is explicitly available.
 ```
 
-Both accept the registered JSON payload directly. Commands require an
-`Idempotency-Key` header. Queries use POST for structured input; their handlers
-must remain read-only. Query responses use `Cache-Control: private, no-store`.
+The [tutorial](docs/agent-tutorial.md) uses Git, Rust, and NATS, usually through
+Docker. Your agent checks prerequisites and guides each step; Studio is optional.
+For ongoing work, [Agent Skills](docs/agent-skills-install.md) support test-first
+development and runtime inspection.
 
-## Macro setup
+## Documentation
 
-Install macro support once at the root of each crate declaring domain types:
+| Explore | Start here |
+| --- | --- |
+| Model the business | [Domain macros](docs/domain-macros/index.mdx) and [project structure](docs/project-structure/index.mdx) |
+| Run an application | [Command runtime](docs/command-runtime.md), [read models](docs/read-models/index.mdx), and [operations](docs/README.md#runtime-and-operations) |
+| Browse the reference | [Shared documentation](docs/README.md) and the [machine-readable index](https://elblabs.github.io/rostfrei/llms.txt) |
+| Understand the design | [Architectural maxims](docs/adr/README.md) and [release changes](CHANGELOG.md) |
 
-```rust
-rostfrei::install_macro_support!();
-```
+## Contribute
 
-## Agent Skills
-
-- **`rostfrei-develop-feature`** guides Given/When/Then and test-first development
-  through the application's real NATS-backed behavior suite.
-- **`rostfrei-tracer`** guides the text-first tutorial, discovers runtime
-  capabilities and explains tests, recorded operations, observations and
-  quarantine. It presents text by default; richer displays require an explicitly
-  available adapter using the same recorded evidence.
-
-The [Agent Skills guide](docs/agent-skills-install.md) covers dependency-matched
-installation, updates, and application test execution.
-
-## Development
-
-The repository pins Rust 1.98, Clippy, rustfmt, and `rust-src` in
-[`rust-toolchain.toml`](rust-toolchain.toml). Enable the tracked pre-commit hook:
-
-```sh
-git config core.hooksPath .githooks
-```
-
-The hook runs the workspace structure check and Clippy.
-
-The website and Tracer Studio share components and theme controls in
-[`@rostfrei/ui`](packages/ui/README.md). Use Node.js 24 (or 22.13+ on the 22.x line) and
-pnpm 10.10.0. Install the frontend workspace from this repository root:
-
-```sh
-pnpm install --frozen-lockfile
-pnpm dev:website
-# In another terminal, when working on Studio:
-pnpm dev:studio
-```
-
-`pnpm build` builds both apps; `pnpm lint` checks all frontend packages.
-`pnpm dev:ui` opens the shared component gallery on port 4177.
-
-The [development guide](docs/development.md) covers broker-backed tests,
-benchmarks, shared crate versions, release preparation, and the starter's pinned
-dependency contract.
+Enable the structure-check and Clippy hook with `git config core.hooksPath .githooks`.
+The [development guide](docs/development.md) covers tests, benchmarks, and releases;
+see [website](website/README.md) and [Studio](studio/README.md) for frontend development.
 
 ## License
 
-Copyright (c) 2026 elbtech.dev.
-
-Licensed under the [Apache License 2.0](LICENSE).
+Copyright (c) 2026 elbtech.dev. Licensed under the [Apache License 2.0](LICENSE).
