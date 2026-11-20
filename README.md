@@ -24,7 +24,7 @@
 </p>
 
 Business rules stay in ordinary Rust. rostfrei connects them to durable commands,
-atomic event transactions, messaging, and read models—with Tracer to inspect the results.
+atomic event transactions, messaging, and read models with Tracer to inspect the results.
 
 ## Use the framework
 
