@@ -23,8 +23,15 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-526578" alt="License: Apache-2.0"></a>
 </p>
 
-Business rules stay in ordinary Rust. rostfrei connects them to durable commands,
-atomic event transactions, messaging, and read models with Tracer to inspect the results.
+**Build reliable systems with your coding agent. Focus on the business rules that matter.**
+
+Event sourcing gives you a history you can replay, state you can reconstruct,
+and new views of the facts you've already recorded. rostfrei handles durable
+commands, atomic event transactions, messaging, and read models while your
+business rules stay in ordinary Rust.
+
+Work with your agent to turn those rules into features, run real behavioral tests,
+and inspect the results with Tracer. Build with evidence you can both check.
 
 ## Use the framework
 
