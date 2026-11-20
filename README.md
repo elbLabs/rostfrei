@@ -8,7 +8,7 @@
 <h1 align="center">rostfrei</h1>
 
 <p align="center">
-  <strong>A batteries-included Rust framework for event-sourced applications.</strong>
+  <strong>A Rust framework for event-sourced applications.</strong>
 </p>
 
 <p align="center">
