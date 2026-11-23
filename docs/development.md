@@ -70,6 +70,18 @@ the rental example twice against the same disposable broker.
 
 ### NATS authentication and workers
 
+To qualify the [paired backup and restore procedure](completed-outcome-cutover.md#back-up-and-restore-a-split-authority),
+build the operator CLI and run it against the private broker fixtures. The test
+invokes the binary by absolute path with an empty `PATH`:
+
+```sh
+cargo build --locked -p rostfrei-structure --bin cargo-rostfrei
+ROSTFREI_STORE_CLI="$PWD/target/debug/cargo-rostfrei" \
+  ROSTFREI_RECOVERY_NATS_SERVER=/path/to/nats-server-2.14.10 \
+  ROSTFREI_NATS_SERVER=/path/to/nats-server-2.12.15 cargo xtask test --contracts -- \
+  cargo test --locked -p rostfrei-nats --test completed_outcome_fencing -- --ignored
+```
+
 The authentication acceptance suite starts its own Docker containers. It covers
 credentials, reconnects, failover, command delivery, durable responses, replay,
 and post-commit consumption:

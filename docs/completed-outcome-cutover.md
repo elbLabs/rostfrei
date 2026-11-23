@@ -48,6 +48,71 @@ via normal policy update; and safe evidence-bound import without overwriting
 conflicting authority. A missing/corrupt/unavailable detail record never permits
 reevaluation of a completed decision.
 
+## Back up and restore a split authority
+
+`cargo rostfrei store backup` and `cargo rostfrei store restore` use JetStream's
+native snapshot protocol directly. Use a Rostfrei CLI build containing these
+commands and NATS Server **2.14.10** on both ends. The qualified layout is the
+split journal and command-results pair (version 2). No external NATS CLI is required.
+On 2.12.15 a snapshot can contain a different creation time from the running
+stream's, and a seemingly successful restore can lose its identity on the next
+restart. The commands refuse that release. If upgrading an existing deployment,
+verify the original authority after the broker restart before taking a backup.
+
+1. **Establish one recovery point.** Stop intake, drain in-flight commands and
+   broker-fence writers, detail expiry, provisioning and other administration
+   of both streams. Two native snapshots do not make a live, cross-stream
+   transaction. With the original application, context, traffic scope, epoch
+   (if used) and limits, verify `NatsEventStore::connect` and record the store's
+   `authority()`, both configured stream names and representative original
+   command envelopes/outcomes. Keep this evidence with the deployment config.
+2. Back up to a **new** directory. Set `NATS_URL` explicitly and supply the
+   maintenance credentials separately: `NATS_USER` and `NATS_PASSWORD`, `NATS_TOKEN`,
+   or `NATS_CREDS` (credentials file). Use `tls://` for TLS, `NATS_CA` for a private
+   root, and `NATS_CERT` plus `NATS_KEY` for a client certificate. No CLI context
+   or implicit default endpoint is used. For example:
+
+   ```sh
+   # JOURNAL and RESULTS are the exact names from the verified store config.
+   NATS_URL="$SOURCE_URL" cargo rostfrei store backup "$BACKUP_DIR" "$JOURNAL" "$RESULTS"
+   ```
+
+   The command checks the cross-bindings and compares both streams' policies,
+   creation times, message counts, byte counts and sequence ranges before and
+   after backup, then verifies the creation time and bindings inside each native
+   archive. Archive the **whole** successful directory as one immutable,
+   access-controlled set: the archives contain historical result bodies. Keep
+   a trusted copy of `pair.sha256` separately and compare it before restoring.
+   No consumer positions, messaging streams, read
+   models or other application resources are backed up by this procedure.
+3. **Restore only to a fenced destination** with compatible capacity/placement,
+   both stream names absent, and no provisioning or workers. Keep the original
+   deployment fenced during cutover: these are two copies of the *same*
+   authority. Restore the trusted set with the original names:
+
+   ```sh
+   NATS_URL="$DESTINATION_URL" cargo rostfrei store restore "$BACKUP_DIR" "$JOURNAL" "$RESULTS"
+   ```
+
+   It checks the entire set and both destination names before restoring, then
+   compares each restored stream to its source evidence. **On any failure keep
+   workers fenced.** Discard incomplete backups. Preserve a partial restore for
+   diagnosis; start again on an empty isolated destination with the same intact
+   set. Never combine snapshots from different cuts, recreate the missing half,
+   change incarnation metadata or provision a new authority as a repair.
+4. Before admitting writes, restart the isolated destination on its restored
+   storage. Connect with the original config and
+   `with_read_only_outcomes()` (do **not** provision). Verify the original
+   `authority()`, history and results of exact retries of the saved envelopes.
+   Reconcile commands, decisions, external effects and detail withdrawals after
+   the backup point: restoring older history alone cannot guarantee safe retries
+   or preserve later expiry. Resume only when the cut is authoritative, dependent
+   resources are recovered consistently and only the destination can accept writes.
+
+The [disposable recovery test](development.md#nats-authentication-and-workers)
+exercises this procedure with a file-backed, single-node source and destination.
+Qualify other layouts, broker versions and deployment topologies before relying on them.
+
 ## Legacy replay (not mutable in-place activation)
 
 Quiesce and broker-fence old writers first. Inventory retained schema-1 rejection
