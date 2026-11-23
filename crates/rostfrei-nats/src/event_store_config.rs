@@ -61,6 +61,8 @@ impl EventByteLimit {
 pub struct NatsEventStoreConfig {
     completed_outcome_epoch: Option<String>,
     split_outcomes: bool,
+    // Some selects the bodies-only layout; v2 lifecycle streams never evict.
+    result_body_bytes: Option<i64>,
     explicit_detail_expiry: bool,
     read_only_outcomes: bool,
     legacy_security_scope: Option<rostfrei_core::SecurityScope>,
@@ -98,6 +100,7 @@ impl NatsEventStoreConfig {
         let config = Self {
             completed_outcome_epoch: None,
             split_outcomes: false,
+            result_body_bytes: None,
             explicit_detail_expiry: false,
             read_only_outcomes: false,
             legacy_security_scope: None,
@@ -242,6 +245,27 @@ impl NatsEventStoreConfig {
         Ok(self)
     }
 
+    /// Select split layout 3 for a fresh authority, or reopen that exact layout.
+    /// The journal refuses at capacity; the independently sized results stream
+    /// evicts oldest bodies. This cannot convert an existing lifecycle stream.
+    pub fn with_evicting_result_bodies(mut self, max_bytes: i64) -> Result<Self, EventStoreError> {
+        if !self.split_outcomes {
+            return Err(invalid("evicting result bodies require a split authority"));
+        }
+        self.result_body_bytes = Some(max_bytes);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub(crate) const fn evicting_result_bodies(&self) -> bool {
+        self.result_body_bytes.is_some()
+    }
+
+    /// Effective results-stream limit (the journal limit for paired layout 2).
+    pub fn max_result_stream_bytes(&self) -> i64 {
+        self.result_body_bytes.unwrap_or(self.max_stream_bytes)
+    }
+
     #[must_use]
     pub fn with_legacy_security_scope(mut self, scope: rostfrei_core::SecurityScope) -> Self {
         self.legacy_security_scope = Some(scope);
@@ -273,22 +297,44 @@ impl NatsEventStoreConfig {
     }
     pub(crate) fn outcome_state_subject(&self, manifest: &[u8]) -> String {
         format!(
-            "{}.outcome.{}",
+            "{}.{}.{}",
             self.subject_prefix,
+            self.result_subject_token(),
             digest_parts(&[manifest])
         )
+    }
+
+    const fn result_subject_token(&self) -> &'static str {
+        if self.evicting_result_bodies() {
+            "body"
+        } else {
+            "outcome"
+        }
+    }
+
+    pub(crate) fn expiry_subject(&self, revision: &rostfrei_core::OutcomeRevision) -> String {
+        format!("{}.expiry.{}", self.subject_prefix, revision.to_hex())
     }
 
     pub(crate) fn outcome_state_config(&self) -> Config {
         let mut config = self.stream_config();
         config.name.clone_from(&self.outcome_state_stream_name);
-        config.subjects = vec![format!("{}.outcome.*", self.subject_prefix)];
+        config.subjects = vec![format!(
+            "{}.{}.*",
+            self.subject_prefix,
+            self.result_subject_token()
+        )];
         config.max_messages_per_subject = 1;
         config.discard_new_per_subject = false;
         config.allow_atomic_publish = false;
-        config
-            .metadata
-            .insert("rostfrei.outcome-state.version".to_owned(), "1".to_owned());
+        if self.evicting_result_bodies() {
+            config.discard = DiscardPolicy::Old;
+            config.max_bytes = self.max_result_stream_bytes();
+        } else {
+            config
+                .metadata
+                .insert("rostfrei.outcome-state.version".to_owned(), "1".to_owned());
+        }
         config
     }
 
@@ -470,7 +516,14 @@ impl NatsEventStoreConfig {
         if self.split_outcomes || self.completed_outcome_epoch.is_some() {
             metadata.insert(
                 "rostfrei.completed-outcomes.version".to_owned(),
-                if self.split_outcomes { "2" } else { "1" }.to_owned(),
+                if self.evicting_result_bodies() {
+                    "3"
+                } else if self.split_outcomes {
+                    "2"
+                } else {
+                    "1"
+                }
+                .to_owned(),
             );
         }
         if let Some(epoch) = &self.completed_outcome_epoch {
@@ -479,13 +532,17 @@ impl NatsEventStoreConfig {
                 epoch.clone(),
             );
         }
+        let mut subjects = vec![
+            self.aggregate_subject_filter(),
+            self.transaction_subject_filter(),
+            format!("{}.fixture.*.receipt.*.*", self.subject_prefix),
+        ];
+        if self.evicting_result_bodies() {
+            subjects.push(format!("{}.expiry.*", self.subject_prefix));
+        }
         Config {
             name: self.stream_name.clone(),
-            subjects: vec![
-                self.aggregate_subject_filter(),
-                self.transaction_subject_filter(),
-                format!("{}.fixture.*.receipt.*.*", self.subject_prefix),
-            ],
+            subjects,
             retention: RetentionPolicy::Limits,
             storage: StorageType::File,
             discard: DiscardPolicy::New,
@@ -514,7 +571,9 @@ impl NatsEventStoreConfig {
         if self.max_stream_bytes <= 0 {
             return Err(invalid("maximum stream bytes must be finite and positive"));
         }
-        if self.max_stream_bytes < self.max_event_bytes.comparison_value {
+        if self.max_stream_bytes.min(self.max_result_stream_bytes())
+            < self.max_event_bytes.comparison_value
+        {
             return Err(invalid(
                 "maximum stream bytes must be at least maximum wire message bytes",
             ));

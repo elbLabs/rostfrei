@@ -551,6 +551,11 @@ fn command_bus_error(error: &CommandBusError) -> Response {
         }))).into_response();
     }
     let (status, code, message) = match error.kind() {
+        CommandBusErrorKind::CompletedDetailsNotRetained => (
+            StatusCode::GONE,
+            "rostfrei.command.completed-details-not-retained",
+            "The command completed. Its response body is no longer retained.",
+        ),
         CommandBusErrorKind::CompletedDetailsExpired => (
             StatusCode::GONE,
             "rostfrei.command.completed-details-expired",

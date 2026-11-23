@@ -92,8 +92,11 @@ fn child(directory: &Path, test: &str, url: &str, phase: &str) -> TestResult {
     Ok(())
 }
 pub async fn run(test: &str) -> TestResult {
-    let directory = PathBuf::from(std::env::var("ROSTFREI_CONTRACT_EVIDENCE_DIR")?)
-        .join(format!("modular-restart-{}", std::process::id()));
+    let directory = PathBuf::from(std::env::var("ROSTFREI_CONTRACT_EVIDENCE_DIR")?).join(format!(
+        "{}-{}",
+        test.replace("::", "-"),
+        std::process::id()
+    ));
     std::fs::create_dir(&directory)?;
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();

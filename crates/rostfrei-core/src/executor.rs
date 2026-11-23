@@ -468,7 +468,9 @@ impl CommandExecutionError {
                     reason: crate::DetailUnavailableReason::BackendUnavailable,
                 }
                 | crate::OutcomeRecoveryError::Archived { .. } => StoreFailureKind::Unavailable,
-                crate::OutcomeRecoveryError::Expired => return None,
+                crate::OutcomeRecoveryError::Expired | crate::OutcomeRecoveryError::NotRetained => {
+                    return None;
+                }
                 crate::OutcomeRecoveryError::IntegrityMismatch
                 | crate::OutcomeRecoveryError::Unavailable {
                     reason: crate::DetailUnavailableReason::MissingDetails,
@@ -492,7 +494,8 @@ impl CommandExecutionError {
                     }
                     EventStoreErrorKind::InvalidRequest
                     | EventStoreErrorKind::IdentityConflict
-                    | EventStoreErrorKind::CompletedDetailsExpired => {
+                    | EventStoreErrorKind::CompletedDetailsExpired
+                    | EventStoreErrorKind::CompletedDetailsNotRetained => {
                         return None;
                     }
                 })

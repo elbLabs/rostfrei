@@ -21,6 +21,23 @@ Event storage has separate [subject deployment requirements](messaging/subjects.
    .with_fresh_outcomes()?` only when creating that fresh
    namespace. Provision and verify both journal and outcome-state streams; their
    creation incarnations are cross-bound. No operator epoch label is required.
+   To select oldest-first eviction for **bodies only**, configure layout 3 before
+   provisioning, for example:
+
+   ```rust,ignore
+   let config = NatsEventStoreConfig::for_bounded_context(&new_context)?
+       .with_fresh_outcomes()?
+       .with_storage_limits(journal_bytes, max_event_bytes)?
+       .with_evicting_result_bodies(result_bytes)?;
+   ```
+
+   Use the same layout selector and sizes on every reopen. Both limits must cover
+   the maximum wire message; a separate `result_bytes` is not a shared pool.
+   A named split epoch also supports the selector. Layout 2 (`with_fresh_outcomes`
+   or the existing split epoch alone) keeps its Active/Expired records and
+   refuses new results at capacity. Provision, connect and update never convert
+   either pair into the other. To change layouts, use this fresh-namespace
+   cutover and keep routing retries for the old pair back to it.
    Default config intentionally blocks unevidenced
    command execution. The shared host's `with_fresh_outcomes` selects
    this split configuration rather than the low-level inline compatibility mode.
@@ -102,10 +119,20 @@ does not erase backups or reopen execution. Restoring into a different authority
 namespace is a migration requiring explicit identity/routing policy, not transparent
 retry. Unilateral stream recreation and stale handles fail closed.
 
+For layout 3, take a **fenced, consistent cut of both streams**. Preserve stream
+creation times, cross-bindings, limits, subjects and discard policies. A journal
+snapshot from before withdrawal can undo revocation even when accompanied by a
+newer body snapshot or external archive. Reconcile post-cut withdrawals and
+decisions before reopening *any* result reader. Never recreate an empty results
+stream to stand in for a missing snapshot. Qualify the restore tooling for layout
+3 (including a rolled-off rejection and a withdrawn winner) before production
+use; qualification of the layout-2 CLI restore alone does not establish this.
+
 ## Grow a split store in place
 
 Monitor free bytes and growth rate for both the journal and command-results stream.
-`max_stream_bytes` is a limit **per stream**, not a shared pool. For an existing
+`max_stream_bytes` sizes both streams in layout 2 and only the journal when an
+explicit evicting-body limit is set. For an existing
 split store (named epoch or label-free), use a maintenance window:
 
 1. Stop and drain users of the pair, including readers that verify the storage
@@ -115,6 +142,8 @@ split store (named epoch or label-free), use a maintenance window:
 
    ```rust,ignore
    let target = deployed.clone().with_storage_limits(new_bytes, deployed.max_event_bytes())?;
+   // Layout 3 only: change this if growing the body stream too.
+   // let target = target.with_evicting_result_bodies(new_result_bytes)?;
    update_event_store(&jetstream, &target).await?;
    ```
 

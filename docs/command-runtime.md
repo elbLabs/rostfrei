@@ -58,7 +58,7 @@ optional [actor](actor-attribution.md). Current principal identifies the caller;
 it does not partition operation identity. First-completion time is audit data.
 
 `CompletedOutcome<T>` contains a permanent marker, winning revision, and
-`OutcomeDetails::{Available, Expired, Archived, Unavailable}`. Only Missing allows
+`OutcomeDetails::{Available, NotRetained, Expired, Archived, Unavailable}`. Only Missing allows
 evaluation. Missing, corrupt, expired, or unavailable details remain a completed
 decision and produce recovery results/errors. Lookup never runs the handler.
 
@@ -92,9 +92,22 @@ bind the authority. Partial provisioning, recreation, policy drift, and stale
 handles fail closed. Follow the [cutover runbook](completed-outcome-cutover.md).
 
 - The append-only journal retains events, guards, and compact decision manifests.
-- The command-results stream retains one Active detail record or terminal Expired record per
-  candidate subject. It uses file/Limits storage, bounded capacity, DiscardNew,
+- In paired layout 2 (the existing default), the command-results stream retains
+  one Active detail record or terminal Expired record per candidate subject.
+  It uses file/Limits storage, bounded capacity, DiscardNew,
   max messages per subject 1, and no age expiry, delete, purge, rollup, or direct access.
+- For a fresh split pair, opt into **layout 3** with
+  `.with_evicting_result_bodies(max_bytes)?`. JetStream discards the oldest
+  result bodies when this separate file stream fills. The journal still refuses
+  at capacity. A successful prepare acknowledges storage, not a minimum replay
+  window: even the first commit readback may find no body.
+- On healthy body absence, `lookup_outcome` returns `Completed` with the original
+  `marker().decision()` and `OutcomeDetails::NotRetained` unless a configured
+  detail reader recovers the exact winning reference. Full-response APIs then
+  return `CompletedDetailsNotRetained`; they cannot supply an original rejection
+  or the removed details of an acceptance. Neither outcome can execute again.
+  Stream outages, invalid records and authority mismatches are recovery failures,
+  not evidence of eviction. Update exhaustive result/error matches when upgrading.
 - Prepare immutable details with expected subject sequence zero; reconcile an
   uncertain acknowledgement against exact bytes/reference. Preparation is not a
   decision. The atomic journal batch selects the winning manifest.
@@ -115,7 +128,13 @@ infrastructure entry points, without per-call policy admission.
 ## Detail expiry
 
 Detail expiry is disabled by default. Enable `with_explicit_detail_expiry(true)` for native maintenance, then call
-`expire_details(key, expected_revision)`. CAS replaces Active with Expired.
+`expire_details(key, expected_revision)`. In layout 2, CAS replaces Active with Expired.
+In layout 3, CAS appends the winning revision to its own journal subject. It
+works even if the body already rolled off. A full journal can refuse this write:
+grow it and retry; do not assume withdrawal until confirmed. A later prepare,
+transport cache, or cold copy cannot reverse journal withdrawal on an admitted
+read. Physical removal in layout 3 is by capacity pressure, not by expiry:
+reclamation may remain Pending indefinitely on a quiet stream.
 `OutcomeExpiry` proves withdrawal; `ReclamationStatus::Reclaimed` additionally
 requires verification that the old retained sequence is absent. Otherwise
 reclamation may be Pending. Repeat the same revision to reconcile uncertainty.
@@ -134,7 +153,9 @@ expiry may finish; lifecycle checks are observations, not administrative locks.
 `Extension<TrustedCommandContext>`; route/schema and any supplied idempotency key
 must match. Recovery needs no current command binding.
 
-After authorization, expired details map to HTTP 410, transient recovery to 503,
+After authorization, expired and no-longer-retained details map to distinct HTTP
+410 codes (`completed-details-expired` and `completed-details-not-retained`, under
+`rostfrei.command`), transient recovery to 503,
 and blocked recovery to typed 500. Denied maps to 403; unauthenticated maps to 401
 with a configured challenge, otherwise 403. Responses use `private, no-store`.
 See [technical failure recovery](command-failures.md) for delivery failures.

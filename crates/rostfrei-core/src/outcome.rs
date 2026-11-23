@@ -474,9 +474,17 @@ pub enum DetailUnavailableReason {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OutcomeDetails<T> {
     Available(T),
+    /// Confirmed absence under a best-effort body retention policy. The marker
+    /// still identifies the decision. Unlike explicit expiry, this allows a
+    /// verified archive copy to be used if one later becomes available.
+    NotRetained,
     Expired,
-    Archived { reference: ArchiveReference },
-    Unavailable { reason: DetailUnavailableReason },
+    Archived {
+        reference: ArchiveReference,
+    },
+    Unavailable {
+        reason: DetailUnavailableReason,
+    },
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -485,6 +493,8 @@ pub enum OutcomeRecoveryError {
     IntegrityMismatch,
     #[error("completed outcome details expired")]
     Expired,
+    #[error("completed outcome details are no longer retained")]
+    NotRetained,
     #[error("completed outcome is archived at {reference:?}")]
     Archived { reference: ArchiveReference },
     #[error("completed outcome details unavailable: {reason:?}")]
@@ -496,6 +506,7 @@ impl<T> OutcomeDetails<T> {
         match self {
             Self::Available(value) => Ok(value),
             Self::Expired => Err(OutcomeRecoveryError::Expired),
+            Self::NotRetained => Err(OutcomeRecoveryError::NotRetained),
             Self::Archived { reference } => Err(OutcomeRecoveryError::Archived {
                 reference: reference.clone(),
             }),
@@ -544,6 +555,7 @@ impl<T: 'static> CompletedOutcome<T> {
         let details = match self.details {
             OutcomeDetails::Available(value) => OutcomeDetails::Available(map(value)?),
             OutcomeDetails::Expired => OutcomeDetails::Expired,
+            OutcomeDetails::NotRetained => OutcomeDetails::NotRetained,
             OutcomeDetails::Archived { reference } => OutcomeDetails::Archived { reference },
             OutcomeDetails::Unavailable { reason } => OutcomeDetails::Unavailable { reason },
         };

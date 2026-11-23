@@ -11,7 +11,6 @@ pub(super) async fn grow_pair(
     journal: &Stream,
 ) -> Result<(), EventStoreError> {
     let journal = journal.cached_info();
-    let target = config.max_stream_bytes();
     let mut expected = config.stream_config();
     let journal_growth = growth_needed(&mut expected, journal)?;
     verify_stream_config(&expected, &journal.config)?;
@@ -32,11 +31,16 @@ pub(super) async fn grow_pair(
     check_headroom(
         &account,
         config.replicas(),
-        target,
+        config
+            .max_stream_bytes()
+            .max(config.max_result_stream_bytes()),
         journal_growth,
         state_growth,
     )?;
-    for current in [journal, state] {
+    for (current, target) in [
+        (journal, config.max_stream_bytes()),
+        (state, config.max_result_stream_bytes()),
+    ] {
         if current.config.max_bytes != target {
             let mut policy = current.config.clone();
             policy.max_bytes = target;

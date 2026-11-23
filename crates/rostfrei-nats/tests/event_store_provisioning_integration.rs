@@ -10,8 +10,9 @@ use futures_util::StreamExt as _;
 use rostfrei_core::{
     AggregateId, AggregateType, CommandCompletion, CommandExecutionMetadata, ContentFingerprint,
     EncodedRejection, EventBatch, EventStoreErrorKind, EventTransaction, ExecutionStore,
-    ExpectedVersion, NewEvent, OperationId, OutcomeLifecycle, OutcomeLifecycleError, StreamId,
-    TransactionParticipant, derive_commit_id, derive_event_id,
+    ExpectedVersion, NewEvent, OperationId, OutcomeKey, OutcomeLifecycle, OutcomeLifecycleError,
+    OutcomeLookup, OutcomeReader, StreamId, TransactionParticipant, derive_commit_id,
+    derive_event_id,
 };
 use rostfrei_messaging_core::ApplicationName;
 use rostfrei_nats::{
@@ -119,6 +120,23 @@ async fn split_authority_uses_readable_names_and_retains_results_after_reconnect
     ));
     drop(store);
 
+    let before = split_info(&context, &config).await?;
+    let incompatible = config
+        .clone()
+        .with_evicting_result_bodies(config.max_stream_bytes())?;
+    for attempt in [
+        provision_event_store(&context, &incompatible).await,
+        update_event_store(&context, &incompatible).await,
+        NatsEventStore::connect(context.clone(), incompatible)
+            .await
+            .map(|_| ()),
+    ] {
+        assert_eq!(
+            attempt.unwrap_err().kind(),
+            EventStoreErrorKind::ConfigurationMismatch
+        );
+    }
+    assert_eq!(split_info(&context, &config).await?, before);
     provision_event_store(&context, &config).await?;
     let reconnected = NatsEventStore::connect(context.clone(), config).await?;
     let replay = reconnected
@@ -138,19 +156,27 @@ async fn split_authority_uses_readable_names_and_retains_results_after_reconnect
     Ok(())
 }
 
-async fn split_update_fixture() -> TestResult<(
+async fn split_update_fixture(
+    evicting: bool,
+) -> TestResult<(
     jetstream::Context,
     NatsEventStoreConfig,
     NatsEventStoreConfig,
 )> {
     let (js, config) = fixture().await?;
-    let config = config
+    let mut config = config
         .with_fresh_outcomes()?
         .with_storage_limits(2 * 1024 * 1024, 64 * 1024)?;
+    if evicting {
+        config = config.with_evicting_result_bodies(512 * 1024)?;
+    }
     provision_event_store(&js, &config).await?;
-    let target = config
+    let mut target = config
         .clone()
         .with_storage_limits(4 * 1024 * 1024, config.max_event_bytes())?;
+    if evicting {
+        target = target.with_evicting_result_bodies(1024 * 1024)?;
+    }
     Ok((js, config, target))
 }
 
@@ -161,6 +187,57 @@ async fn split_info(
     let journal = js.get_stream(config.stream_name()).await?;
     let results = js.get_stream(config.outcome_state_stream_name()).await?;
     Ok([journal.cached_info().clone(), results.cached_info().clone()])
+}
+
+#[tokio::test]
+#[allow(clippy::panic_in_result_fn)]
+async fn full_journal_refuses_another_decision_without_displacing_history() -> TestResult<()> {
+    let (js, config) = fixture().await?;
+    let config = config
+        .with_fresh_outcomes()?
+        .with_storage_limits(16 * 1024, 8 * 1024)?
+        .with_evicting_result_bodies(32 * 1024)?;
+    provision_event_store(&js, &config).await?;
+    let store = NatsEventStore::connect(js.clone(), config.clone()).await?;
+    let id = StreamId::new(AggregateType::new("Order")?, AggregateId::new("first")?);
+    let mut winners = Vec::new();
+    for i in 0..32 {
+        let operation = format!("journal-{i}");
+        let proposal = decision(&config, &operation, (i == 0).then_some(&id), None)?;
+        let result = store.begin_command().await?.commit_outcome(proposal).await;
+        match result {
+            Ok(commit) => winners.push(commit.outcome().marker().clone()),
+            Err(error) => {
+                assert_eq!(
+                    error.kind(),
+                    EventStoreErrorKind::CapacityExhausted,
+                    "{error}"
+                );
+                assert!(!winners.is_empty());
+                let key = OutcomeKey::new(
+                    store.authority().clone(),
+                    config.bounded_context().clone(),
+                    OperationId::new(operation)?,
+                );
+                assert_eq!(store.lookup_outcome(&key).await?, OutcomeLookup::Missing);
+                for marker in winners {
+                    let OutcomeLookup::Completed(winner) = store
+                        .lookup_outcome(marker.detail_reference().key())
+                        .await?
+                    else {
+                        return Err("journal lost an earlier decision".into());
+                    };
+                    assert_eq!(winner.marker(), &marker);
+                }
+                assert_eq!(store.audit_history(&id).await?.len(), 1);
+                for info in split_info(&js, &config).await? {
+                    js.delete_stream(info.config.name).await?;
+                }
+                return Ok(());
+            }
+        }
+    }
+    Err("journal did not reach its byte limit".into())
 }
 
 #[tokio::test]
@@ -175,7 +252,7 @@ async fn split_update_resumes_when_journal_already_has_target_capacity() -> Test
 
 #[allow(clippy::panic_in_result_fn)]
 async fn grow_and_replay(journal_already_grown: bool) -> TestResult<()> {
-    let (js, config, target) = split_update_fixture().await?;
+    let (js, config, target) = split_update_fixture(journal_already_grown).await?;
     let store = NatsEventStore::connect(js.clone(), config.clone()).await?;
     let id = StreamId::new(AggregateType::new("Order")?, AggregateId::new("one")?);
     let accepted = decision(&config, "accepted", Some(&id), None)?;
@@ -202,9 +279,9 @@ async fn grow_and_replay(journal_already_grown: bool) -> TestResult<()> {
     assert_eq!(history.len(), 1);
     drop(store);
     let mut expected = split_info(&js, &config).await?;
-    for info in &mut expected {
-        info.config.max_bytes = target.max_stream_bytes();
-    }
+    let [journal, results] = &mut expected;
+    journal.config.max_bytes = target.max_stream_bytes();
+    results.config.max_bytes = target.max_result_stream_bytes();
     if journal_already_grown {
         // Recreate the durable intermediate state left by an interrupted operator update.
         js.update_stream(expected[0].config.clone()).await?;
@@ -262,7 +339,7 @@ async fn split_update_refuses_mismatched_companion_before_growing_either_stream(
 
 #[allow(clippy::panic_in_result_fn)]
 async fn refused_split_update(edit_results: impl FnOnce(&mut stream::Config)) -> TestResult<()> {
-    let (js, config, target) = split_update_fixture().await?;
+    let (js, config, target) = split_update_fixture(false).await?;
     let [_, mut results] = split_info(&js, &config).await?;
     edit_results(&mut results.config);
     js.update_stream(results.config).await?;

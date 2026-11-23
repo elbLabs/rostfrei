@@ -763,6 +763,8 @@ pub enum CommandBusErrorKind {
     Authorization,
     #[error("completed command details expired")]
     CompletedDetailsExpired,
+    #[error("completed command details are no longer retained")]
+    CompletedDetailsNotRetained,
     #[error("completed command details temporarily unavailable")]
     CompletedDetailsUnavailable,
     #[error("completed command recovery blocked")]
@@ -844,6 +846,9 @@ impl CommandBusError {
             CommandProcessorErrorKind::Authorization => CommandBusErrorKind::Authorization,
             CommandProcessorErrorKind::CompletedDetailsExpired => {
                 CommandBusErrorKind::CompletedDetailsExpired
+            }
+            CommandProcessorErrorKind::CompletedDetailsNotRetained => {
+                CommandBusErrorKind::CompletedDetailsNotRetained
             }
             CommandProcessorErrorKind::CompletedDetailsUnavailable => {
                 CommandBusErrorKind::CompletedDetailsUnavailable
@@ -1074,6 +1079,8 @@ pub enum CommandProcessorErrorKind {
     IdentityConflict,
     #[error("completed details expired")]
     CompletedDetailsExpired,
+    #[error("completed details are no longer retained")]
+    CompletedDetailsNotRetained,
     #[error("completed details temporarily unavailable")]
     CompletedDetailsUnavailable,
     #[error("completed details recovery blocked")]
@@ -1156,6 +1163,9 @@ impl CommandProcessorError {
         use rostfrei_core::{DetailUnavailableReason, OutcomeRecoveryError};
         let kind = match error {
             OutcomeRecoveryError::Expired => CommandProcessorErrorKind::CompletedDetailsExpired,
+            OutcomeRecoveryError::NotRetained => {
+                CommandProcessorErrorKind::CompletedDetailsNotRetained
+            }
             OutcomeRecoveryError::Archived { .. }
             | OutcomeRecoveryError::Unavailable {
                 reason: DetailUnavailableReason::BackendUnavailable,
@@ -1192,6 +1202,9 @@ impl CommandProcessorError {
                 }
                 EventStoreErrorKind::CompletedDetailsExpired => {
                     Some(CommandProcessorErrorKind::CompletedDetailsExpired)
+                }
+                EventStoreErrorKind::CompletedDetailsNotRetained => {
+                    Some(CommandProcessorErrorKind::CompletedDetailsNotRetained)
                 }
                 EventStoreErrorKind::CompletedDetailsUnavailable => {
                     Some(CommandProcessorErrorKind::CompletedDetailsUnavailable)

@@ -25,6 +25,7 @@ pub enum EventStoreErrorKind {
     Unavailable,
     DetailForbidden,
     CompletedDetailsExpired,
+    CompletedDetailsNotRetained,
     CompletedDetailsUnavailable,
 }
 
