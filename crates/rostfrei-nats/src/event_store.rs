@@ -2210,8 +2210,9 @@ pub async fn provision_event_store(
 /// bounded context and use the current subject layout. Larger existing message-size
 /// limits remain compatible and are preserved; the adapter still enforces its
 /// configured event write limit.
-/// Split journal/results pairs support only in-place capacity growth. Quiesce
-/// users and fence concurrent stream administration. The pair is checked before
+/// Split journal/results pairs support only in-place capacity growth on a
+/// directly connected standalone NATS Server 2.14.10 or 2.15.3. Quiesce
+/// users and fence concurrent stream or broker administration. The pair is checked before
 /// either update; on partial or uncertain completion, retry with the same target.
 /// Inline stores retain their existing operator-owned policy update semantics.
 pub async fn update_event_store(

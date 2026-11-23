@@ -252,7 +252,7 @@ struct ColdCopy {
 #[tokio::test]
 async fn journal_expiry_blocks_cold_and_cached_results_after_rollover_and_restart() -> TestResult {
     let Ok(mode) = std::env::var("ROSTFREI_MODULAR_RESTART_MODE") else {
-        return modular_restart_support::run("modular_native_delta::journal_expiry_blocks_cold_and_cached_results_after_rollover_and_restart").await;
+        return modular_restart_support::run("modular_native_delta::journal_expiry_blocks_cold_and_cached_results_after_rollover_and_restart", &["seed", "replay"]).await;
     };
     let f = Fixture::for_application(ApplicationName::new(std::env::var(
         "ROSTFREI_MODULAR_RESTART_APP",

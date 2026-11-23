@@ -14,7 +14,12 @@ struct Server {
 impl Server {
     fn spawn(directory: &Path, phase: &str) -> TestResult<Self> {
         let log = File::create(directory.join(format!("broker-{phase}.log")))?;
-        let child = Command::new(std::env::var("ROSTFREI_CONTRACT_NATS_BINARY")?)
+        let binary = match phase {
+            "seed" => std::env::var("ROSTFREI_CONTRACT_SEED_NATS_BINARY")
+                .or_else(|_| std::env::var("ROSTFREI_CONTRACT_NATS_BINARY"))?,
+            _ => std::env::var("ROSTFREI_CONTRACT_NATS_BINARY")?,
+        };
+        let child = Command::new(binary)
             .arg("--config")
             .arg(directory.join("nats.conf"))
             .stdout(log.try_clone()?)
@@ -91,7 +96,7 @@ fn child(directory: &Path, test: &str, url: &str, phase: &str) -> TestResult {
     }
     Ok(())
 }
-pub async fn run(test: &str) -> TestResult {
+pub async fn run(test: &str, phases: &[&str]) -> TestResult {
     let directory = PathBuf::from(std::env::var("ROSTFREI_CONTRACT_EVIDENCE_DIR")?).join(format!(
         "{}-{}",
         test.replace("::", "-"),
@@ -111,12 +116,11 @@ pub async fn run(test: &str) -> TestResult {
     )?;
     drop(listener);
     let url = format!("nats://127.0.0.1:{port}");
-    let server = Server::spawn(&directory, "seed")?;
-    ready(&url).await?;
-    child(&directory, test, &url, "seed")?;
-    drop(server); // hard crash and wait; private file store intentionally retained
-    let _restarted = Server::spawn(&directory, "replay")?;
-    ready(&url).await?;
-    child(&directory, test, &url, "replay")?;
+    for phase in phases {
+        let _server = Server::spawn(&directory, phase)?;
+        ready(&url).await?;
+        child(&directory, test, &url, phase)?;
+        // Drop kills and waits; each phase reopens the same private file store.
+    }
     Ok(())
 }

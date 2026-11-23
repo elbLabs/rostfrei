@@ -1,3 +1,4 @@
+mod modular_restart_support;
 mod native_connection_support;
 
 use std::{
@@ -156,27 +157,19 @@ async fn split_authority_uses_readable_names_and_retains_results_after_reconnect
     Ok(())
 }
 
-async fn split_update_fixture(
-    evicting: bool,
-) -> TestResult<(
+async fn split_update_fixture() -> TestResult<(
     jetstream::Context,
     NatsEventStoreConfig,
     NatsEventStoreConfig,
 )> {
     let (js, config) = fixture().await?;
-    let mut config = config
+    let config = config
         .with_fresh_outcomes()?
         .with_storage_limits(2 * 1024 * 1024, 64 * 1024)?;
-    if evicting {
-        config = config.with_evicting_result_bodies(512 * 1024)?;
-    }
     provision_event_store(&js, &config).await?;
-    let mut target = config
+    let target = config
         .clone()
         .with_storage_limits(4 * 1024 * 1024, config.max_event_bytes())?;
-    if evicting {
-        target = target.with_evicting_result_bodies(1024 * 1024)?;
-    }
     Ok((js, config, target))
 }
 
@@ -241,81 +234,158 @@ async fn full_journal_refuses_another_decision_without_displacing_history() -> T
 }
 
 #[tokio::test]
-async fn split_update_grows_both_streams_and_preserves_decisions() -> TestResult<()> {
-    Box::pin(grow_and_replay(false)).await
+async fn split_capacity_maintenance_preserves_original_authority_across_restarts() -> TestResult<()>
+{
+    Box::pin(resize_across_restarts(
+        "split_capacity_maintenance_preserves_original_authority_across_restarts",
+        false,
+    ))
+    .await
 }
 
 #[tokio::test]
-async fn split_update_resumes_when_journal_already_has_target_capacity() -> TestResult<()> {
-    Box::pin(grow_and_replay(true)).await
+async fn split_capacity_maintenance_resumes_partial_layout_three_growth() -> TestResult<()> {
+    Box::pin(resize_across_restarts(
+        "split_capacity_maintenance_resumes_partial_layout_three_growth",
+        true,
+    ))
+    .await
 }
 
 #[allow(clippy::panic_in_result_fn)]
-async fn grow_and_replay(journal_already_grown: bool) -> TestResult<()> {
-    let (js, config, target) = split_update_fixture(journal_already_grown).await?;
-    let store = NatsEventStore::connect(js.clone(), config.clone()).await?;
-    let id = StreamId::new(AggregateType::new("Order")?, AggregateId::new("one")?);
-    let accepted = decision(&config, "accepted", Some(&id), None)?;
-    let rejected = decision(
-        &config,
-        "rejected",
-        None,
-        Some(EncodedRejection {
-            codec_id: "policy".to_owned(),
-            codec_version: 1,
-            bytes: b"denied".to_vec(),
-        }),
-    )?;
-    let mut decisions = vec![];
-    for proposal in [accepted, rejected] {
-        let original = store
-            .begin_command()
-            .await?
-            .commit_outcome(proposal.clone())
-            .await?;
-        decisions.push((proposal, original));
-    }
-    let history = store.load(&id).await?;
-    assert_eq!(history.len(), 1);
-    drop(store);
-    let mut expected = split_info(&js, &config).await?;
-    let [journal, results] = &mut expected;
-    journal.config.max_bytes = target.max_stream_bytes();
-    results.config.max_bytes = target.max_result_stream_bytes();
-    if journal_already_grown {
-        // Recreate the durable intermediate state left by an interrupted operator update.
-        js.update_stream(expected[0].config.clone()).await?;
-    }
-
-    update_event_store(&js, &target).await?;
-    let grown = NatsEventStore::connect(js.clone(), target.clone()).await?;
-    for (proposal, original) in decisions {
-        let replay = grown
-            .begin_command()
-            .await?
-            .commit_outcome(proposal)
-            .await?;
-        assert!(replay.is_exact_replay());
-        assert_eq!(replay.outcome(), original.outcome());
-    }
-    assert_eq!(grown.load(&id).await?, history);
-    assert_eq!(
-        split_info(&js, &target).await?,
-        expected,
-        "only max_bytes may change"
+async fn resize_across_restarts(test: &str, partial: bool) -> TestResult<()> {
+    let Ok(phase) = std::env::var("ROSTFREI_MODULAR_RESTART_MODE") else {
+        return modular_restart_support::run(test, &["seed", "maintenance", "replay"]).await;
+    };
+    let js = jetstream::new(
+        async_nats::ConnectOptions::with_user_and_password(
+            std::env::var("ROSTFREI_CONTRACT_NATS_USER")?,
+            std::env::var("ROSTFREI_CONTRACT_NATS_PASSWORD")?,
+        )
+        .connect(std::env::var("ROSTFREI_NATS_URL")?)
+        .await?,
     );
-    let new = grown
-        .begin_command()
-        .await?
-        .commit_outcome(decision(&target, "new", None, None)?)
-        .await?;
-    assert!(!new.is_exact_replay());
-    for (after, before) in split_info(&js, &target).await?.into_iter().zip(expected) {
+    let app = ApplicationName::new(std::env::var("ROSTFREI_MODULAR_RESTART_APP")?)?;
+    let mut config = NatsEventStoreConfig::for_bounded_context(&app.bounded_context("policy")?)?
+        .with_fresh_outcomes()?
+        .with_storage_limits(2 * 1024 * 1024, 64 * 1024)?;
+    if partial {
+        config = config.with_evicting_result_bodies(512 * 1024)?;
+    }
+    let mut target = config
+        .clone()
+        .with_storage_limits(4 * 1024 * 1024, config.max_event_bytes())?;
+    if partial {
+        target = target.with_evicting_result_bodies(1024 * 1024)?;
+        if phase != "seed" {
+            config =
+                config.with_storage_limits(target.max_stream_bytes(), target.max_event_bytes())?;
+        }
+    }
+    let records = std::path::PathBuf::from(std::env::var("ROSTFREI_MODULAR_RESTART_RECORDS")?);
+    // The default workspace fixture is 2.12.15. In the upgrade qualification
+    // the explicit seed binary provisions that same store for the newer broker.
+    let fixed = std::env::var_os("ROSTFREI_CONTRACT_SEED_NATS_BINARY").is_some();
+    if phase == "seed" {
+        provision_event_store(&js, &config).await?;
+    } else if phase == "maintenance" {
+        assert_resize(&js, &config, &target, fixed).await?;
+    }
+    let [journal, results] = split_info(&js, &config).await?;
+    let identity = format!("{}\n{}", journal.created, results.created);
+    assert_original(
+        &phase,
+        &records.join("original-identity"),
+        identity.as_bytes(),
+    )?;
+    let config = if phase == "seed" || !fixed {
+        config
+    } else {
+        target
+    };
+    let store = NatsEventStore::connect(js.clone(), config.clone()).await?;
+    let rejection = EncodedRejection {
+        codec_id: "policy".into(),
+        codec_version: 1,
+        bytes: b"original-rejection".to_vec(),
+    };
+    let id = StreamId::new(AggregateType::new("Order")?, AggregateId::new("one")?);
+    for (name, event, reason) in [
+        ("accepted", Some(&id), None),
+        ("rejected", None, Some(rejection)),
+    ] {
+        let commit = store
+            .begin_command()
+            .await?
+            .commit_outcome(decision(&config, name, event, reason.clone())?)
+            .await?;
+        assert_eq!(commit.is_exact_replay(), phase != "seed");
+        assert_original(
+            &phase,
+            &records.join(name),
+            &commit.outcome().marker().encode_manifest()?,
+        )?;
+        let rostfrei_core::OutcomeDetails::Available(body) = commit.outcome().details() else {
+            return Err("lost original body".into());
+        };
+        assert_eq!(body.rejection(), reason.as_ref());
+    }
+    assert_eq!(store.audit_history(&id).await?.len(), 1);
+    assert_eq!(split_info(&js, &config).await?[1].state.messages, 2);
+    if partial && phase == "seed" {
+        // Inject the intermediate state before the first restart, while it is
+        // still the original file store. Only the journal has reached target.
+        let mut policy = journal.config;
+        policy.max_bytes = 4 * 1024 * 1024;
+        js.update_stream(policy).await?;
+    }
+    if phase == "replay" {
+        let new = store
+            .begin_command()
+            .await?
+            .commit_outcome(decision(&config, "new", None, None)?)
+            .await?;
+        assert!(!new.is_exact_replay());
+    }
+    Ok(())
+}
+
+#[allow(clippy::panic_in_result_fn)]
+async fn assert_resize(
+    js: &jetstream::Context,
+    config: &NatsEventStoreConfig,
+    target: &NatsEventStoreConfig,
+    fixed: bool,
+) -> TestResult<()> {
+    let before = split_info(js, config).await?;
+    let result = update_event_store(js, target).await;
+    if fixed {
+        result?;
+        let [mut journal, mut results] = before;
+        journal.config.max_bytes = target.max_stream_bytes();
+        results.config.max_bytes = target.max_result_stream_bytes();
         assert_eq!(
-            Some(after.state.messages),
-            before.state.messages.checked_add(1)
+            split_info(js, target).await?,
+            [journal, results],
+            "only max_bytes may change"
         );
-        js.delete_stream(after.config.name).await?;
+    } else {
+        let Err(error) = result else {
+            return Err("unsafe growth reported success".into());
+        };
+        assert_eq!(error.kind(), EventStoreErrorKind::ConfigurationMismatch);
+        assert!(error.message().contains("identity-preserving resize"));
+        assert_eq!(split_info(js, config).await?, before);
+        update_event_store(js, config).await?; // verified no-op needs no upgrade
+    }
+    Ok(())
+}
+
+fn assert_original(phase: &str, path: &std::path::Path, observed: &[u8]) -> TestResult<()> {
+    if phase == "seed" {
+        std::fs::write(path, observed)?;
+    } else if std::fs::read(path)? != observed {
+        return Err(format!("{phase}: original {} changed", path.display()).into());
     }
     Ok(())
 }
@@ -339,7 +409,7 @@ async fn split_update_refuses_mismatched_companion_before_growing_either_stream(
 
 #[allow(clippy::panic_in_result_fn)]
 async fn refused_split_update(edit_results: impl FnOnce(&mut stream::Config)) -> TestResult<()> {
-    let (js, config, target) = split_update_fixture(false).await?;
+    let (js, config, target) = split_update_fixture().await?;
     let [_, mut results] = split_info(&js, &config).await?;
     edit_results(&mut results.config);
     js.update_stream(results.config).await?;

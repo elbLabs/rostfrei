@@ -100,6 +100,23 @@ jobs:
           echo "ROSTFREI_NATS_SERVER=$RUNNER_TEMP/nats-server-v2.12.15-linux-amd64/nats-server" >> "$GITHUB_ENV"
       - name: Test the workspace with an authenticated disposable broker and native restart fixtures
         run: cargo xtask test --contracts
+      - name: Qualify split resize after upgrading an existing standalone store
+        run: |
+          export ROSTFREI_CONTRACT_SEED_NATS_BINARY="$ROSTFREI_NATS_SERVER"
+          export ROSTFREI_CONTRACT_EVIDENCE_DIR="$RUNNER_TEMP/resize"
+          mkdir -p "$ROSTFREI_CONTRACT_EVIDENCE_DIR"
+          while read -r version sha; do
+            archive="nats-server-v$version-linux-amd64.tar.gz"
+            curl --fail --location --retry 3 --output "$RUNNER_TEMP/$archive" \
+              "https://github.com/nats-io/nats-server/releases/download/v$version/$archive"
+            printf '%s  %s\n' "$sha" "$RUNNER_TEMP/$archive" | sha256sum --check
+            tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
+            ROSTFREI_CONTRACT_NATS_BINARY="$RUNNER_TEMP/${archive%.tar.gz}/nats-server" \
+              cargo test --locked -p rostfrei-nats --test event_store_provisioning_integration split_capacity_maintenance -- --test-threads=1
+          done <<'VERSIONS'
+          2.14.10 464f118a8aecf293e405514c1ab2c197a5d9209e58e36a5d05ad9577e5ee9b99
+          2.15.3 32e18c1e78d7ef4f86e483070eef3abb2647c3d4d67e29668077c7ad81da0797
+          VERSIONS
       - name: Qualify the standalone automatic Tracer host with a disposable broker
         run: cargo xtask test -- cargo xtask acceptance tracer-host
       - name: Test native authentication and TLS lifecycle

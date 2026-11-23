@@ -410,6 +410,7 @@ async fn actor_native_original_attribution_survives_restart_expiry_and_private_d
     }
     modular_restart_support::run(
         "actor_native_original_attribution_survives_restart_expiry_and_private_delivery",
+        &["seed", "replay"],
     )
     .await
 }

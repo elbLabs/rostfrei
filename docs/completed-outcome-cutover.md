@@ -132,11 +132,25 @@ use; qualification of the layout-2 CLI restore alone does not establish this.
 
 Monitor free bytes and growth rate for both the journal and command-results stream.
 `max_stream_bytes` sizes both streams in layout 2 and only the journal when an
-explicit evicting-body limit is set. For an existing
-split store (named epoch or label-free), use a maintenance window:
+explicit evicting-body limit is set.
+
+**Resize requires a direct connection to a standalone NATS Server 2.14.10 or
+2.15.3 hosting both streams (one replica).** On 2.12.15 a config update to a
+recovered file stream can change its persisted creation time; the next restart
+then invalidates the original authority. Stream INFO and server uptime cannot
+establish whether a store was reloaded since creation. The adapter therefore
+refuses growth before updating either stream on 2.12.15, on unqualified releases,
+and on clustered deployments. This restriction is specific to resizing. A
+matching target still verifies without writing. Do not resize with the raw
+stream API or rewrite the bindings to make a changed identity appear valid.
+
+To grow an existing pair, first upgrade the healthy standalone broker in place
+if needed, preserving its storage and namespace, and reopen with the original
+policy. See the [upstream creation-time fix](https://github.com/nats-io/nats-server/pull/8471).
+For the resize itself (named epoch or label-free), use a maintenance window:
 
 1. Stop and drain users of the pair, including readers that verify the storage
-   policy. Fence other stream administrators for the duration. JetStream updates
+   policy. Fence other stream administrators and broker/topology changes for the duration. JetStream updates
    one stream at a time; there is no lock spanning the pair.
 2. Keep the deployed configuration and namespace, changing only total capacity:
 

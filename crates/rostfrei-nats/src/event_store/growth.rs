@@ -23,6 +23,7 @@ pub(super) async fn grow_pair(
     if journal_growth == 0 && state_growth == 0 {
         return Ok(());
     }
+    check_resize_server(&context.client().server_info(), [journal, state])?;
     let account = context.query_account().await.map_err(|error| {
         unavailable(format!(
             "failed to inspect account headroom before capacity growth: {error}"
@@ -66,6 +67,36 @@ pub(super) async fn grow_pair(
     }
     verify_stream_config(&config.stream_config(), &after.config)?;
     outcomes::verify_split_state(config.outcome_state_config(), after, companion)
+}
+
+// STREAM.INFO supplies dynamic `_nats.ver` from the responding store server.
+// The connected server's version alone need not be the one serving the pair.
+// On older servers neither uptime nor INFO.created proves that a file store
+// hasn't been reloaded. Its next config write can persist the reload time.
+fn check_resize_server(
+    server: &async_nats::ServerInfo,
+    pair: [&Info; 2],
+) -> Result<(), EventStoreError> {
+    if !matches!(server.version.as_str(), "2.14.10" | "2.15.3")
+        || !server.jetstream
+        || server.server_name.is_empty()
+        || server.cluster.is_some()
+        || !pair.iter().all(|info| {
+            info.config.num_replicas == 1
+                && info.config.metadata.get("_nats.ver") == Some(&server.version)
+                && info.cluster.as_ref().is_some_and(|cluster| {
+                    cluster.name.is_none()
+                        && cluster.raft_group.is_none()
+                        && cluster.replicas.is_empty()
+                        && cluster.leader.as_deref() == Some(server.server_name.as_str())
+                })
+        })
+    {
+        return Err(mismatch(
+            "split capacity growth requires a directly connected standalone NATS Server 2.14.10 or 2.15.3 serving both streams; cannot verify identity-preserving resize",
+        ));
+    }
+    Ok(())
 }
 
 fn growth_needed(expected: &mut Config, current: &Info) -> Result<u64, EventStoreError> {
