@@ -707,6 +707,9 @@ fn recovery_error(error: &crate::OutcomeRecoveryError) -> EventStoreError {
         match error {
             crate::OutcomeRecoveryError::IntegrityMismatch => EventStoreErrorKind::CorruptHistory,
             crate::OutcomeRecoveryError::Expired => EventStoreErrorKind::CompletedDetailsExpired,
+            crate::OutcomeRecoveryError::NotRetained => {
+                EventStoreErrorKind::CompletedDetailsNotRetained
+            }
             crate::OutcomeRecoveryError::Archived { .. }
             | crate::OutcomeRecoveryError::Unavailable { .. } => {
                 EventStoreErrorKind::CompletedDetailsUnavailable

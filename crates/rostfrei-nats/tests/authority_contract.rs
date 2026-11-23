@@ -40,6 +40,118 @@ fn proposal(f: &Fixture, operation: &str) -> TestResult<EventTransaction> {
         .with_completion(CommandCompletion::new(evidence, None)))
 }
 
+fn body_config(f: &Fixture) -> TestResult<NatsEventStoreConfig> {
+    Ok(NatsEventStoreConfig::for_bounded_context(&f.context)?
+        .with_fresh_outcomes()?
+        .with_storage_limits(512 * 1024, 8 * 1024)?
+        .with_evicting_result_bodies(16 * 1024)?)
+}
+
+async fn roll_results(f: &Fixture, store: &NatsEventStore) -> TestResult {
+    let mut bodies =
+        f.js.get_stream(store.config().outcome_state_stream_name())
+            .await?;
+    let last = bodies.cached_info().state.last_sequence;
+    assert!(last > 0);
+    for i in 0..32 {
+        store
+            .begin_command()
+            .await?
+            .commit_outcome(proposal(f, &format!("pressure-{i}"))?)
+            .await?;
+        if bodies.info().await?.state.first_sequence > last {
+            return Ok(());
+        }
+    }
+    Err("result stream did not roll past the original bodies".into())
+}
+
+#[tokio::test]
+async fn result_pressure_retains_every_decision_without_reevaluation() -> TestResult {
+    use async_nats::jetstream::stream::DiscardPolicy;
+    let f = Fixture::new("result-pressure").await?;
+    let config = body_config(&f)?;
+    provision_event_store(&f.js, &config).await?;
+    let journal = f.js.get_stream(config.stream_name()).await?;
+    let bodies = f.js.get_stream(config.outcome_state_stream_name()).await?;
+    assert_eq!(journal.cached_info().config.discard, DiscardPolicy::New);
+    assert_eq!(bodies.cached_info().config.discard, DiscardPolicy::Old);
+    assert_eq!(bodies.cached_info().config.max_bytes, 16 * 1024);
+    let store = Arc::new(NatsEventStore::connect(f.js.clone(), config).await?);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let service = processor(&f.context, store.clone(), calls.clone(), None)?;
+    let bus = local_bus(&f.context, service.clone());
+    let mut originals = Vec::new();
+    for (action, target, decision) in [
+        ("create", "one", OutcomeDecision::Accepted),
+        ("add", "missing", OutcomeDecision::Rejected),
+        ("noop", "unused", OutcomeDecision::Accepted),
+    ] {
+        let command = bus.encode(request(action, target, action)?)?;
+        service.process(&command).await?;
+        originals.push((command, decision));
+    }
+    roll_results(&f, &store).await?;
+    for (command, decision) in originals {
+        let key = OutcomeKey::new(
+            store.authority().clone(),
+            f.context.name().clone(),
+            OperationId::new(command.operation_id().as_str())?,
+        );
+        let OutcomeLookup::Completed(winner) = store.lookup_outcome(&key).await? else {
+            return Err("lost decision".into());
+        };
+        assert_eq!(winner.marker().decision(), decision);
+        assert_eq!(winner.details(), &OutcomeDetails::NotRetained);
+        assert_eq!(
+            service.process(&command).await.unwrap_err().kind(),
+            CommandProcessorErrorKind::CompletedDetailsNotRetained
+        );
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert_eq!(store.load(&stream("one")?).await?.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn acknowledged_prepare_evicted_before_commit_returns_the_journal_winner() -> TestResult {
+    let f = Fixture::new("prepare-evicted").await?;
+    let config = body_config(&f)?.with_puback_timeout(WAIT)?;
+    provision_event_store(&f.js, &config).await?;
+    let store = NatsEventStore::connect(f.js.clone(), config.clone()).await?;
+    let proxy =
+        StateProxy::start_with_timeout(config.outcome_state_stream_name(), "unused", 0, WAIT)
+            .await?;
+    let mut gate =
+        proxy.gate_request(config.transaction_receipt_subject("gated", None, None), 1)?;
+    let writer = NatsEventStore::connect(proxy.js.clone(), config.clone()).await?;
+    let transaction = proposal(&f, "gated")?;
+    let writing = tokio::spawn(async move {
+        writer
+            .begin_command()
+            .await?
+            .commit_outcome(transaction)
+            .await
+    });
+    gate.wait().await?;
+    evict_only_prepared_body(&f, &config).await?;
+    gate.release()?;
+    let committed = writing.await??;
+    assert!(!committed.is_exact_replay());
+    assert_eq!(
+        committed.outcome().marker().decision(),
+        OutcomeDecision::Accepted
+    );
+    assert_eq!(committed.outcome().details(), &OutcomeDetails::NotRetained);
+    assert_eq!(
+        store
+            .lookup_outcome(committed.outcome().marker().detail_reference().key())
+            .await?,
+        OutcomeLookup::Completed(committed.outcome().clone())
+    );
+    Ok(())
+}
+
 async fn snapshot(f: &Fixture, config: &NatsEventStoreConfig) -> TestResult<serde_json::Value> {
     let mut streams = Vec::new();
     for name in [config.stream_name(), config.outcome_state_stream_name()] {

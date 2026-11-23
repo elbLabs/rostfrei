@@ -13,6 +13,10 @@ evidence or weaken its integrity.
 - Publish events, read guards, and permanent outcome evidence in one atomic batch.
   Prepared result details alone do not establish completion; only the journal
   selects the winner. Explicit detail expiry leaves terminal decision evidence.
+- An evictable body store must never own permission to disclose a body. In a
+  rolling store, record irreversible withdrawal on the non-evicting journal
+  and check it before admitting even a verified archive copy. This costs
+  journal space per withdrawal and a lifecycle read on result recovery.
 - Bind coordinated authority to its resource incarnations. Replacing
   storage must not silently admit stale writers or reuse evidence from a prior
   authority. Backup and restore preserve the journal/outcome-state pair.

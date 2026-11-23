@@ -5,6 +5,11 @@
     clippy::unwrap_used
 )]
 
+#[allow(
+    clippy::indexing_slicing,
+    reason = "owned NATS wire-frame fault fixture"
+)]
+mod modular_state_fault_support;
 mod release_contract_support;
 
 use async_trait::async_trait;
@@ -106,6 +111,10 @@ impl Replay {
             .with_storage_limits(32 * 1024 * 1024, 524_288)?;
         provision_event_store(&fixture.js, &config).await?;
         let store = Arc::new(NatsEventStore::connect(fixture.js.clone(), config).await?);
+        Self::with_store(fixture, store, action)
+    }
+
+    fn with_store(fixture: Fixture, store: Arc<NatsEventStore>, action: &str) -> TestResult<Self> {
         let calls = Arc::new(AtomicUsize::new(0));
         let policy = Arc::new(Policy::default());
         let mut processor = CommandProcessor::builder(fixture.context.clone(), store.clone())
@@ -238,6 +247,119 @@ impl Replay {
         assert!(self.fixture.quarantine().await?.is_empty());
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn fresh_dispatch_reports_unretained_completion_without_a_transport_response() -> TestResult {
+    dispatch_during_eviction(false).await
+}
+
+#[tokio::test]
+async fn response_timeout_rechecks_permission_before_disclosing_completion() -> TestResult {
+    dispatch_during_eviction(true).await
+}
+
+async fn dispatch_during_eviction(revoke_read: bool) -> TestResult {
+    let fixture = Fixture::new("dispatch-eviction").await?;
+    let config = NatsEventStoreConfig::for_bounded_context(&fixture.context)?
+        .with_fresh_outcomes()?
+        .with_storage_limits(512 * 1024, 8 * 1024)?
+        .with_evicting_result_bodies(16 * 1024)?
+        .with_puback_timeout(WAIT)?;
+    provision_event_store(&fixture.js, &config).await?;
+    let proxy = modular_state_fault_support::StateProxy::start_with_timeout(
+        config.outcome_state_stream_name(),
+        "unused",
+        0,
+        WAIT,
+    )
+    .await?;
+    let store = Arc::new(NatsEventStore::connect(proxy.js.clone(), config.clone()).await?);
+    let replay = Replay::with_store(fixture, store, "create")?;
+    let mut gate = proxy.gate_request(
+        config.transaction_receipt_subject(
+            "original-operation",
+            Some("contract-correlation"),
+            Some("contract-causation"),
+        ),
+        1,
+    )?;
+    let _worker = replay.start_worker().await?;
+    let observer = Arc::new(Publications {
+        records: Mutex::default(),
+        gate: Some((Semaphore::new(0), Semaphore::new(0))),
+    });
+    let bus = CommandBus::new(
+        replay.fixture.context.clone(),
+        Arc::new(
+            (*replay.fixture.adapter)
+                .clone()
+                .with_outcome_service(replay.service.clone(), caller("sender")?)
+                .with_response_timeout(Duration::from_millis(100)),
+        ),
+    );
+    let dispatch = bus.dispatch_encoded_observed(replay.command.clone(), observer.clone());
+    let fault = async {
+        gate.wait().await?;
+        evict_only_prepared_body(&replay.fixture, &config).await?;
+        gate.release()?;
+        // Start the response wait only after the worker has finished and cannot
+        // project a response. A slow setup cannot turn this into an ordinary timeout.
+        while replay.fixture.quarantine().await?.is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        replay.policy.denied.store(revoke_read, Ordering::SeqCst);
+        observer.gate.as_ref().unwrap().1.add_permits(1);
+        TestResult::Ok(())
+    };
+    let (result, ()) = tokio::try_join!(async { TestResult::Ok(dispatch.await) }, async {
+        tokio::time::timeout(WAIT, fault).await?
+    })?;
+    assert_eq!(
+        observer.records.lock().await.as_slice(),
+        &[CommandPublication::new(
+            replay.command.message_id().clone(),
+            false
+        )]
+    );
+    assert_eq!(
+        replay
+            .fixture
+            .messages(
+                replay
+                    .fixture
+                    .messaging
+                    .topology()
+                    .command_response_stream()
+                    .as_str()
+            )
+            .await?,
+        0
+    );
+    assert_eq!(replay.store.load(&stream("target")?).await?.len(), 1);
+    let error = result.unwrap_err();
+    if revoke_read {
+        assert_eq!(
+            error.authorization_error(),
+            Some(&AuthorizationError::Denied)
+        );
+        replay.policy.denied.store(false, Ordering::SeqCst);
+    } else {
+        assert_eq!(
+            error.kind(),
+            CommandBusErrorKind::CompletedDetailsNotRetained,
+            "{error}"
+        );
+    }
+    assert_eq!(
+        bus.dispatch_encoded(replay.command.clone())
+            .await
+            .unwrap_err()
+            .kind(),
+        CommandBusErrorKind::CompletedDetailsNotRetained
+    );
+    assert_eq!(replay.calls.load(Ordering::SeqCst), 1);
+    Ok(())
 }
 
 #[tokio::test]

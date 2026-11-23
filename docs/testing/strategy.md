@@ -188,6 +188,20 @@ Without `--working-tree`, `cargo xtask acceptance tracer-host` qualifies the com
 through Git dependencies. Use that mode for committed-source acceptance; it does
 not establish that uncommitted framework edits work.
 
+The split-capacity restart contracts expect refusal on the workspace broker.
+To exercise successful standalone resize, create a private evidence directory
+and run the same contracts with an official fixed release:
+
+```sh
+ROSTFREI_CONTRACT_EVIDENCE_DIR="$(mktemp -d)" \
+ROSTFREI_CONTRACT_SEED_NATS_BINARY=/path/to/nats-server-2.12.15 \
+ROSTFREI_CONTRACT_NATS_BINARY=/path/to/nats-server-2.14.10 \
+cargo test --locked -p rostfrei-nats --test event_store_provisioning_integration split_capacity_maintenance -- --test-threads=1
+```
+
+CI exercises this upgrade with both 2.14.10 and 2.15.3. Native restart tests
+retain their private storage in the evidence directory; remove it after inspection.
+
 The default runner prefetches the separate macro dependency-matrix lockfile.
 When selecting that target directly, prepare it with
 `cargo fetch --locked --manifest-path crates/rostfrei-macros/tests/dependency-matrix/Cargo.toml`.

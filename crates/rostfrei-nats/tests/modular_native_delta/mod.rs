@@ -248,6 +248,134 @@ struct ColdCopy {
     bytes: Vec<u8>,
     calls: AtomicUsize,
 }
+
+#[tokio::test]
+async fn journal_expiry_blocks_cold_and_cached_results_after_rollover_and_restart() -> TestResult {
+    let Ok(mode) = std::env::var("ROSTFREI_MODULAR_RESTART_MODE") else {
+        return modular_restart_support::run("modular_native_delta::journal_expiry_blocks_cold_and_cached_results_after_rollover_and_restart", &["seed", "replay"]).await;
+    };
+    let f = Fixture::for_application(ApplicationName::new(std::env::var(
+        "ROSTFREI_MODULAR_RESTART_APP",
+    )?)?)
+    .await?;
+    let config = NatsEventStoreConfig::for_bounded_context(&f.context)?
+        .with_fresh_outcomes()?
+        .with_storage_limits(512 * 1024, 8 * 1024)?
+        .with_evicting_result_bodies(16 * 1024)?
+        .with_explicit_detail_expiry(true)?;
+    if mode == "seed" {
+        provision_event_store(&f.js, &config).await?;
+    }
+    let store = Arc::new(NatsEventStore::connect(f.js.clone(), config.clone()).await?);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let original = service(&f, store.clone(), calls.clone())?;
+    let cmd = CommandBus::new(f.context.clone(), f.adapter.clone()).encode(request(
+        "withdrawn",
+        "absent",
+        "add",
+    )?)?;
+    let key = key(&store, &f.context, &OperationId::new("withdrawn")?);
+    let path = std::path::PathBuf::from(std::env::var("ROSTFREI_MODULAR_RESTART_RECORDS")?)
+        .join("cold-body");
+    if mode == "seed" {
+        let completed = original.process(&caller()?, &cmd).await.into_result()?;
+        let winner = completed.outcome();
+        cache(&f, &cmd, winner.details().available()?).await?;
+        let DetailRead::Found(bytes) = store
+            .detail_reader()
+            .get(winner.marker().detail_reference())
+            .await?
+        else {
+            return Err("copy source missing".into());
+        };
+        std::fs::write(&path, bytes)?;
+        assert_eq!(
+            store
+                .expire_details(&key, winner.marker().revision())
+                .await?
+                .reclamation(),
+            ReclamationStatus::Pending
+        );
+        let mut bodies = f.js.get_stream(config.outcome_state_stream_name()).await?;
+        let initial = bodies.cached_info().state.last_sequence;
+        for i in 0..32 {
+            original
+                .process(&caller()?, &command(&f, &format!("pressure-{i}"))?)
+                .await
+                .into_result()?;
+            if bodies.info().await?.state.first_sequence > initial {
+                break;
+            }
+        }
+        assert!(bodies.info().await?.state.first_sequence > initial);
+    } else {
+        assert_eq!(mode, "replay");
+    }
+    let OutcomeLookup::Completed(winner) = store.lookup_outcome(&key).await? else {
+        return Err("withdrawn decision lost".into());
+    };
+    assert_eq!(winner.marker().decision(), OutcomeDecision::Rejected);
+    assert_eq!(winner.details(), &OutcomeDetails::Expired);
+    let journal_before = f.messages(config.stream_name()).await?;
+    assert_eq!(
+        store
+            .expire_details(&key, winner.marker().revision())
+            .await?
+            .reclamation(),
+        ReclamationStatus::Reclaimed
+    );
+    assert_eq!(
+        store
+            .detail_reader()
+            .get(winner.marker().detail_reference())
+            .await?,
+        DetailRead::AbsentHere
+    );
+    let bytes = std::fs::read(&path)?;
+    assert!(
+        EncodedOutcomeDetails::decode(winner.marker().detail_reference(), &bytes)?
+            .rejection()
+            .is_some()
+    );
+    let cold = Arc::new(ColdCopy {
+        reference: winner.marker().detail_reference().clone(),
+        bytes,
+        calls: AtomicUsize::new(0),
+    });
+    let guarded = service(
+        &f,
+        Arc::new(
+            store
+                .as_ref()
+                .clone()
+                .with_detail_readers(Arc::new(HotMiss), Some(cold.clone())),
+        ),
+        calls.clone(),
+    )?;
+    let evaluated = calls.load(Ordering::SeqCst);
+    // Verify an actual cached rejection, then try the normal admitted read.
+    let cached = NatsCommandResponseReader::new(f.js.clone(), f.messaging.topology().clone())
+        .read_command_response(
+            &cmd.response_address()?,
+            cmd.operation_id(),
+            cmd.message_id(),
+            WAIT,
+        )
+        .await?;
+    assert!(rejected(cached.outcome()));
+    assert_eq!(
+        admitted_bus(&f, guarded)?
+            .dispatch_encoded(cmd)
+            .await
+            .unwrap_err()
+            .kind(),
+        CommandBusErrorKind::CompletedDetailsExpired
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), evaluated);
+    assert_eq!(cold.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(f.messages(config.stream_name()).await?, journal_before);
+    Ok(())
+}
 #[async_trait]
 impl OutcomeDetailReader for ColdCopy {
     async fn get(&self, reference: &OutcomeDetailReference) -> Result<DetailRead, DetailReadError> {
@@ -263,9 +391,24 @@ impl OutcomeDetailReader for ColdCopy {
 #[tokio::test]
 async fn lost_state_authority_blocks_warm_cache_and_independent_cold_copy_without_execution()
 -> TestResult {
-    for fault in ["unavailable", "missing", "recreated"] {
+    for fault in [
+        "unavailable",
+        "missing",
+        "recreated",
+        "corrupt-body",
+        "wrong-pair",
+    ] {
         let fixture = Fixture::new(&format!("modular-state-{fault}")).await?;
-        let store = split_store(&fixture).await?;
+        let store = if fault == "missing" {
+            split_store(&fixture).await?
+        } else {
+            let config = NatsEventStoreConfig::for_bounded_context(&fixture.context)?
+                .with_fresh_outcomes()?
+                .with_storage_limits(512 * 1024, 8 * 1024)?
+                .with_evicting_result_bodies(16 * 1024)?;
+            provision_event_store(&fixture.js, &config).await?;
+            Arc::new(NatsEventStore::connect(fixture.js.clone(), config).await?)
+        };
         let calls = Arc::new(AtomicUsize::new(0));
         let original = service(&fixture, store.clone(), calls.clone())?;
         let command = command(&fixture, "state-authority")?;
@@ -285,7 +428,7 @@ async fn lost_state_authority_blocks_warm_cache_and_independent_cold_copy_withou
         });
         let state_name = store.config().outcome_state_stream_name();
         let mut states = fixture.js.get_stream(state_name).await?;
-        let config = states.cached_info().config.clone();
+        let mut config = states.cached_info().config.clone();
         let active = capture_latest(&mut states).await?;
         let proxy = StateProxy::start(state_name, &active.subject, active.sequence).await?;
         let guarded_store = Arc::new(
@@ -310,6 +453,17 @@ async fn lost_state_authority_blocks_warm_cache_and_independent_cold_copy_withou
         let journal_before = message_count(&fixture, store.config().stream_name()).await?;
         if fault == "unavailable" {
             proxy.faults.block_state_reads.store(true, Ordering::SeqCst);
+        } else if fault == "corrupt-body" {
+            fixture
+                .js
+                .publish(active.subject.clone(), "malformed".into())
+                .await?
+                .await?;
+        } else if fault == "wrong-pair" {
+            config
+                .metadata
+                .insert("rostfrei.split.journal-incarnation".into(), "other".into());
+            fixture.js.update_stream(config).await?;
         } else {
             // Destructive loss of this fixture's whole authority, NOT hot-only eviction.
             fixture.js.delete_stream(state_name).await?;

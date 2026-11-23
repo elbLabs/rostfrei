@@ -1,5 +1,8 @@
-//! Coordinated native outcome authority: permanent journal plus terminal last-value state.
+//! Coordinated native outcome authority. Layout 2 keeps terminal last-value state;
+//! layout 3 keeps withdrawal on the journal and only bodies in the companion.
 use super::*;
+#[path = "result_bodies.rs"]
+mod result_bodies;
 use rostfrei_core::{
     CommandAuthority, CommandCommitSession, CompletedCommit, CompletedOutcome,
     EncodedOutcomeDetails, ExecutionStore, OutcomeDetails, OutcomeExpiry, OutcomeKey,
@@ -128,7 +131,20 @@ async fn inspect_split_state(
     if !config.split_outcomes() {
         return Ok(None);
     }
-    let state = context
+    let state = get_split_state(context, config).await?;
+    verify_split_state(
+        config.outcome_state_config(),
+        journal.cached_info(),
+        state.cached_info(),
+    )?;
+    Ok(Some(state))
+}
+
+pub(super) async fn get_split_state(
+    context: &jetstream::Context,
+    config: &NatsEventStoreConfig,
+) -> Result<jetstream::stream::Stream, EventStoreError> {
+    context
         .get_stream(config.outcome_state_stream_name())
         .await
         .map_err(|e| {
@@ -137,30 +153,36 @@ async fn inspect_split_state(
             } else {
                 unavailable(e.to_string())
             }
-        })?;
-    let mut expected = config.outcome_state_config();
-    if let Some(binding) = state.cached_info().config.metadata.get(JOURNAL_BINDING) {
+        })
+}
+
+pub(super) fn verify_split_state(
+    mut expected: Config,
+    journal: &jetstream::stream::Info,
+    state: &jetstream::stream::Info,
+) -> Result<(), EventStoreError> {
+    if let Some(binding) = state.config.metadata.get(JOURNAL_BINDING) {
         expected
             .metadata
             .insert(JOURNAL_BINDING.to_owned(), binding.clone());
     }
-    let mismatches = stream_config_mismatches(&expected, &state.cached_info().config);
+    let mismatches = stream_config_mismatches(&expected, &state.config);
     if !mismatches.is_empty() {
         return Err(configuration(format!(
             "outcome state configuration differs: {}",
             mismatches.join(", ")
         )));
     }
-    let journal_id = journal.cached_info().created.to_string();
-    let state_id = state.cached_info().created.to_string();
-    if journal.cached_info().config.metadata.get(STATE_BINDING) != Some(&state_id)
-        || state.cached_info().config.metadata.get(JOURNAL_BINDING) != Some(&journal_id)
+    let journal_id = journal.created.to_string();
+    let state_id = state.created.to_string();
+    if journal.config.metadata.get(STATE_BINDING) != Some(&state_id)
+        || state.config.metadata.get(JOURNAL_BINDING) != Some(&journal_id)
     {
         return Err(configuration(
             "journal/state incarnation binding differs; authority cannot be reopened",
         ));
     }
-    Ok(Some(state))
+    Ok(())
 }
 
 pub(super) async fn provision_split(
@@ -228,6 +250,12 @@ enum StateValue {
 struct ObservedState {
     sequence: u64,
     value: StateValue,
+}
+
+enum AdmittedBody {
+    Available(Vec<u8>),
+    NotRetained,
+    Expired,
 }
 
 impl NatsEventStore {
@@ -403,21 +431,36 @@ impl NatsEventStore {
             state: value,
         })
         .map_err(|e| invalid(e.to_string()))?;
+        self.publish_cas(
+            self.config.outcome_state_stream_name(),
+            self.config.outcome_state_subject(&manifest),
+            payload,
+            expected,
+            "application/json",
+        )
+        .await
+    }
+
+    async fn publish_cas(
+        &self,
+        stream: &str,
+        subject: String,
+        payload: Vec<u8>,
+        expected: u64,
+        content_type: &str,
+    ) -> Result<u64, EventStoreError> {
         if payload.len() > self.config.max_event_bytes() {
             return Err(invalid("outcome state exceeds configured message limit"));
         }
         let mut headers = HeaderMap::new();
-        headers.insert("Content-Type", "application/json");
-        headers.insert(
-            NATS_EXPECTED_STREAM,
-            self.config.outcome_state_stream_name(),
-        );
+        headers.insert("Content-Type", content_type);
+        headers.insert(NATS_EXPECTED_STREAM, stream);
         headers.insert(NATS_EXPECTED_LAST_SUBJECT_SEQUENCE, expected.to_string());
         let reply = self
             .context
             .client()
             .send_request(
-                self.config.outcome_state_subject(&manifest),
+                subject,
                 Request::new()
                     .headers(headers)
                     .payload(payload.into())
@@ -429,7 +472,7 @@ impl NatsEventStore {
             AtomicBatchPublishError::Expectation => conflict("state CAS did not match"),
             AtomicBatchPublishError::Store(e) => e,
         })?;
-        if ack.stream != self.config.outcome_state_stream_name()
+        if ack.stream != stream
             || ack.sequence == 0
             || ack.sequence <= expected
             || ack.batch.is_some()
@@ -443,6 +486,9 @@ impl NatsEventStore {
         marker: &OutcomeMarker,
         bytes: &[u8],
     ) -> Result<(), EventStoreError> {
+        if self.config.evicting_result_bodies() {
+            return self.prepare_body(marker, bytes).await;
+        }
         let result = self
             .publish_state(
                 marker,
@@ -474,40 +520,59 @@ impl NatsEventStore {
             Err(error) => Err(result.err().unwrap_or(error)),
         }
     }
+    async fn admitted_body(&self, marker: &OutcomeMarker) -> Result<AdmittedBody, EventStoreError> {
+        if self.config.evicting_result_bodies() {
+            return self.read_admitted_body(marker).await;
+        }
+        Ok(match self.read_state(marker).await?.value {
+            StateValue::Active { bytes } => {
+                AdmittedBody::Available(STANDARD.decode(bytes).map_err(|e| corrupt(e.to_string()))?)
+            }
+            StateValue::Expired { .. } => AdmittedBody::Expired,
+        })
+    }
     async fn resolve_marker(
         &self,
         marker: OutcomeMarker,
     ) -> Result<CompletedOutcome, EventStoreError> {
-        let observed = self
-            .read_state(&marker)
+        let body = self
+            .admitted_body(&marker)
             .await
             .map_err(EventStoreError::in_outcome_recovery)?;
-        let details = match observed.value {
-            StateValue::Active { bytes } => {
-                if let Some((hot, cold)) = &self.detail_readers {
-                    let details = rostfrei_core::resolve_details(
-                        marker.detail_reference(),
-                        hot.as_ref(),
-                        cold.as_deref(),
-                    )
-                    .await
-                    .map_err(EventStoreError::in_outcome_recovery)?;
-                    if let OutcomeDetails::Available(value) = &details {
-                        validate_recovered(&marker, value)
-                            .map_err(EventStoreError::in_outcome_recovery)?;
-                    }
-                    details
-                } else {
-                    let details = EncodedOutcomeDetails::decode(
-                        marker.detail_reference(),
-                        &STANDARD.decode(bytes).map_err(|e| corrupt(e.to_string()))?,
-                    )?;
-                    validate_recovered(&marker, &details)
+        let details = match (body, &self.detail_readers) {
+            (AdmittedBody::Expired, _) => OutcomeDetails::Expired,
+            (body, Some((hot, cold))) => {
+                let details = rostfrei_core::resolve_details(
+                    marker.detail_reference(),
+                    hot.as_ref(),
+                    cold.as_deref(),
+                )
+                .await
+                .map_err(EventStoreError::in_outcome_recovery)?;
+                if let OutcomeDetails::Available(value) = &details {
+                    validate_recovered(&marker, value)
                         .map_err(EventStoreError::in_outcome_recovery)?;
-                    OutcomeDetails::Available(details)
+                }
+                if matches!(body, AdmittedBody::NotRetained)
+                    && matches!(
+                        details,
+                        OutcomeDetails::Unavailable {
+                            reason: rostfrei_core::DetailUnavailableReason::MissingDetails
+                        }
+                    )
+                {
+                    OutcomeDetails::NotRetained
+                } else {
+                    details
                 }
             }
-            StateValue::Expired { .. } => OutcomeDetails::Expired,
+            (AdmittedBody::Available(bytes), None) => {
+                let details = EncodedOutcomeDetails::decode(marker.detail_reference(), &bytes)?;
+                validate_recovered(&marker, &details)
+                    .map_err(EventStoreError::in_outcome_recovery)?;
+                OutcomeDetails::Available(details)
+            }
+            (AdmittedBody::NotRetained, None) => OutcomeDetails::NotRetained,
         };
         CompletedOutcome::new(marker, details)
             .map_err(|e| corrupt(e.to_string()).in_outcome_recovery())
@@ -617,6 +682,9 @@ fn recovery_error(error: rostfrei_core::OutcomeRecoveryError) -> EventStoreError
         match error {
             rostfrei_core::OutcomeRecoveryError::Expired => {
                 EventStoreErrorKind::CompletedDetailsExpired
+            }
+            rostfrei_core::OutcomeRecoveryError::NotRetained => {
+                EventStoreErrorKind::CompletedDetailsNotRetained
             }
             rostfrei_core::OutcomeRecoveryError::IntegrityMismatch => {
                 EventStoreErrorKind::CorruptHistory
@@ -753,6 +821,9 @@ impl OutcomeLifecycle for NatsEventStore {
         if marker.revision() != expected {
             return Err(OutcomeLifecycleError::RevisionMismatch);
         }
+        if self.config.evicting_result_bodies() {
+            return Ok(self.expire_body(&marker).await?);
+        }
         let state = self.read_state(&marker).await?;
         let previous = match state.value {
             StateValue::Expired { previous, .. } => previous,
@@ -832,11 +903,9 @@ impl rostfrei_core::OutcomeDetailReader for NativeDetailReader {
             if marker.detail_reference() != reference {
                 return Err(corrupt("detail reference is not the winning reference"));
             }
-            match self.0.read_state(&marker).await?.value {
-                StateValue::Active { bytes } => Ok(DetailRead::Found(
-                    STANDARD.decode(bytes).map_err(|e| corrupt(e.to_string()))?,
-                )),
-                StateValue::Expired { .. } => Ok(DetailRead::AbsentHere),
+            match self.0.admitted_body(&marker).await? {
+                AdmittedBody::Available(bytes) => Ok(DetailRead::Found(bytes)),
+                AdmittedBody::Expired | AdmittedBody::NotRetained => Ok(DetailRead::AbsentHere),
             }
         }
         .await;

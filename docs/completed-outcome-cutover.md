@@ -21,6 +21,23 @@ Event storage has separate [subject deployment requirements](messaging/subjects.
    .with_fresh_outcomes()?` only when creating that fresh
    namespace. Provision and verify both journal and outcome-state streams; their
    creation incarnations are cross-bound. No operator epoch label is required.
+   To select oldest-first eviction for **bodies only**, configure layout 3 before
+   provisioning, for example:
+
+   ```rust,ignore
+   let config = NatsEventStoreConfig::for_bounded_context(&new_context)?
+       .with_fresh_outcomes()?
+       .with_storage_limits(journal_bytes, max_event_bytes)?
+       .with_evicting_result_bodies(result_bytes)?;
+   ```
+
+   Use the same layout selector and sizes on every reopen. Both limits must cover
+   the maximum wire message; a separate `result_bytes` is not a shared pool.
+   A named split epoch also supports the selector. Layout 2 (`with_fresh_outcomes`
+   or the existing split epoch alone) keeps its Active/Expired records and
+   refuses new results at capacity. Provision, connect and update never convert
+   either pair into the other. To change layouts, use this fresh-namespace
+   cutover and keep routing retries for the old pair back to it.
    Default config intentionally blocks unevidenced
    command execution. The shared host's `with_fresh_outcomes` selects
    this split configuration rather than the low-level inline compatibility mode.
@@ -101,3 +118,57 @@ detail expiry withdraws result bodies while retaining the permanent decision; it
 does not erase backups or reopen execution. Restoring into a different authority
 namespace is a migration requiring explicit identity/routing policy, not transparent
 retry. Unilateral stream recreation and stale handles fail closed.
+
+For layout 3, take a **fenced, consistent cut of both streams**. Preserve stream
+creation times, cross-bindings, limits, subjects and discard policies. A journal
+snapshot from before withdrawal can undo revocation even when accompanied by a
+newer body snapshot or external archive. Reconcile post-cut withdrawals and
+decisions before reopening *any* result reader. Never recreate an empty results
+stream to stand in for a missing snapshot. Qualify the restore tooling for layout
+3 (including a rolled-off rejection and a withdrawn winner) before production
+use; qualification of the layout-2 CLI restore alone does not establish this.
+
+## Grow a split store in place
+
+Monitor free bytes and growth rate for both the journal and command-results stream.
+`max_stream_bytes` sizes both streams in layout 2 and only the journal when an
+explicit evicting-body limit is set.
+
+**Resize requires a direct connection to a standalone NATS Server 2.14.10 or
+2.15.3 hosting both streams (one replica).** On 2.12.15 a config update to a
+recovered file stream can change its persisted creation time; the next restart
+then invalidates the original authority. Stream INFO and server uptime cannot
+establish whether a store was reloaded since creation. The adapter therefore
+refuses growth before updating either stream on 2.12.15, on unqualified releases,
+and on clustered deployments. This restriction is specific to resizing. A
+matching target still verifies without writing. Do not resize with the raw
+stream API or rewrite the bindings to make a changed identity appear valid.
+
+To grow an existing pair, first upgrade the healthy standalone broker in place
+if needed, preserving its storage and namespace, and reopen with the original
+policy. See the [upstream creation-time fix](https://github.com/nats-io/nats-server/pull/8471).
+For the resize itself (named epoch or label-free), use a maintenance window:
+
+1. Stop and drain users of the pair, including readers that verify the storage
+   policy. Fence other stream administrators and broker/topology changes for the duration. JetStream updates
+   one stream at a time; there is no lock spanning the pair.
+2. Keep the deployed configuration and namespace, changing only total capacity:
+
+   ```rust,ignore
+   let target = deployed.clone().with_storage_limits(new_bytes, deployed.max_event_bytes())?;
+   // Layout 3 only: change this if growing the body stream too.
+   // let target = target.with_evicting_result_bodies(new_result_bytes)?;
+   update_event_store(&jetstream, &target).await?;
+   ```
+
+   Use maintenance credentials with account-info and stream-info/update access.
+   Both stream policies, their cross-bindings and reported account reservation
+   headroom are checked before growth. Allow for replicas and disk/placement
+   limits; the broker still decides whether each update can be admitted.
+3. On interruption or an uncertain response, keep workers stopped and rerun the
+   same operation with the **same target**. A stream already at target is left
+   alone. Never shrink the first stream to roll back, or recreate either stream.
+   A policy or binding mismatch requires inspection, not a forced update.
+4. After success, reconnect with the target policy, verify a known operation
+   replays, then resume service. Ordinary startup/provisioning verifies existing
+   limits and does not perform this resize.

@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in NATS split layout 3: independently bounded, oldest-first command result
+  bodies with permanent decisions and explicit withdrawals on the journal.
+  `OutcomeDetails::NotRetained` distinguishes eviction from expiry and storage
+  failure; callers with exhaustive recovery matches must handle the new variants.
+  Existing split authorities keep their layout. See the
+  [cutover and capacity runbook](docs/completed-outcome-cutover.md).
+
 ## [0.2.3] - 2026-11-19
 
 ### Added

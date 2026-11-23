@@ -765,6 +765,7 @@ async fn split_retained_and_expired_outcomes_survive_process_and_broker_restart(
     }
     modular_restart_support::run(
         "split_retained_and_expired_outcomes_survive_process_and_broker_restart",
+        &["seed", "replay"],
     )
     .await
 }
