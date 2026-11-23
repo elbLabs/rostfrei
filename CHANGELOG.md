@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- `cargo rostfrei new` generates a registry-pinned 0.2.3 application with
+  release-matched Agent Skills (`--no-skills` to skip) and a runnable rental
+  command demonstrating durable replay on JetStream.
+
 ## [0.2.3] - 2026-11-19
 
 ### Added

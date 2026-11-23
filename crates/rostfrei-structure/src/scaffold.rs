@@ -7,16 +7,15 @@ use heck::{ToKebabCase, ToSnakeCase, ToTitleCase, ToUpperCamelCase};
 use tempfile::Builder;
 use thiserror::Error;
 
-// A tested, already published Git release, independent of the CLI's package version.
+// An already published registry release, independent of the CLI's package version.
 // Advance explicitly after publication; see docs/development.md's starter contract.
-const SCAFFOLD_RELEASE: &str = "v0.0.5-alpha";
-const SCAFFOLD_REVISION: &str = "c9f5516ddc324265916b60e1eb7300dad9acac9d";
+const SCAFFOLD_RELEASE: &str = "v0.2.3";
+const SCAFFOLD_REVISION: &str = "28f08d2cc2b79dd6c47a7160729de27da05c30c5";
 const RUST_VERSION: &str = env!("CARGO_PKG_RUST_VERSION");
 
 /// Release qualification owns this capability alongside the published pin.
-/// The current published starter predates the skills/setup CLI protocol.
 pub const fn scaffold_dependency() -> (&'static str, &'static str, bool) {
-    (SCAFFOLD_RELEASE, SCAFFOLD_REVISION, false)
+    (SCAFFOLD_RELEASE, SCAFFOLD_REVISION, true)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -125,6 +124,10 @@ const TEMPLATES: &[Template] = &[
     Template {
         path: "rust-toolchain.toml",
         contents: include_str!("../templates/new/rust-toolchain.toml"),
+    },
+    Template {
+        path: "examples/first_rental.rs",
+        contents: include_str!("../templates/new/examples/first_rental.rs"),
     },
     Template {
         path: "src/main.rs",
@@ -358,7 +361,10 @@ fn render(template: &str, names: &ProjectNames) -> String {
         .replace("{{domain_modules}}", &names.domain_modules)
         .replace("{{domain_exports}}", &names.domain_exports)
         .replace("{{rostfrei_release}}", SCAFFOLD_RELEASE)
-        .replace("{{rostfrei_revision}}", SCAFFOLD_REVISION)
+        .replace(
+            "{{rostfrei_version}}",
+            SCAFFOLD_RELEASE.trim_start_matches('v'),
+        )
         .replace("{{rust_version}}", RUST_VERSION)
 }
 

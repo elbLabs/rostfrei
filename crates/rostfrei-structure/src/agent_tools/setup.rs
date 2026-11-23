@@ -541,10 +541,7 @@ pub fn setup_scaffold(directory: &Path, version: &str, revision: &str) -> Result
     let framework = Framework {
         version: version.to_owned(),
         revision: revision.to_owned(),
-        source: Source::Git {
-            url: "https://github.com/elbLabs/rostfrei".to_owned(),
-            revision: revision.to_owned(),
-        },
+        source: Source::Registry,
     };
     let destination = directory.join(".agents/skills");
     matching_tool(&framework)?.map_or_else(

@@ -64,10 +64,9 @@ Check that a generated application builds outside this checkout:
 cargo xtask acceptance new-project
 ```
 
-This requires GitHub and crates.io access. It generates a hyphenated starter in
-a temporary directory, runs `cargo check` and `cargo test --locked` with its
-unmodified manifest, and verifies that rostfrei dependencies resolve from the
-pinned Git release.
+This requires crates.io access and Docker. It builds the generated project outside the
+checkout, verifies its registry dependencies and installed skill identities, and runs
+the rental example twice against the same disposable broker.
 
 ### NATS authentication and workers
 
@@ -234,12 +233,10 @@ The GitHub workflow is a separate publication step for the matching kit and chec
 
 ## Starter dependency contract
 
-`cargo rostfrei new` pins `rostfrei` and
-`rostfrei-nats` to the same full Git commit from an available release. The
-starter currently targets `v0.0.5-alpha`
-(`c9f5516ddc324265916b60e1eb7300dad9acac9d`). This pin is independent of the
-generator's package version and `main`. Existing projects retain their pin and
-should commit `Cargo.lock`.
+`cargo rostfrei new` pins the published `rostfrei` facade (`=0.2.3`, `nats` feature)
+and installs Agent Skills matching that package's source revision. `--no-skills`
+skips setup. The pin is independent of the generator's own version. Existing
+projects keep their manifest and should commit `Cargo.lock`.
 
 `cargo xtask versions bump` does not advance the starter pin. After publishing a
 release, update `SCAFFOLD_RELEASE` and `SCAFFOLD_REVISION` in
@@ -248,11 +245,8 @@ this guide. Run the external acceptance check in that follow-up PR. Templates
 must remain compatible with the selected release; new runtime APIs require an
 available release and a pin update, not a future tag or local fallback.
 
-The current pin predates bundled Agent Skills setup. `new` reports that skills
-were not installed; see the [Agent Skills guide](agent-skills-install.md) for setup,
-source commands and kit checks. After publishing a skills-enabled release, qualify
-its matching resources and enable `scaffold_dependency()`'s skills capability
-alongside the starter pin update.
+Use the published `rostfrei` crate's `.cargo_vcs_info.json` as the source revision.
+The acceptance check compares both installed skills against this file independently.
 
 To generate from this checkout:
 

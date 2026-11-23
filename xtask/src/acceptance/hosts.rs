@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
-use std::{fs, time::Duration};
+use std::{fs, path::Path, time::Duration};
 
 pub fn new_project() -> Result<()> {
     let mut env = environment();
@@ -41,14 +41,15 @@ pub fn new_project() -> Result<()> {
     let original = fs::read(&manifest_path)?;
     let manifest = versions::read(&manifest_path)?;
     let dependency = &manifest["dependencies"]["rostfrei"];
-    ensure!(
-        dependency == &manifest["dependencies"]["rostfrei-nats"],
-        "Both Rostfrei dependencies must use the same release pin"
-    );
-    let git = dependency["git"].as_str().context("public git pin")?;
-    let revision = dependency["rev"].as_str().context("public revision")?;
-    let expected = format!("git+{git}?rev={revision}#{revision}");
-    for args in [&["cargo", "check"][..], &["cargo", "test", "--locked"][..]] {
+    let version = dependency["version"]
+        .as_str()
+        .and_then(|s| s.strip_prefix('='))
+        .context("expected exact registry release")?;
+    for args in [
+        &["cargo", "check", "--all-targets"][..],
+        &["cargo", "test", "--locked"][..],
+        &["cargo", "fmt", "--check"][..],
+    ] {
         process::run(args, &project, &env)?;
     }
     let metadata: Value = serde_json::from_str(&process::run(
@@ -72,16 +73,62 @@ pub fn new_project() -> Result<()> {
     }
     for package in packages {
         ensure!(
-            package["source"] == expected,
+            package["source"] == "registry+https://github.com/rust-lang/crates.io-index",
             "{} resolved outside the public release pin",
             package["name"]
         );
+        if package["name"] == "rostfrei" {
+            ensure!(package["version"] == version, "wrong facade version");
+            let crate_dir = Path::new(text(&package["manifest_path"])?)
+                .parent()
+                .context("registry crate directory")?;
+            let vcs = crate::read_json(&crate_dir.join(".cargo_vcs_info.json"))?;
+            let revision = text(&vcs["git"]["sha1"])?;
+            for skill in ["rostfrei-tracer", "rostfrei-develop-feature"] {
+                let file = project
+                    .join(".agents/skills")
+                    .join(skill)
+                    .join("references/release.json");
+                let identity = crate::read_json(&file)?;
+                ensure!(
+                    identity["sourceRevision"] == revision
+                        && identity["frameworkVersion"] == version
+                        && identity["sourceTreeDirty"] == false,
+                    "{skill} does not match the published framework"
+                );
+            }
+        }
     }
     ensure!(
         fs::read(manifest_path)? == original,
         "Generated manifest changed during acceptance"
     );
-    println!("External starter passed check and test using {expected}");
+    let broker = crate::nats::Broker::start(false, Duration::from_secs(45))?;
+    env.insert(
+        "ROSTFREI_NATS_URL".into(),
+        broker
+            .env
+            .get("ROSTFREI_NATS_URL")
+            .context("missing disposable broker URL")?
+            .clone(),
+    );
+    for origin in ["committed", "replayed"] {
+        let output = process::run(
+            &["cargo", "run", "--locked", "--example", "first_rental"],
+            &project,
+            &env,
+        )?;
+        ensure!(
+            output.lines().any(
+                |line| line == format!("rental-1: {origin}; retry: replayed; stored events: 1")
+            ),
+            "expected {origin} rental and a single persisted event"
+        );
+    }
+    broker.shutdown()?;
+    println!(
+        "External starter: matched {version} skills, built from crates.io, committed and replayed on NATS"
+    );
     Ok(())
 }
 pub fn tracer_host(working_tree: bool) -> Result<()> {

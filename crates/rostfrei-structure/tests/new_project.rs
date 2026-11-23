@@ -41,11 +41,8 @@ fn new_project_contains_the_complete_runnable_scaffold() {
     let manifest = read(&destination.join("Cargo.toml"));
     assert!(manifest.starts_with("[workspace]\nresolver = \"3\""));
     assert!(manifest.contains("name = \"bike-rental\""));
-    for name in ["rostfrei", "rostfrei-nats"] {
-        assert!(manifest.contains(&format!(
-            "{name} = {{ git = \"https://github.com/elbLabs/rostfrei\", rev = \"c9f5516ddc324265916b60e1eb7300dad9acac9d\" }}"
-        )));
-    }
+    assert!(manifest.contains("rostfrei = { version = \"=0.2.3\", features = [\"nats\"] }"));
+    assert!(!manifest.contains("git =") && !manifest.contains("rostfrei-nats ="));
     assert!(manifest.contains("[lints.clippy]"));
     assert!(manifest.contains("arithmetic_side_effects = \"deny\""));
 
@@ -60,7 +57,7 @@ fn new_project_contains_the_complete_runnable_scaffold() {
     assert!(main.contains("connection.drain().await?"));
 
     let compose = read(&destination.join("compose.yaml"));
-    assert!(compose.contains("image: nats:2.12-alpine"));
+    assert!(compose.contains("image: nats:2.12.15-alpine"));
     assert!(compose.contains("127.0.0.1:4222:4222"));
 
     let diagnostics = check_domain_root(&destination.join("src/domain"));
@@ -158,7 +155,7 @@ fn cargo_new_command_generates_a_project() {
     let destination = temporary.path().join("customer-support");
 
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-rostfrei"))
-        .args(["rostfrei", "new"])
+        .args(["rostfrei", "new", "--no-skills"])
         .arg(&destination)
         .output();
     assert!(output.is_ok(), "could not execute cargo-rostfrei");
@@ -174,11 +171,11 @@ fn cargo_new_command_generates_a_project() {
     );
     assert!(stdout.contains("Created Rostfrei project `customer-support`"));
     assert!(stdout.contains("  cargo check\n  cargo test\n"));
-    assert!(stdout.contains("published starter v0.0.5-alpha"));
-    assert!(stdout.contains("predates skills-enabled tooling"));
+    assert!(stdout.contains("cargo run --example first_rental"));
+    assert!(stdout.contains("cargo rostfrei skills install"));
     assert!(
         !destination.join(".agents").exists(),
-        "Never attach current skills to an older pinned framework"
+        "--no-skills must skip installation"
     );
     assert!(destination.join("Cargo.toml").is_file());
     assert!(

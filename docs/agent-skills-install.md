@@ -63,10 +63,10 @@ and stops before changing either skill if managed files have local-edit conflict
 Resolve the reported paths deliberately and rerun. Older unmanaged copies are
 adopted only when complete and byte-identical; otherwise install elsewhere and merge.
 
-**Published starter limitation:** `cargo rostfrei new` pins `v0.0.5-alpha`, which
-predates skills support. It creates the application and reports that skills were
-not installed. Setup cannot supply compatible skills for that dependency; a newer
-setup CLI does not change the starter pin or make a skills-enabled release available.
+The updated generator installs the starter's release-matched skills before creating
+the destination. With `cargo rostfrei new --no-skills PATH`, you can generate
+without downloading a tool; later run `cargo check` and `cargo rostfrei skills install`.
+The already published 0.2.3 CLI still generates its older, pre-skills starter.
 
 ## Run an application behavior test
 

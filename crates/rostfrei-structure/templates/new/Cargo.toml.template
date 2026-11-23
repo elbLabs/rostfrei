@@ -13,11 +13,14 @@ publish = false
 name = "{{module_name}}"
 
 [dependencies]
-# Git release {{rostfrei_release}}; crates are not yet published to crates.io.
-rostfrei = { git = "https://github.com/elbLabs/rostfrei", rev = "{{rostfrei_revision}}" }
-rostfrei-nats = { git = "https://github.com/elbLabs/rostfrei", rev = "{{rostfrei_revision}}" }
+rostfrei = { version = "={{rostfrei_version}}", features = ["nats"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+
+[dev-dependencies]
+# Used by the removable first_rental example.
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
 
 [package.metadata.rostfrei.structure]
 version = 1

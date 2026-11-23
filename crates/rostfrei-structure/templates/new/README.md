@@ -1,57 +1,30 @@
 # {{context_label}}
 
-A Rostfrei application backed by NATS and JetStream.
+This project uses `rostfrei = "={{rostfrei_version}}"` from crates.io with the `nats`
+feature. Install rustup and Docker with Compose. Commit `Cargo.lock` after the
+first `cargo check`. To check the starter without a broker:
 
-## Build and test
-
-Install [rustup](https://rustup.rs/) and Git. The included `rust-toolchain.toml`
-selects the Rust toolchain. No NATS server is needed for these checks:
-
-```console
+```sh
 cargo check
-cargo test
+cargo test --locked
+cargo rostfrei check
 ```
 
-The manifest pins both Rostfrei dependencies to Git release `{{rostfrei_release}}`
-at commit `{{rostfrei_revision}}`, because the crates are not yet published to
-crates.io. The first build needs access to GitHub and crates.io. Commit the
-generated `Cargo.lock` to retain the resolved transitive dependency versions.
+## Commit and replay a rental
 
-The starter dependency pin is tested independently of the generator's version;
-it can intentionally lag the CLI and `main`. To upgrade, select an available
-compatible release commit for **both** dependencies, then run `cargo check` and
-`cargo test` again.
-
-## Run locally
-
-Start NATS:
-
-```console
+```sh
 docker compose up -d
+cargo run --locked --example first_rental
 ```
 
-Run the application:
+On a new local store this prints `rental-1: committed; retry: replayed; stored events: 1`.
+Run it again against the same broker: even the first command now replays. The example
+checks both receipts against the bicycle's stored history, uses the project's Test
+namespace, and never resets it. `ROSTFREI_NATS_URL` defaults to `nats://127.0.0.1:4222`;
+use an isolated development broker if you override it. `docker compose down` stops
+the broker and keeps the volume; `docker compose down -v` deletes the local data.
 
-```console
-cargo run
-```
-
-Set `ROSTFREI_NATS_URL` to connect to a different server:
-
-```console
-ROSTFREI_NATS_URL=nats://example:4222 cargo run
-```
-
-## Quality checks
-
-```console
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
-cargo run --bin rostfrei-domain-check
-```
-
-If `cargo-rostfrei` is installed, `cargo rostfrei check` also checks the domain's
-filesystem structure and runs the compiled domain-model check.
-
-Stop NATS with `docker compose down`. Add `-v` to also delete the local JetStream data.
+Your own domain starts in `src/domain/`, independent of this removable example.
+`cargo run` starts the connection-only application and waits for Ctrl-C.
+If you generated with `--no-skills`, `cargo rostfrei skills install` adds the
+release-matched Agent Skills after `cargo check` has created the lockfile.
