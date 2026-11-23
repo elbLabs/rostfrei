@@ -18,6 +18,29 @@ pub use std::time::Duration;
 
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 pub const WAIT: Duration = Duration::from_secs(8);
+
+/// The caller holds the first decision at journal publish. Apply bounded direct
+/// pressure to the 16 KiB companion without running more commands behind the gate.
+pub async fn evict_only_prepared_body(f: &Fixture, config: &NatsEventStoreConfig) -> TestResult {
+    use async_nats::jetstream::stream::RawMessageErrorKind;
+    let bodies = f.js.get_stream(config.outcome_state_stream_name()).await?;
+    let state = &bodies.cached_info().state;
+    assert_eq!(state.messages, 1);
+    let prepared = bodies.get_raw_message(state.last_sequence).await?;
+    let (prefix, _) = prepared
+        .subject
+        .rsplit_once('.')
+        .ok_or("missing body subject token")?;
+    for i in 0..3 {
+        f.js.publish(format!("{prefix}.pressure-{i}"), vec![0; 8 * 1024].into())
+            .await?
+            .await?;
+    }
+    match bodies.get_raw_message(prepared.sequence).await {
+        Err(e) if e.kind() == RawMessageErrorKind::NoMessageFound => Ok(()),
+        other => Err(format!("prepared body was not observably evicted: {other:?}").into()),
+    }
+}
 static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(rostfrei_runtime::BoundedContext)]

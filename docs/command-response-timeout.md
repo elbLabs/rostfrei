@@ -26,6 +26,13 @@ its current durable winner is checked again before response reading. A usable
 winner returns immediately even if the raw response has expired; the response-wait
 budget is used only when reading a response is still necessary.
 
+With `with_outcome_service(...)`, expiration of the response wait triggers one
+final authorized lookup, even for a fresh dispatch. A worker may have committed
+without being able to publish a response. The caller receives the admitted
+winner or its typed detail/authorization error (including
+`CompletedDetailsNotRetained`); a still-missing decision leaves the timeout in
+place. This lookup is outside the transport wait budget and does not redrive work.
+
 ## Meaning of a timeout
 
 The caller receives `CommandBusErrorKind::Timeout`; the standard HTTP adapter maps

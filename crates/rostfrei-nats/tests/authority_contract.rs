@@ -124,7 +124,7 @@ async fn acknowledged_prepare_evicted_before_commit_returns_the_journal_winner()
             .await?;
     let mut gate =
         proxy.gate_request(config.transaction_receipt_subject("gated", None, None), 1)?;
-    let writer = NatsEventStore::connect(proxy.js.clone(), config).await?;
+    let writer = NatsEventStore::connect(proxy.js.clone(), config.clone()).await?;
     let transaction = proposal(&f, "gated")?;
     let writing = tokio::spawn(async move {
         writer
@@ -134,7 +134,7 @@ async fn acknowledged_prepare_evicted_before_commit_returns_the_journal_winner()
             .await
     });
     gate.wait().await?;
-    roll_results(&f, &store).await?;
+    evict_only_prepared_body(&f, &config).await?;
     gate.release()?;
     let committed = writing.await??;
     assert!(!committed.is_exact_replay());

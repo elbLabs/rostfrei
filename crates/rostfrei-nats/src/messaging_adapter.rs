@@ -279,20 +279,27 @@ impl CommandMessageAdapter for NatsMessagingAdapter {
         {
             return Ok(CommandBusReceipt::new(publication.duplicate(), winner));
         }
-        let response = self.read_response_with_timeout(&command).await?;
-        if self.outcome_service.is_some() {
-            if let Some(winner) = self.authorized_response(&command).await? {
-                return Ok(CommandBusReceipt::new(publication.duplicate(), winner));
-            }
-            if !matches!(
+        let read = match self.read_response_with_timeout(&command).await {
+            Err(error) if error.kind() != CommandBusErrorKind::Timeout => return Err(error),
+            result => result,
+        };
+        // An evicted body can leave the worker with a durable decision but no
+        // publishable response. Before reporting an unknown outcome, re-admit
+        // against current authority just as we do for a transport hit.
+        if let Some(winner) = self.authorized_response(&command).await? {
+            return Ok(CommandBusReceipt::new(publication.duplicate(), winner));
+        }
+        let response = read?;
+        if self.outcome_service.is_some()
+            && !matches!(
                 response.outcome(),
                 CommandResponseOutcome::ExecutionFailed(_)
-            ) {
-                return Err(CommandBusError::new(
-                    CommandBusErrorKind::CompletedDetailsBlocked,
-                    "transport result has no authorized authoritative winner",
-                ));
-            }
+            )
+        {
+            return Err(CommandBusError::new(
+                CommandBusErrorKind::CompletedDetailsBlocked,
+                "transport result has no authorized authoritative winner",
+            ));
         }
         command.validate_response(&response).map_err(|error| {
             CommandBusError::new(CommandBusErrorKind::InvalidResponse, error.to_string())
