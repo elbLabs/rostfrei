@@ -18,6 +18,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 const MANIFEST: &str = "pair.json";
+const FORMAT: u32 = 2;
 const ARCHIVES: [&str; 2] = ["journal.tar.s2", "results.tar.s2"];
 
 #[derive(Debug, Subcommand)]
@@ -172,8 +173,8 @@ async fn connect() -> Result<Client> {
         .connect(url)
         .await
         .map_err(|_| "cannot connect to the configured NATS endpoint")?;
-    if client.server_info().version != "2.12.15" {
-        return Err("paired recovery currently qualifies NATS Server 2.12.15 only".into());
+    if client.server_info().version != "2.14.10" {
+        return Err("paired recovery requires NATS Server 2.14.10: older snapshot and restore paths can lose stream identity on restart".into());
     }
     Ok(client)
 }
@@ -242,6 +243,46 @@ fn checksum(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
+// STREAM.INFO and STREAM.SNAPSHOT have returned different creation times for
+// the very same stream. Read only JetStream's leading metadata entry; never
+// extract the archive or assume a successful transfer establishes identity.
+fn verify_archive(path: &Path, source: &Evidence) -> Result<()> {
+    let reader = minlz::Reader::new(fs::File::open(path)?);
+    let mut tar = tar::Archive::new(reader);
+    let mut entries = tar.entries()?;
+    let meta = entries.next().ok_or("snapshot has no stream metadata")??;
+    if !meta.header().entry_type().is_file()
+        || meta.path()? != Path::new("meta.inf")
+        || meta.size() > 1024 * 1024
+    {
+        return Err("snapshot does not begin with qualified JetStream metadata".into());
+    }
+    let archived: Value = serde_json::from_reader(meta)?;
+    if archived.get("Created").and_then(Value::as_str) != Some(&source.created)
+        || archived.get("name") != source.config.get("name")
+        || [
+            "rostfrei.split.state-incarnation",
+            "rostfrei.split.journal-incarnation",
+            "rostfrei.completed-outcomes.version",
+            "rostfrei.outcome-state.version",
+            "rostfrei.completed-outcomes.epoch",
+        ]
+        .into_iter()
+        .any(|k| {
+            archived
+                .get("metadata")
+                .and_then(|m| m.get(k))
+                .and_then(Value::as_str)
+                != source.metadata(k)
+        })
+    {
+        return Err(
+            "native snapshot identity differs from the original stream; discard this backup".into(),
+        );
+    }
+    Ok(())
+}
+
 async fn backup(client: &Client, pair: &Pair) -> Result<()> {
     let streams = [
         existing(client, &pair.journal).await?,
@@ -256,12 +297,17 @@ async fn backup(client: &Client, pair: &Pair) -> Result<()> {
     for (name, path) in [&pair.journal, &pair.results].into_iter().zip(&paths) {
         wire::snapshot(client, name, path).await?;
     }
-    for (source, name) in streams.iter().zip([&pair.journal, &pair.results]) {
+    for ((source, name), path) in streams
+        .iter()
+        .zip([&pair.journal, &pair.results])
+        .zip(&paths)
+    {
         source.check_same_cut(&existing(client, name).await?)?;
+        verify_archive(path, source)?;
     }
     let [journal, results] = paths;
     let manifest = Manifest {
-        version: 1,
+        version: FORMAT,
         streams,
         sha256: [checksum(&journal)?, checksum(&results)?],
     };
@@ -277,15 +323,16 @@ async fn restore(client: &Client, pair: &Pair) -> Result<()> {
         return Err("invalid backup manifest checksum".into());
     }
     let manifest: Manifest = serde_json::from_reader(fs::File::open(path)?)?;
-    if manifest.version != 1 {
+    if manifest.version != FORMAT {
         return Err("unsupported paired backup format".into());
     }
     verify_bindings(pair, &manifest.streams)?;
     let paths = ARCHIVES.map(|file| pair.directory.join(file));
-    for (archive, digest) in paths.iter().zip(&manifest.sha256) {
+    for ((archive, digest), source) in paths.iter().zip(&manifest.sha256).zip(&manifest.streams) {
         if checksum(archive)? != *digest {
             return Err("invalid stream archive checksum".into());
         }
+        verify_archive(archive, source)?;
     }
     for name in [&pair.journal, &pair.results] {
         if info(client, name).await?.is_some() {

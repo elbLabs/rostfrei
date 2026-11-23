@@ -52,8 +52,12 @@ reevaluation of a completed decision.
 
 `cargo rostfrei store backup` and `cargo rostfrei store restore` use JetStream's
 native snapshot protocol directly. Use a Rostfrei CLI build containing these
-commands and NATS Server **2.12.15**. The qualified layout is the split journal
-and command-results pair (version 2). No external NATS CLI is required.
+commands and NATS Server **2.14.10** on both ends. The qualified layout is the
+split journal and command-results pair (version 2). No external NATS CLI is required.
+On 2.12.15 a snapshot can contain a different creation time from the running
+stream's, and a seemingly successful restore can lose its identity on the next
+restart. The commands refuse that release. If upgrading an existing deployment,
+verify the original authority after the broker restart before taking a backup.
 
 1. **Establish one recovery point.** Stop intake, drain in-flight commands and
    broker-fence writers, detail expiry, provisioning and other administration
@@ -75,7 +79,8 @@ and command-results pair (version 2). No external NATS CLI is required.
 
    The command checks the cross-bindings and compares both streams' policies,
    creation times, message counts, byte counts and sequence ranges before and
-   after backup. Archive the **whole** successful directory as one immutable,
+   after backup, then verifies the creation time and bindings inside each native
+   archive. Archive the **whole** successful directory as one immutable,
    access-controlled set: the archives contain historical result bodies. Keep
    a trusted copy of `pair.sha256` separately and compare it before restoring.
    No consumer positions, messaging streams, read
@@ -95,7 +100,8 @@ and command-results pair (version 2). No external NATS CLI is required.
    diagnosis; start again on an empty isolated destination with the same intact
    set. Never combine snapshots from different cuts, recreate the missing half,
    change incarnation metadata or provision a new authority as a repair.
-4. Before admitting writes, connect with the original config and
+4. Before admitting writes, restart the isolated destination on its restored
+   storage. Connect with the original config and
    `with_read_only_outcomes()` (do **not** provision). Verify the original
    `authority()`, history and results of exact retries of the saved envelopes.
    Reconcile commands, decisions, external effects and detail withdrawals after

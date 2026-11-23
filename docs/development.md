@@ -78,7 +78,8 @@ invokes the binary by absolute path with an empty `PATH`:
 ```sh
 cargo build --locked -p rostfrei-structure --bin cargo-rostfrei
 ROSTFREI_STORE_CLI="$PWD/target/debug/cargo-rostfrei" \
-  ROSTFREI_NATS_SERVER=/path/to/nats-server cargo xtask test --contracts -- \
+  ROSTFREI_RECOVERY_NATS_SERVER=/path/to/nats-server-2.14.10 \
+  ROSTFREI_NATS_SERVER=/path/to/nats-server-2.12.15 cargo xtask test --contracts -- \
   cargo test --locked -p rostfrei-nats --test completed_outcome_fencing -- --ignored
 ```
 

@@ -1,5 +1,5 @@
 //! async-nats 0.50.0 has no stream snapshot/restore API. Use the native
-//! nats-server 2.12.15 protocol (`server/jetstream_api.go`) over its core client.
+//! JetStream protocol (`server/jetstream_api.go`) over its core client.
 
 use std::{path::Path, time::Duration};
 

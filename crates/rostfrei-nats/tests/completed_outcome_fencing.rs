@@ -3,7 +3,7 @@
 mod release_contract_support;
 use release_contract_support::*;
 use std::{
-    fs::File,
+    ffi::OsStr,
     path::PathBuf,
     process::{Child, Command},
 };
@@ -27,6 +27,14 @@ impl Drop for Broker {
 }
 
 async fn broker(label: &str) -> TestResult<(Broker, String)> {
+    start_broker(label, "ROSTFREI_CONTRACT_NATS_BINARY").await
+}
+
+async fn recovery_broker(label: &str) -> TestResult<(Broker, String)> {
+    start_broker(label, "ROSTFREI_RECOVERY_NATS_SERVER").await
+}
+
+async fn start_broker(label: &str, binary_var: &str) -> TestResult<(Broker, String)> {
     let directory = PathBuf::from(std::env::var("ROSTFREI_CONTRACT_EVIDENCE_DIR")?)
         .join(format!("outcome-{label}-{}", std::process::id()));
     std::fs::create_dir(&directory)?;
@@ -54,22 +62,35 @@ authorization {{ users: [
             directory.join("jetstream").display()
         ),
     )?;
-    let log = File::create(directory.join("broker.log"))?;
-    let child = Command::new(std::env::var("ROSTFREI_CONTRACT_NATS_BINARY")?)
+    let url = format!("nats://127.0.0.1:{port}");
+    let broker = open_broker(
+        directory,
+        &url,
+        &std::env::var_os(binary_var).ok_or_else(|| format!("missing {binary_var}"))?,
+    )
+    .await?;
+    Ok((broker, url))
+}
+
+async fn open_broker(directory: PathBuf, url: &str, binary: &OsStr) -> TestResult<Broker> {
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(directory.join("broker.log"))?;
+    let child = Command::new(binary)
         .arg("--config")
-        .arg(config)
+        .arg(directory.join("nats.conf"))
         .stdout(log.try_clone()?)
         .stderr(log)
         .spawn()?;
     let broker = Broker { child, directory };
-    let url = format!("nats://127.0.0.1:{port}");
     tokio::time::timeout(WAIT, async {
         loop {
             if async_nats::ConnectOptions::with_user_and_password(
                 "new-writer".to_owned(),
                 "private-new-writer".to_owned(),
             )
-            .connect(&url)
+            .connect(url)
             .await
             .is_ok()
             {
@@ -79,7 +100,18 @@ authorization {{ users: [
         }
     })
     .await?;
-    Ok((broker, url))
+    Ok(broker)
+}
+
+async fn restart_recovery(broker: Broker, url: &str) -> TestResult<Broker> {
+    let directory = broker.directory.clone();
+    drop(broker);
+    open_broker(
+        directory,
+        url,
+        &std::env::var_os("ROSTFREI_RECOVERY_NATS_SERVER").ok_or("missing recovery server")?,
+    )
+    .await
 }
 
 async fn assert_raw_writer_refused(
@@ -297,10 +329,11 @@ fn large_item() -> TestResult<CommandRequest<Act>> {
 #[tokio::test]
 #[ignore = "paired restore qualification requires the Rostfrei CLI and private server fixtures"]
 async fn paired_restore_replays_original_decisions_before_resuming_writes() -> TestResult {
-    let (source, url) = broker("backup").await?;
+    let (source, url) = recovery_broker("backup").await?;
     let context = ApplicationName::new("paired-restore")?.bounded_context("release-contract")?;
     let config = NatsEventStoreConfig::for_bounded_context(&context)?
         .with_fresh_outcomes()?
+        .with_explicit_detail_expiry(true)?
         .with_storage_limits(32 * 1024 * 1024, 524_288)?;
     let js = writer_context(&url).await?;
     provision_event_store(&js, &config).await?;
@@ -321,10 +354,22 @@ async fn paired_restore_replays_original_decisions_before_resuming_writes() -> T
         &CommandResponseOutcome::Accepted
     );
     assert_eq!(calls.load(Ordering::SeqCst), 3);
+    let key = OutcomeKey::new(
+        authority.clone(),
+        context.name().clone(),
+        OperationId::new(large.operation_id().as_str())?,
+    );
+    let OutcomeLookup::Completed(original) = store.lookup_outcome(&key).await? else {
+        return Err("missing outcome to expire".into());
+    };
+    store
+        .expire_details(&key, original.marker().revision())
+        .await?;
     let id = stream("target")?;
     let history = store.load(&id).await?;
     assert_eq!(history.len(), 2);
-    drop((bus, seed, store));
+    drop((bus, seed, store, js));
+    let source = restart_recovery(source, &url).await?;
 
     let backup = tempfile::tempdir()?;
     let path = backup.path().join("pair");
@@ -333,9 +378,10 @@ async fn paired_restore_replays_original_decisions_before_resuming_writes() -> T
         path.join("journal.tar.s2").metadata()?.len() > 128 * 1024,
         "multi-chunk journal fixture became too small"
     );
-    drop((js, source));
-    let (_destination, url) = broker("restore").await?;
+    drop(source);
+    let (destination, url) = recovery_broker("restore").await?;
     paired_snapshot("restore", &url, &config, &path)?;
+    let _restarted = restart_recovery(destination, &url).await?;
     let js = writer_context(&url).await?;
     let reader = Arc::new(
         NatsEventStore::connect(js.clone(), config.clone().with_read_only_outcomes()).await?,
@@ -344,6 +390,10 @@ async fn paired_restore_replays_original_decisions_before_resuming_writes() -> T
     let verify = processor(&context, reader.clone(), calls.clone(), None)?;
     assert_eq!(verify.process(&add).await?, refusal);
     assert_eq!(verify.process(&create).await?, acceptance);
+    assert_eq!(
+        verify.process(&large).await.unwrap_err().kind(),
+        rostfrei_runtime::CommandProcessorErrorKind::CompletedDetailsExpired
+    );
     assert_eq!(
         calls.load(Ordering::SeqCst),
         3,
@@ -364,9 +414,26 @@ async fn paired_restore_replays_original_decisions_before_resuming_writes() -> T
 }
 
 #[tokio::test]
+#[ignore = "uses the native 2.12.15 framework fixture and Rostfrei CLI"]
+async fn legacy_broker_is_refused_before_creating_a_backup() -> TestResult {
+    let (_source, url) = broker("unsupported-recovery").await?;
+    let context = ApplicationName::new("legacy-backup")?.bounded_context("release-contract")?;
+    let config = NatsEventStoreConfig::for_bounded_context(&context)?.with_fresh_outcomes()?;
+    let backup = tempfile::tempdir()?;
+    let path = backup.path().join("not-created");
+    let error = paired_snapshot("backup", &url, &config, &path).unwrap_err();
+    assert!(
+        error.to_string().contains("requires NATS Server 2.14.10"),
+        "{error}"
+    );
+    assert!(!path.exists());
+    Ok(())
+}
+
+#[tokio::test]
 #[ignore = "paired restore qualification requires the Rostfrei CLI and private server fixtures"]
 async fn partial_destination_is_refused_before_restoring_either_stream() -> TestResult {
-    let (_broker, url) = broker("partial").await?;
+    let (_broker, url) = recovery_broker("partial").await?;
     let context = ApplicationName::new("partial-restore")?.bounded_context("release-contract")?;
     let config = NatsEventStoreConfig::for_bounded_context(&context)?.with_fresh_outcomes()?;
     let js = writer_context(&url).await?;
@@ -393,7 +460,7 @@ async fn partial_destination_is_refused_before_restoring_either_stream() -> Test
 #[tokio::test]
 #[ignore = "paired restore qualification requires the Rostfrei CLI and private server fixtures"]
 async fn damaged_results_archive_is_refused_before_restoring_journal() -> TestResult {
-    let (_broker, url) = broker("damaged").await?;
+    let (_broker, url) = recovery_broker("damaged").await?;
     let context = ApplicationName::new("damaged-backup")?.bounded_context("release-contract")?;
     let config = NatsEventStoreConfig::for_bounded_context(&context)?.with_fresh_outcomes()?;
     let js = writer_context(&url).await?;
