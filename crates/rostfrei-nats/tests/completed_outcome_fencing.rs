@@ -26,9 +26,9 @@ impl Drop for Broker {
     }
 }
 
-async fn broker() -> TestResult<(Broker, String)> {
+async fn broker(label: &str) -> TestResult<(Broker, String)> {
     let directory = PathBuf::from(std::env::var("ROSTFREI_CONTRACT_EVIDENCE_DIR")?)
-        .join(format!("outcome-acl-{}", std::process::id()));
+        .join(format!("outcome-{label}-{}", std::process::id()));
     std::fs::create_dir(&directory)?;
     let socket = std::net::TcpListener::bind("127.0.0.1:0")?;
     let port = socket.local_addr()?.port();
@@ -140,7 +140,7 @@ async fn old_reader(
 #[tokio::test]
 async fn native_acl_excludes_old_mutable_writer_and_rollback_but_allows_read_only_replay()
 -> TestResult {
-    let (broker, url) = broker().await?;
+    let (broker, url) = broker("acl").await?;
     let new_client = async_nats::ConnectOptions::with_user_and_password(
         "new-writer".to_owned(),
         "private-new-writer".to_owned(),
@@ -237,4 +237,126 @@ fn processor_for(
     calls: Arc<AtomicUsize>,
 ) -> TestResult<Arc<CommandProcessor>> {
     processor(context, store, calls, None)
+}
+
+fn paired_snapshot(
+    mode: &str,
+    url: &str,
+    config: &NatsEventStoreConfig,
+    path: &std::path::Path,
+) -> TestResult {
+    let output = Command::new("bash")
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../scripts/paired-store.sh"
+        ))
+        .arg(mode)
+        .arg(path)
+        .args([config.stream_name(), config.outcome_state_stream_name()])
+        .env("NATS_URL", url)
+        .env("NATS_USER", "new-writer")
+        .env("NATS_PASSWORD", "private-new-writer")
+        .output()?;
+    if !output.status.success() {
+        return Err(format!("{mode}: {}", String::from_utf8_lossy(&output.stderr)).into());
+    }
+    Ok(())
+}
+
+async fn writer_context(url: &str) -> TestResult<async_nats::jetstream::Context> {
+    Ok(async_nats::jetstream::new(
+        async_nats::ConnectOptions::with_user_and_password(
+            "new-writer".to_owned(),
+            "private-new-writer".to_owned(),
+        )
+        .connect(url)
+        .await?,
+    ))
+}
+
+#[tokio::test]
+#[ignore = "paired restore qualification requires the pinned NATS CLI and private server fixtures"]
+async fn paired_restore_replays_original_decisions_before_resuming_writes() -> TestResult {
+    let (source, url) = broker("backup").await?;
+    let context = ApplicationName::new("paired-restore")?.bounded_context("release-contract")?;
+    let config = NatsEventStoreConfig::for_bounded_context(&context)?
+        .with_fresh_outcomes()?
+        .with_storage_limits(32 * 1024 * 1024, 524_288)?;
+    let js = writer_context(&url).await?;
+    provision_event_store(&js, &config).await?;
+    let store = Arc::new(NatsEventStore::connect(js.clone(), config.clone()).await?);
+    let authority = store.authority().clone();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seed = processor(&context, store.clone(), calls.clone(), None)?;
+    let bus = local_bus(&context, seed.clone());
+    let add = bus.encode(request("before-create", "target", "add")?)?;
+    let create = bus.encode(request("create-target", "target", "create")?)?;
+    let refusal = seed.process(&add).await?;
+    let acceptance = seed.process(&create).await?;
+    assert!(rejected(refusal.outcome()));
+    assert_eq!(acceptance.outcome(), &CommandResponseOutcome::Accepted);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let id = stream("target")?;
+    let history = store.load(&id).await?;
+    assert_eq!(history.len(), 1);
+    drop((bus, seed, store));
+
+    let backup = tempfile::tempdir()?;
+    let path = backup.path().join("pair");
+    paired_snapshot("backup", &url, &config, &path)?;
+    drop((js, source));
+    let (_destination, url) = broker("restore").await?;
+    paired_snapshot("restore", &url, &config, &path)?;
+    let js = writer_context(&url).await?;
+    let reader = Arc::new(
+        NatsEventStore::connect(js.clone(), config.clone().with_read_only_outcomes()).await?,
+    );
+    assert_eq!(reader.authority(), &authority);
+    let verify = processor(&context, reader.clone(), calls.clone(), None)?;
+    assert_eq!(verify.process(&add).await?, refusal);
+    assert_eq!(verify.process(&create).await?, acceptance);
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "exact retries ran a handler"
+    );
+    assert_eq!(reader.load(&id).await?, history);
+    let restored = Arc::new(NatsEventStore::connect(js, config).await?);
+    let fresh = processor(&context, restored.clone(), calls.clone(), None)?;
+    let new_command =
+        local_bus(&context, fresh.clone()).encode(request("after-restore", "target", "add")?)?;
+    assert_eq!(
+        fresh.process(&new_command).await?.outcome(),
+        &CommandResponseOutcome::Accepted
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert_eq!(restored.load(&id).await?.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "paired restore qualification requires the pinned NATS CLI and private server fixtures"]
+async fn partial_destination_is_refused_before_restoring_either_stream() -> TestResult {
+    let (_broker, url) = broker("partial").await?;
+    let context = ApplicationName::new("partial-restore")?.bounded_context("release-contract")?;
+    let config = NatsEventStoreConfig::for_bounded_context(&context)?.with_fresh_outcomes()?;
+    let js = writer_context(&url).await?;
+    provision_event_store(&js, &config).await?;
+    let backup = tempfile::tempdir()?;
+    let path = backup.path().join("pair");
+    paired_snapshot("backup", &url, &config, &path)?;
+
+    js.delete_stream(config.stream_name()).await?;
+    let error = paired_snapshot("restore", &url, &config, &path).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("both destination streams are absent"),
+        "{error}"
+    );
+    let missing = js.get_stream(config.stream_name()).await.unwrap_err();
+    assert!(
+        matches!(missing.kind(), async_nats::jetstream::context::GetStreamErrorKind::JetStream(ref err) if err.code() == 404)
+    );
+    Ok(())
 }

@@ -71,6 +71,14 @@ pinned Git release.
 
 ### NATS authentication and workers
 
+To qualify the [paired backup and restore procedure](completed-outcome-cutover.md#back-up-and-restore-a-split-authority),
+install its pinned CLI and shell tools on PATH and run:
+
+```sh
+ROSTFREI_NATS_SERVER=/path/to/nats-server cargo xtask test --contracts -- \
+  cargo test --locked -p rostfrei-nats --test completed_outcome_fencing -- --ignored
+```
+
 The authentication acceptance suite starts its own Docker containers. It covers
 credentials, reconnects, failover, command delivery, durable responses, replay,
 and post-commit consumption:

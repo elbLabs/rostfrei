@@ -100,6 +100,16 @@ jobs:
           echo "ROSTFREI_NATS_SERVER=$RUNNER_TEMP/nats-server-v2.12.15-linux-amd64/nats-server" >> "$GITHUB_ENV"
       - name: Test the workspace with an authenticated disposable broker and native restart fixtures
         run: cargo xtask test --contracts
+      - name: Install the qualified NATS backup CLI
+        run: |
+          archive="$RUNNER_TEMP/nats-cli.zip"
+          curl --fail --location --retry 3 --output "$archive" \
+            https://github.com/nats-io/natscli/releases/download/v0.5.2/nats-0.5.2-linux-amd64.zip
+          printf '%s  %s\n' 9dddf92072bba154c11a08165718fb6ee42af1f25ce4f1bb284d2fc141abcff2 "$archive" | sha256sum --check
+          unzip -q "$archive" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/nats-0.5.2-linux-amd64" >> "$GITHUB_PATH"
+      - name: Qualify split-authority backup, restore and application replay
+        run: cargo xtask test --contracts -- cargo test --locked -p rostfrei-nats --test completed_outcome_fencing -- --ignored
       - name: Qualify the standalone automatic Tracer host with a disposable broker
         run: cargo xtask test -- cargo xtask acceptance tracer-host
       - name: Test native authentication and TLS lifecycle
