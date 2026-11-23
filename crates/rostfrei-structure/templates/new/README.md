@@ -7,7 +7,7 @@ first `cargo check`. To check the starter without a broker:
 ```sh
 cargo check
 cargo test --locked
-cargo rostfrei check
+cargo run --locked --bin rostfrei-domain-check
 ```
 
 ## Commit and replay a rental
@@ -25,6 +25,8 @@ use an isolated development broker if you override it. `docker compose down` sto
 the broker and keeps the volume; `docker compose down -v` deletes the local data.
 
 Your own domain starts in `src/domain/`, independent of this removable example.
+The package name identifies the demo on the broker: two copies with the same name
+use the same Test history. Use separate brokers for independent copies.
 `cargo run` starts the connection-only application and waits for Ctrl-C.
 If you generated with `--no-skills`, `cargo rostfrei skills install` adds the
 release-matched Agent Skills after `cargo check` has created the lockfile.

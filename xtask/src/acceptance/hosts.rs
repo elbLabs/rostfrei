@@ -103,6 +103,23 @@ pub fn new_project() -> Result<()> {
         fs::read(manifest_path)? == original,
         "Generated manifest changed during acceptance"
     );
+    let second = temporary.path().join("demo");
+    process::run(
+        &[
+            &crate::absolute(&target())?
+                .join("debug/cargo-rostfrei")
+                .display()
+                .to_string(),
+            "rostfrei",
+            "new",
+            "--no-skills",
+            &second.display().to_string(),
+        ],
+        &root(),
+        &env,
+    )?;
+    process::run(&["cargo", "fmt", "--check"], &second, &env)?;
+    process::run(&["cargo", "generate-lockfile", "--offline"], &second, &env)?;
     let broker = crate::nats::Broker::start(false, Duration::from_secs(45))?;
     env.insert(
         "ROSTFREI_NATS_URL".into(),
@@ -112,10 +129,15 @@ pub fn new_project() -> Result<()> {
             .context("missing disposable broker URL")?
             .clone(),
     );
-    for origin in ["committed", "replayed"] {
+    // A second project's first rental must not replay the first project's decision.
+    for (application, origin) in [
+        (&project, "committed"),
+        (&second, "committed"),
+        (&project, "replayed"),
+    ] {
         let output = process::run(
             &["cargo", "run", "--locked", "--example", "first_rental"],
-            &project,
+            application,
             &env,
         )?;
         ensure!(

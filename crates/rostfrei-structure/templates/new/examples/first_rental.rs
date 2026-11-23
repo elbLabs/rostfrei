@@ -72,8 +72,8 @@ impl CommandHandler<RentBicycle> for RentHandler {
 async fn main() -> Result<(), Box<dyn Error>> {
     let url = env::var("ROSTFREI_NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_owned());
     let connection = connect(&NatsConnectionConfig::new("starter-demo", url)).await?;
-    let context =
-        ApplicationName::new("{{context_id}}")?.test_bounded_context(Bicycle::BOUNDED_CONTEXT)?;
+    let application = ApplicationName::new(env!("CARGO_PKG_NAME"))?;
+    let context = application.test_bounded_context(Bicycle::BOUNDED_CONTEXT)?;
     let config = NatsEventStoreConfig::for_bounded_context(&context)?
         .with_fresh_outcomes()?
         .with_storage_limits(16 * 1024 * 1024, 64 * 1024)?;

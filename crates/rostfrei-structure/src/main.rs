@@ -208,7 +208,14 @@ fn run_new(arguments: NewArgs) -> Result<bool, String> {
     let project = create_project_with_setup(arguments.path, |staged| {
         if supports_skills && !arguments.no_skills {
             agent_tools::setup_scaffold(staged, release.trim_start_matches('v'), revision)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| {
+                    let path = error
+                        .details
+                        .get("path")
+                        .and_then(serde_json::Value::as_str)
+                        .map_or_else(String::new, |p| format!(" ({p})"));
+                    format!("{error}{path}. To generate without skills, retry with --no-skills.")
+                })?;
         }
         Ok(())
     })

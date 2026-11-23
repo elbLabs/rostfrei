@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use heck::{ToKebabCase, ToSnakeCase, ToTitleCase, ToUpperCamelCase};
+use heck::{ToSnakeCase, ToTitleCase, ToUpperCamelCase};
 use tempfile::Builder;
 use thiserror::Error;
 
@@ -31,9 +31,15 @@ pub enum NewProjectError {
     #[error("project path `{0}` has no usable directory name")]
     InvalidPath(PathBuf),
     #[error(
-        "project name `{0}` must begin with a lowercase ASCII letter, end with a lowercase ASCII letter or digit, and contain only lowercase ASCII letters, digits, `-`, or `_`"
+        "project name `{0}` must start with a lowercase letter and use lowercase ASCII letters, digits and single hyphens between words (for example `rental-app`)"
     )]
     InvalidName(String),
+    #[error("project name `{0}` exceeds the 64-byte application name limit; choose a shorter name")]
+    NameTooLong(String),
+    #[error(
+        "project name `{0}` conflicts with a starter dependency or Cargo target; try `{0}-app`"
+    )]
+    TargetConflict(String),
     #[error("project name `{0}` produces a reserved Rust module name")]
     ReservedName(String),
     #[error(
@@ -225,20 +231,45 @@ fn project_names(destination: &Path) -> Result<ProjectNames, NewProjectError> {
     let Some(name) = destination.file_name().and_then(|name| name.to_str()) else {
         return Err(NewProjectError::InvalidPath(destination.to_path_buf()));
     };
-    if !name.starts_with(|character: char| character.is_ascii_lowercase())
+    // The application owns its Test streams by name. Never silently normalize
+    // two different package names into the same application or context ID.
+    if name.len() > 64 {
+        return Err(NewProjectError::NameTooLong(name.to_owned()));
+    }
+    if name.contains("--")
+        || !name.starts_with(|character: char| character.is_ascii_lowercase())
         || !name.ends_with(|character: char| {
             character.is_ascii_lowercase() || character.is_ascii_digit()
         })
         || !name.chars().all(|character| {
-            character.is_ascii_lowercase()
-                || character.is_ascii_digit()
-                || matches!(character, '-' | '_')
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
         })
     {
         return Err(NewProjectError::InvalidName(name.to_owned()));
     }
 
     let module = name.to_snake_case();
+    if matches!(
+        module.as_str(),
+        "rostfrei"
+            | "serde"
+            | "serde_json"
+            | "async_trait"
+            | "tokio"
+            | "core"
+            | "std"
+            | "alloc"
+            | "proc_macro"
+            | "test"
+            | "rostfrei_domain_check"
+            | "build"
+            | "deps"
+            | "examples"
+            | "incremental"
+            | "build_script_build"
+    ) {
+        return Err(NewProjectError::TargetConflict(name.to_owned()));
+    }
     if is_reserved_rust_identifier(&module) {
         return Err(NewProjectError::ReservedName(name.to_owned()));
     }
@@ -266,7 +297,7 @@ fn project_names(destination: &Path) -> Result<ProjectNames, NewProjectError> {
         package: name.to_owned(),
         module,
         context_type,
-        context_id: name.to_kebab_case(),
+        context_id: name.to_owned(),
         context_label: name.to_title_case(),
         domain_modules,
         domain_exports,

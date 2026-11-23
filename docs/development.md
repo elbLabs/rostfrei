@@ -257,6 +257,8 @@ cargo check
 cargo test
 ```
 
-`model` and `tests` are reserved domain-module names; use names such as
-`model-app` or `tests-app`. The generated README documents its release pin,
+Choose a lowercase ASCII package name of at most 64 bytes, starting with a letter;
+use single hyphens between words. The rental demo uses this name verbatim as its
+NATS application identity. `new` rejects names that collide with starter dependencies,
+Cargo targets, or generated modules (e.g. use `serde-app` or `model-app`). The generated README documents its release pin,
 broker-free checks, and Docker Compose startup.

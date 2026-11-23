@@ -186,6 +186,35 @@ fn cargo_new_command_generates_a_project() {
 }
 
 #[test]
+fn conflicting_names_fail_before_creating_any_files() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let parent = temporary.path().join("not-created");
+    let overlong = "a".repeat(65);
+    for (name, diagnostic) in [
+        ("long-application_name", "single hyphens"),
+        ("demo--app", "single hyphens"),
+        (overlong.as_str(), "64"),
+        ("serde", "serde-app"),
+        ("async-trait", "async-trait-app"),
+        ("serde-json", "serde-json-app"),
+        ("rostfrei-domain-check", "rostfrei-domain-check-app"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_cargo-rostfrei"))
+            .args(["rostfrei", "new", "--no-skills"])
+            .arg(parent.join(name))
+            .output()?;
+        let message = String::from_utf8_lossy(&output.stderr);
+        if output.status.success() || !message.contains(diagnostic) || parent.exists() {
+            return Err(
+                format!("expected {name} to be refused before creating files: {message}").into(),
+            );
+        }
+    }
+    create_project(temporary.path().join("a".repeat(64)))?;
+    Ok(())
+}
+
+#[test]
 fn failed_project_setup_never_commits_a_partial_scaffold() {
     let Ok(temporary) = tempfile::tempdir() else {
         panic!("could not create temporary fixture");
