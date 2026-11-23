@@ -33,6 +33,22 @@ business rules stay in ordinary Rust.
 Work with your agent to turn those rules into features, run real behavioral tests,
 and inspect the results with Tracer. Build with evidence you can both check.
 
+**Evaluating rostfrei for a service?** Start with two questions:
+
+- **What if a command commits but its acknowledgement is lost?** The
+  [real-NATS retry tests](crates/rostfrei-nats/tests/completed_outcome_faults.rs)
+  drop the broker acknowledgement and retry the same command. An acceptance
+  doesn't append a second event; a rejection stays rejected even after the
+  condition that caused it has been fixed. Neither retry reruns the handler.
+- **How much does history cost?** The [aggregate benchmark](docs/benchmarks/aggregate-loading.md)
+  times loading a ready-to-use aggregate and executing a new command at 0, 100,
+  and 1,000 events by default. Run it at the history size you expect for your
+  busiest aggregate. The [query benchmark](docs/benchmarks/read-models.md)
+  separately compares a saved read-model lookup with replaying the source histories.
+
+For an existing deployment, check [which storage layouts a release can open](docs/messaging/subjects.mdx#fresh-deployments)
+before upgrading a populated store.
+
 ## Use the framework
 
 One dependency, with the adapters you need:
