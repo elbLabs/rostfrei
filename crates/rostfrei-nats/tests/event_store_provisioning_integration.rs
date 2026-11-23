@@ -5,11 +5,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use async_nats::jetstream;
+use async_nats::jetstream::{self, stream};
 use futures_util::StreamExt as _;
 use rostfrei_core::{
-    CommandCompletion, CommandExecutionMetadata, ContentFingerprint, EventStoreErrorKind,
-    EventTransaction, ExecutionStore, OperationId, OutcomeLifecycle, OutcomeLifecycleError,
+    AggregateId, AggregateType, CommandCompletion, CommandExecutionMetadata, ContentFingerprint,
+    EncodedRejection, EventBatch, EventStoreErrorKind, EventTransaction, ExecutionStore,
+    ExpectedVersion, NewEvent, OperationId, OutcomeLifecycle, OutcomeLifecycleError, StreamId,
+    TransactionParticipant, derive_commit_id, derive_event_id,
 };
 use rostfrei_messaging_core::ApplicationName;
 use rostfrei_nats::{
@@ -29,6 +31,35 @@ async fn fixture() -> TestResult<(jetstream::Context, NatsEventStoreConfig)> {
     let config = NatsEventStoreConfig::for_bounded_context(&context)?
         .with_storage_limits(32 * 1024 * 1024, 512 * 1024)?;
     Ok((jetstream::new(client), config))
+}
+
+fn decision(
+    config: &NatsEventStoreConfig,
+    operation: &str,
+    create: Option<&StreamId>,
+    rejection: Option<EncodedRejection>,
+) -> TestResult<EventTransaction> {
+    let fingerprint = ContentFingerprint::digest(operation);
+    let operation = OperationId::new(operation)?;
+    let evidence = CommandExecutionMetadata::new(operation.clone(), fingerprint)
+        .with_default_outcome_evidence::<()>();
+    let mut participants = vec![];
+    if let Some(stream) = create {
+        let commit = derive_commit_id(stream, &operation);
+        let event = NewEvent::new(derive_event_id(&commit, 0), "created", 1, b"{}".to_vec())?;
+        let batch = EventBatch::new(commit, operation.clone(), fingerprint, vec![event])?;
+        participants.push(TransactionParticipant::new(
+            stream.clone(),
+            ExpectedVersion::NoStream,
+            Some(batch),
+        ));
+    }
+    Ok(EventTransaction::new(operation, fingerprint, participants)
+        .with_bounded_context(config.bounded_context().clone())
+        .with_completion(CommandCompletion::new(
+            evidence.outcome_evidence().cloned(),
+            rejection,
+        )))
 }
 
 #[tokio::test]
@@ -72,15 +103,7 @@ async fn split_authority_uses_readable_names_and_retains_results_after_reconnect
         );
     }
 
-    let operation = OperationId::new("remembered-noop")?;
-    let fingerprint = ContentFingerprint::digest("remembered-noop");
-    let evidence = CommandExecutionMetadata::new(operation.clone(), fingerprint)
-        .with_default_outcome_evidence::<()>()
-        .outcome_evidence()
-        .cloned();
-    let proposal = EventTransaction::new(operation, fingerprint, vec![])
-        .with_bounded_context(config.bounded_context().clone())
-        .with_completion(CommandCompletion::new(evidence, None));
+    let proposal = decision(&config, "remembered-noop", None, None)?;
     let store = NatsEventStore::connect(context.clone(), config.clone()).await?;
     let original = store
         .begin_command()
@@ -111,6 +134,146 @@ async fn split_authority_uses_readable_names_and_retains_results_after_reconnect
             1
         );
         context.delete_stream(name).await?;
+    }
+    Ok(())
+}
+
+async fn split_update_fixture() -> TestResult<(
+    jetstream::Context,
+    NatsEventStoreConfig,
+    NatsEventStoreConfig,
+)> {
+    let (js, config) = fixture().await?;
+    let config = config
+        .with_fresh_outcomes()?
+        .with_storage_limits(2 * 1024 * 1024, 64 * 1024)?;
+    provision_event_store(&js, &config).await?;
+    let target = config
+        .clone()
+        .with_storage_limits(4 * 1024 * 1024, config.max_event_bytes())?;
+    Ok((js, config, target))
+}
+
+async fn split_info(
+    js: &jetstream::Context,
+    config: &NatsEventStoreConfig,
+) -> TestResult<[stream::Info; 2]> {
+    let journal = js.get_stream(config.stream_name()).await?;
+    let results = js.get_stream(config.outcome_state_stream_name()).await?;
+    Ok([journal.cached_info().clone(), results.cached_info().clone()])
+}
+
+#[tokio::test]
+async fn split_update_grows_both_streams_and_preserves_decisions() -> TestResult<()> {
+    Box::pin(grow_and_replay(false)).await
+}
+
+#[tokio::test]
+async fn split_update_resumes_when_journal_already_has_target_capacity() -> TestResult<()> {
+    Box::pin(grow_and_replay(true)).await
+}
+
+#[allow(clippy::panic_in_result_fn)]
+async fn grow_and_replay(journal_already_grown: bool) -> TestResult<()> {
+    let (js, config, target) = split_update_fixture().await?;
+    let store = NatsEventStore::connect(js.clone(), config.clone()).await?;
+    let id = StreamId::new(AggregateType::new("Order")?, AggregateId::new("one")?);
+    let accepted = decision(&config, "accepted", Some(&id), None)?;
+    let rejected = decision(
+        &config,
+        "rejected",
+        None,
+        Some(EncodedRejection {
+            codec_id: "policy".to_owned(),
+            codec_version: 1,
+            bytes: b"denied".to_vec(),
+        }),
+    )?;
+    let mut decisions = vec![];
+    for proposal in [accepted, rejected] {
+        let original = store
+            .begin_command()
+            .await?
+            .commit_outcome(proposal.clone())
+            .await?;
+        decisions.push((proposal, original));
+    }
+    let history = store.load(&id).await?;
+    assert_eq!(history.len(), 1);
+    drop(store);
+    let mut expected = split_info(&js, &config).await?;
+    for info in &mut expected {
+        info.config.max_bytes = target.max_stream_bytes();
+    }
+    if journal_already_grown {
+        // Recreate the durable intermediate state left by an interrupted operator update.
+        js.update_stream(expected[0].config.clone()).await?;
+    }
+
+    update_event_store(&js, &target).await?;
+    let grown = NatsEventStore::connect(js.clone(), target.clone()).await?;
+    for (proposal, original) in decisions {
+        let replay = grown
+            .begin_command()
+            .await?
+            .commit_outcome(proposal)
+            .await?;
+        assert!(replay.is_exact_replay());
+        assert_eq!(replay.outcome(), original.outcome());
+    }
+    assert_eq!(grown.load(&id).await?, history);
+    assert_eq!(
+        split_info(&js, &target).await?,
+        expected,
+        "only max_bytes may change"
+    );
+    let new = grown
+        .begin_command()
+        .await?
+        .commit_outcome(decision(&target, "new", None, None)?)
+        .await?;
+    assert!(!new.is_exact_replay());
+    for (after, before) in split_info(&js, &target).await?.into_iter().zip(expected) {
+        assert_eq!(
+            Some(after.state.messages),
+            before.state.messages.checked_add(1)
+        );
+        js.delete_stream(after.config.name).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn split_update_refuses_to_shrink_results_before_growing_journal() -> TestResult<()> {
+    refused_split_update(|results| results.max_bytes = 8 * 1024 * 1024).await
+}
+
+#[tokio::test]
+async fn split_update_refuses_mismatched_companion_before_growing_either_stream() -> TestResult<()>
+{
+    refused_split_update(|results| {
+        results.metadata.insert(
+            "rostfrei.split.journal-incarnation".to_owned(),
+            "other-journal".to_owned(),
+        );
+    })
+    .await
+}
+
+#[allow(clippy::panic_in_result_fn)]
+async fn refused_split_update(edit_results: impl FnOnce(&mut stream::Config)) -> TestResult<()> {
+    let (js, config, target) = split_update_fixture().await?;
+    let [_, mut results] = split_info(&js, &config).await?;
+    edit_results(&mut results.config);
+    js.update_stream(results.config).await?;
+    let before = split_info(&js, &config).await?;
+    let Err(error) = update_event_store(&js, &target).await else {
+        return Err("invalid pair passed preflight".into());
+    };
+    assert_eq!(error.kind(), EventStoreErrorKind::ConfigurationMismatch);
+    assert_eq!(split_info(&js, &config).await?, before);
+    for info in before {
+        js.delete_stream(info.config.name).await?;
     }
     Ok(())
 }

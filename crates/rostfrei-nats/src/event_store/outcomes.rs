@@ -128,7 +128,20 @@ async fn inspect_split_state(
     if !config.split_outcomes() {
         return Ok(None);
     }
-    let state = context
+    let state = get_split_state(context, config).await?;
+    verify_split_state(
+        config.outcome_state_config(),
+        journal.cached_info(),
+        state.cached_info(),
+    )?;
+    Ok(Some(state))
+}
+
+pub(super) async fn get_split_state(
+    context: &jetstream::Context,
+    config: &NatsEventStoreConfig,
+) -> Result<jetstream::stream::Stream, EventStoreError> {
+    context
         .get_stream(config.outcome_state_stream_name())
         .await
         .map_err(|e| {
@@ -137,30 +150,36 @@ async fn inspect_split_state(
             } else {
                 unavailable(e.to_string())
             }
-        })?;
-    let mut expected = config.outcome_state_config();
-    if let Some(binding) = state.cached_info().config.metadata.get(JOURNAL_BINDING) {
+        })
+}
+
+pub(super) fn verify_split_state(
+    mut expected: Config,
+    journal: &jetstream::stream::Info,
+    state: &jetstream::stream::Info,
+) -> Result<(), EventStoreError> {
+    if let Some(binding) = state.config.metadata.get(JOURNAL_BINDING) {
         expected
             .metadata
             .insert(JOURNAL_BINDING.to_owned(), binding.clone());
     }
-    let mismatches = stream_config_mismatches(&expected, &state.cached_info().config);
+    let mismatches = stream_config_mismatches(&expected, &state.config);
     if !mismatches.is_empty() {
         return Err(configuration(format!(
             "outcome state configuration differs: {}",
             mismatches.join(", ")
         )));
     }
-    let journal_id = journal.cached_info().created.to_string();
-    let state_id = state.cached_info().created.to_string();
-    if journal.cached_info().config.metadata.get(STATE_BINDING) != Some(&state_id)
-        || state.cached_info().config.metadata.get(JOURNAL_BINDING) != Some(&journal_id)
+    let journal_id = journal.created.to_string();
+    let state_id = state.created.to_string();
+    if journal.config.metadata.get(STATE_BINDING) != Some(&state_id)
+        || state.config.metadata.get(JOURNAL_BINDING) != Some(&journal_id)
     {
         return Err(configuration(
             "journal/state incarnation binding differs; authority cannot be reopened",
         ));
     }
-    Ok(Some(state))
+    Ok(())
 }
 
 pub(super) async fn provision_split(

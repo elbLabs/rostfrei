@@ -37,6 +37,8 @@ use crate::event_store_config::{MAX_SUPPORTED_EVENT_BYTES, NatsEventStoreConfig}
 use crate::hex::encode_lower_hex;
 use crate::stream_policy::{is_stream_not_found, stream_config_mismatches};
 
+#[path = "event_store/growth.rs"]
+mod growth;
 #[path = "event_store/history_reader.rs"]
 mod history_reader;
 // Retained only for raw-reader reference tests and the opt-in diagnostic comparison.
@@ -2208,7 +2210,10 @@ pub async fn provision_event_store(
 /// bounded context and use the current subject layout. Larger existing message-size
 /// limits remain compatible and are preserved; the adapter still enforces its
 /// configured event write limit.
-/// Capacity reductions and other server-supported policy changes are operator-owned.
+/// Split journal/results pairs support only in-place capacity growth. Quiesce
+/// users and fence concurrent stream administration. The pair is checked before
+/// either update; on partial or uncertain completion, retry with the same target.
+/// Inline stores retain their existing operator-owned policy update semantics.
 pub async fn update_event_store(
     context: &jetstream::Context,
     config: &NatsEventStoreConfig,
@@ -2226,9 +2231,7 @@ pub async fn update_event_store(
     let actual = &existing.cached_info().config;
     reject_incompatible_subject_layout(&config.stream_config(), actual)?;
     if config.split_outcomes() {
-        verify_stream_config(&config.stream_config(), actual)?;
-        outcomes::connect_split(context, config, &existing).await?;
-        return Ok(());
+        return growth::grow_pair(context, config, &existing).await;
     }
     let mut expected = config.stream_config();
     for key in [

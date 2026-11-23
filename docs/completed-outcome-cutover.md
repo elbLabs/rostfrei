@@ -101,3 +101,31 @@ detail expiry withdraws result bodies while retaining the permanent decision; it
 does not erase backups or reopen execution. Restoring into a different authority
 namespace is a migration requiring explicit identity/routing policy, not transparent
 retry. Unilateral stream recreation and stale handles fail closed.
+
+## Grow a split store in place
+
+Monitor free bytes and growth rate for both the journal and command-results stream.
+`max_stream_bytes` is a limit **per stream**, not a shared pool. For an existing
+split store (named epoch or label-free), use a maintenance window:
+
+1. Stop and drain users of the pair, including readers that verify the storage
+   policy. Fence other stream administrators for the duration. JetStream updates
+   one stream at a time; there is no lock spanning the pair.
+2. Keep the deployed configuration and namespace, changing only total capacity:
+
+   ```rust,ignore
+   let target = deployed.clone().with_storage_limits(new_bytes, deployed.max_event_bytes())?;
+   update_event_store(&jetstream, &target).await?;
+   ```
+
+   Use maintenance credentials with account-info and stream-info/update access.
+   Both stream policies, their cross-bindings and reported account reservation
+   headroom are checked before growth. Allow for replicas and disk/placement
+   limits; the broker still decides whether each update can be admitted.
+3. On interruption or an uncertain response, keep workers stopped and rerun the
+   same operation with the **same target**. A stream already at target is left
+   alone. Never shrink the first stream to roll back, or recreate either stream.
+   A policy or binding mismatch requires inspection, not a forced update.
+4. After success, reconnect with the target policy, verify a known operation
+   replays, then resume service. Ordinary startup/provisioning verifies existing
+   limits and does not perform this resize.
