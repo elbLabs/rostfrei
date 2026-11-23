@@ -7,12 +7,55 @@ use bike_rental::{
     },
     tracer,
 };
-use rostfrei::nats::{NatsConnectionConfig, ServerVersion, connect};
+use rostfrei::nats::{NatsConnection, NatsConnectionConfig, ServerVersion, connect};
 use rostfrei::tracer::{
     ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, NatsApplication, NatsRuntime,
-    ObservationFeed, ObservationScope, TracerConfig, http::HttpConfig,
+    ObservationFeed, ObservationScope, TracerConfig,
+    broker_operations::{NatsBrokerOperations, NatsBrokerSource},
+    http::HttpConfig,
+    server_monitoring::{NatsServerMonitor, NatsServerMonitorSource},
 };
 use std::{env, path::PathBuf, sync::Arc};
+
+type SetupError = Box<dyn std::error::Error + Send + Sync>;
+
+fn optional_setting(key: &str) -> Result<Option<String>, env::VarError> {
+    match env::var(key) {
+        Ok(value) => Ok(Some(value)),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn http_config() -> Result<HttpConfig, SetupError> {
+    let mut http = HttpConfig::new(env::var("ROSTFREI_API_TOKEN")?)?;
+    if let Some(token) = optional_setting("ROSTFREI_DISPATCH_TOKEN")? {
+        http = http.with_dispatch_token(token)?;
+    }
+    if let Some(token) = optional_setting("ROSTFREI_INSPECTION_TOKEN")? {
+        http = http.with_inspection_token(token)?;
+    }
+    Ok(http)
+}
+
+fn with_infrastructure(
+    mut tracer: TracerConfig,
+    connection: &NatsConnection,
+) -> Result<TracerConfig, SetupError> {
+    // Account-level metadata can include resources outside bike-rental.
+    if optional_setting("ROSTFREI_INSPECT_BROKER")?.as_deref() == Some("true") {
+        tracer = tracer.with_broker_operations(Arc::new(NatsBrokerOperations::new([
+            NatsBrokerSource::connected("bike-rental account", connection.clone())?,
+        ])?));
+    }
+    let monitor_url = optional_setting("ROSTFREI_NATS_MONITOR_URL")?;
+    if let Some(url) = monitor_url {
+        tracer = tracer.with_server_monitoring(Arc::new(NatsServerMonitor::new([
+            NatsServerMonitorSource::new("NATS node", &url)?,
+        ])?));
+    }
+    Ok(tracer)
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -65,14 +108,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         seed_demo(&dispatch.store()).await?;
         let address = env::var("ROSTFREI_API_ADDR").unwrap_or_else(|_| "127.0.0.1:1309".to_owned());
         let listener = tokio::net::TcpListener::bind(&address).await?;
-        let mut http = HttpConfig::new(env::var("ROSTFREI_API_TOKEN")?)?
-            .with_dispatch_token(env::var("ROSTFREI_DISPATCH_TOKEN")?)?;
-        match env::var("ROSTFREI_INSPECTION_TOKEN") {
-            Ok(token) => http = http.with_inspection_token(token)?,
-            Err(env::VarError::NotPresent) => {}
-            Err(error) => return Err(error.into()),
-        }
-        let tracer = TracerConfig::new(listener, http)
+        let tracer = TracerConfig::new(listener, http_config()?)
+            .with_domain_inventory(bindings.studio_domain_inventory()?)
             .with_dispatch_runtime(dispatch)
             .with_continuous_observation(ObservationFeed::new(
                 test.application().clone(),
@@ -86,6 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer"),
             )?))
             .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
+        let tracer = with_infrastructure(tracer, &connection)?;
         let host = NatsApplication::builder(test.context().clone(), connection.clone(), bindings)?
             .with_runtime_config(test.host_config().clone())
             .with_default_test_fixture(demo_fixture()?)

@@ -25,7 +25,10 @@ export async function startStudioServer({ define, configureServer } = {}) {
       root: studioRoot,
       cacheDir,
       logLevel: "error",
-      define,
+      define: {
+        "import.meta.env.VITE_STUDIO_WORKSPACES": "undefined",
+        ...define,
+      },
       plugins: configureServer
         ? [{ name: "studio-test-backend", configureServer }]
         : [],
@@ -161,7 +164,9 @@ export async function capturePage(
         ])
       )
     }
-    const inspector = document.querySelector(".message-inspector")
+    const inspector = document.querySelector(
+      ".message-inspector, .domain-details"
+    )
     const popup = inspector?.checkVisibility() ? inspector : null
     return {
       title: document.title,

@@ -137,6 +137,18 @@ impl ApplicationBindings {
         self
     }
 
+    /// Project this application's supplied model and runtime registry into a
+    /// read-only inventory. The host decides whether to expose the result.
+    pub fn studio_domain_inventory(
+        &self,
+    ) -> Result<crate::StudioDomainInventory, serde_json::Error> {
+        crate::domain_inventory::DomainInventory::from_model(
+            self.domain_model.as_ref(),
+            self.registry(),
+        )
+        .map(crate::StudioDomainInventory::new)
+    }
+
     /// Install the application's frozen codec registry across fixtures, execution,
     /// private-event dispatch and diagnostics. Include fixture aggregate codecs in
     /// this registry; descriptor registration never mutates a shared configuration.

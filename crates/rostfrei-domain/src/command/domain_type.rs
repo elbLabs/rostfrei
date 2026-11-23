@@ -1,5 +1,5 @@
 use super::CommandDescriptor;
-use crate::{BoundedContextType, FieldDescriptor};
+use crate::{BoundedContextType, DeclaredFieldType, FieldDescriptor};
 
 pub trait Command: 'static {
     type Context: BoundedContextType;
@@ -7,6 +7,7 @@ pub trait Command: 'static {
     const LOCAL_ID: &'static str;
     const LABEL: &'static str;
     const FIELDS: &'static [FieldDescriptor];
+    const DECLARED_FIELD_TYPES: &'static [DeclaredFieldType] = &[];
     const SCHEMA_VERSION: u32 = 1;
     const DESCRIPTOR: CommandDescriptor = CommandDescriptor {
         bounded_context: <Self::Context as BoundedContextType>::DESCRIPTOR,

@@ -17,6 +17,7 @@ pub fn assemble(
     let label = &attributes.label;
     let schema_version = &attributes.schema_version;
     let descriptors = crate::field::assemble_descriptors_with_path(domain_path, fields);
+    let declared_field_types = crate::field::assemble_declared_field_types(domain_path, fields);
     let assertions = crate::field::assemble_assertions_with_path(domain_path, name, None, fields);
     let json_codec = assemble_json_codec(domain_path, name, fields, syntax_fields);
     quote! {
@@ -26,6 +27,7 @@ pub fn assemble(
             const LOCAL_ID: &'static str = #id;
             const LABEL: &'static str = #label;
             const FIELDS: &'static [#domain_path::FieldDescriptor] = #descriptors;
+            #declared_field_types
             const SCHEMA_VERSION: u32 = #schema_version;
         }
 

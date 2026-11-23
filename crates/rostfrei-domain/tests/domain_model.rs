@@ -87,7 +87,9 @@ impl domain::DomainServiceDefinition for MailTransfer {
 
 #[derive(DomainEvent)]
 #[domain(id = "mailbox-opened", label = "Mailbox opened")]
-pub struct MailboxOpened;
+pub struct MailboxOpened {
+    address: EmailAddress,
+}
 
 #[derive(DomainError)]
 #[domain(
@@ -149,11 +151,13 @@ fn compiles_explicit_domain_model_to_json() {
                 },
                 "fields": [{
                     "name": "id",
+                    "declaredType": "MailboxId",
                     "value": {
                         "kind": "opaque",
                     },
                 }, {
                     "name": "address",
+                    "declaredType": "Option<Vec<EmailAddress>>",
                     "value": {
                         "kind": "optional",
                         "value": {
@@ -194,7 +198,11 @@ fn compiles_explicit_domain_model_to_json() {
                 },
                 "label": "Mailbox opened",
                 "schemaVersion": 1,
-                "fields": [],
+                "fields": [{
+                    "name": "address",
+                    "declaredType": "EmailAddress",
+                    "value": { "kind": "opaque" },
+                }],
             }],
             "domainErrors": [{
                 "id": "transfer-denied",

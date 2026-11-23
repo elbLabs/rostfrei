@@ -8,6 +8,7 @@ use domain::{
     AggregateId, BoundedContextId, DomainEventDescriptor, DomainEventId, EntityId, FieldDescriptor,
     FieldKind, FieldValue,
 };
+use serde_json::json;
 
 const CONTEXT: BoundedContextId = BoundedContextId("field-validation");
 const AGGREGATE: AggregateId = AggregateId {
@@ -65,5 +66,18 @@ fn rejects_missing_aggregate_reference() {
     rejects(
         FieldKind::AggregateReference(MISSING_AGGREGATE),
         "references missing AggregateId",
+    );
+}
+
+#[test]
+fn handwritten_fields_without_type_evidence_keep_their_projection() {
+    let mut builder = DomainModelBuilder::new();
+    builder
+        .add_domain_event(event(FieldKind::Opaque))
+        .expect("fixture event should register");
+    let model = builder.finish().expect("an opaque field is valid");
+    assert_eq!(
+        model["domainEvents"][0]["fields"],
+        json!([{ "name": "reference", "value": { "kind": "opaque" } }])
     );
 }

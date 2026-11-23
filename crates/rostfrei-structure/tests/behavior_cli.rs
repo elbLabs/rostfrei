@@ -97,6 +97,9 @@ impl Drop for Server {
 }
 
 fn respond(mut socket: TcpStream, mode: Mode, submissions: &AtomicUsize) {
+    // macOS can inherit the listener's nonblocking flag. Only accept needs
+    // polling; wait for the client's request bytes up to the read deadline.
+    socket.set_nonblocking(false).unwrap();
     socket
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();

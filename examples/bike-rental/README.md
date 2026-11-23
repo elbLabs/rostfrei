@@ -65,16 +65,18 @@ to explore the recorded messages and source rules with the customer.
 ### Present in Studio
 
 Start the [local API](#run-locally), then start Studio from another terminal using
-the same control token as the API:
+the matching local control and inspection tokens:
 
 ```sh
 pnpm install --frozen-lockfile
 VITE_TRACER_TARGET=http://127.0.0.1:1309 \
   VITE_TRACER_TOKEN=local-development-token \
+  VITE_TRACER_INSPECTION_TOKEN=local-inspection-token \
   pnpm --dir studio dev --host 127.0.0.1
 ```
 
-Open the URL Vite prints. In **Tests → Run a test**, choose these scenarios for a
+Open the URL Vite prints. Select **Domain** to explore the bike-rental model.
+In **Tests → Run a test**, choose these scenarios for a
 short customer presentation:
 
 1. **Confirm a category reservation with payment due at collection**
@@ -93,8 +95,8 @@ completed test's verdict and evidence; select graph cards to inspect payloads.
 
 For a continuous journey, run `reserve-city-bike` once, then use **Commands → Send
 command → Isolated Test** for the [collection](#collection-and-sandbox-payment) and
-[return](#returns-and-deposit-settlement) payloads below. Open **Observe**, choose
-the **Test** scope and select a flow to see the automatic payment, refund or
+[return](#returns-and-deposit-settlement) payloads below. Open **Live flows** and
+choose the **Test** scope to see the automatic payment, refund or
 workshop reactions. Run another test when ready to reset the demonstration.
 Observe shows domain and integration events, not commands. Use the command result
 or test report for the initiating decision; automatic effects can have grouped fidelity.
@@ -139,6 +141,7 @@ ROSTFREI_NATS_URL=nats://127.0.0.1:4222 \
   ROSTFREI_NATS_EVENT_STORE_MAX_STREAM_BYTES=268435456 \
   ROSTFREI_NATS_EVENT_STORE_MAX_EVENT_BYTES=524288 \
   ROSTFREI_API_TOKEN=local-development-token \
+  ROSTFREI_INSPECTION_TOKEN=local-inspection-token \
   ROSTFREI_DISPATCH_TOKEN=local-dispatch-token \
   cargo run --locked -p bike-rental -- --tracer
 ```
@@ -165,6 +168,10 @@ endpoints or correlation observers. Both modes reuse one executable binding
 definition. See the [shared host API and measured reduction](../../docs/nats-application-host.md).
 
 Use [Tracer Studio](../../studio/README.md) to inspect and run behavioral tests.
+For the **Infrastructure** view on this disposable local account, add
+`ROSTFREI_INSPECT_BROKER=true` to the host environment. Leave
+`ROSTFREI_DISPATCH_TOKEN` unset to keep production command dispatch disabled.
+See [coverage and permissions](../../docs/nats-application-host.md#studio-operational-inventory).
 
 ## Domain model
 

@@ -15,6 +15,7 @@ thiserror.workspace = true
 rostfrei-core.workspace = true
 rostfrei-domain.workspace = true
 rostfrei-messaging-core.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true

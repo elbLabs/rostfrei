@@ -1,18 +1,36 @@
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
-use crate::{FieldDescriptor, FieldKind, FieldWrapper, ScalarType, SemanticScalarDescriptor};
+use crate::{
+    DeclaredFieldType, FieldDescriptor, FieldKind, FieldWrapper, ScalarType,
+    SemanticScalarDescriptor,
+};
 
 use super::id_projection::{aggregate as aggregate_id, entity as entity_id};
 
-pub fn fields(descriptors: &'static [FieldDescriptor]) -> Value {
-    descriptors.iter().map(field).collect()
+/// Projects modeled fields with optional Rust declaration evidence. Evidence does not
+/// change the modeled field kind or create relationships to other domain types.
+pub fn project_fields(
+    descriptors: &[FieldDescriptor],
+    declared_types: &[DeclaredFieldType],
+) -> Vec<Value> {
+    descriptors
+        .iter()
+        .map(|descriptor| field(descriptor, declared_types))
+        .collect()
 }
 
-fn field(descriptor: &FieldDescriptor) -> Value {
-    json!({
-        "name": descriptor.name,
-        "value": value(descriptor),
-    })
+fn field(descriptor: &FieldDescriptor, declared_types: &[DeclaredFieldType]) -> Value {
+    let mut field = Map::from_iter([
+        ("name".to_owned(), Value::from(descriptor.name)),
+        ("value".to_owned(), value(descriptor)),
+    ]);
+    if let Some(evidence) = declared_types
+        .iter()
+        .find(|entry| entry.name == descriptor.name)
+    {
+        field.insert("declaredType".to_owned(), Value::from(evidence.rust_type));
+    }
+    Value::Object(field)
 }
 
 fn value(descriptor: &FieldDescriptor) -> Value {

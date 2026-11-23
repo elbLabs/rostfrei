@@ -314,6 +314,10 @@ pub enum CommandInputError {
 pub type SimulationRequest = CommandRequest;
 
 pub struct TracerBuilder {
+    workload_memory: Option<Arc<dyn crate::workload_memory::WorkloadMemorySource>>,
+    server_monitoring: Option<Arc<dyn crate::server_monitoring::ServerMonitoring>>,
+    broker_operations: Option<Arc<dyn crate::broker_operations::BrokerOperations>>,
+    domain_inventory: Option<crate::StudioDomainInventory>,
     event_codecs: Arc<rostfrei_core::AggregateCodecs>,
     history: Arc<dyn EventHistory>,
     correlation_history: Option<Arc<dyn CorrelationHistory>>,
@@ -346,6 +350,10 @@ impl TracerBuilder {
 
     pub fn new(history: Arc<dyn EventHistory>, registry: DomainRegistry) -> Self {
         Self {
+            broker_operations: None,
+            server_monitoring: None,
+            domain_inventory: None,
+            workload_memory: None,
             event_codecs: Arc::new(rostfrei_core::AggregateCodecs::default()),
             history,
             correlation_history: None,
@@ -374,6 +382,42 @@ impl TracerBuilder {
     #[must_use]
     pub fn with_continuous_observation(mut self, feed: Arc<crate::ObservationFeed>) -> Self {
         self.observation.insert(feed.scope(), feed);
+        self
+    }
+
+    /// Advertise read-only infrastructure samples from an explicitly trusted source.
+    #[must_use]
+    pub fn with_broker_operations(
+        mut self,
+        reader: Arc<dyn crate::broker_operations::BrokerOperations>,
+    ) -> Self {
+        self.broker_operations = Some(reader);
+        self
+    }
+
+    #[must_use]
+    pub fn with_domain_inventory(mut self, inventory: crate::StudioDomainInventory) -> Self {
+        self.domain_inventory = Some(inventory);
+        self
+    }
+
+    /// Sample container memory for workloads explicitly mapped by the domain inventory.
+    #[must_use]
+    pub fn with_workload_memory(
+        mut self,
+        source: Arc<dyn crate::workload_memory::WorkloadMemorySource>,
+    ) -> Self {
+        self.workload_memory = Some(source);
+        self
+    }
+
+    /// Advertise server samples from a trusted, operator-configured source.
+    #[must_use]
+    pub fn with_server_monitoring(
+        mut self,
+        source: Arc<dyn crate::server_monitoring::ServerMonitoring>,
+    ) -> Self {
+        self.server_monitoring = Some(source);
         self
     }
 
@@ -620,6 +664,29 @@ impl TracerBuilder {
             self.test_fixtures.keys().map(String::as_str),
             self.test_repository.is_some(),
         );
+        if self.broker_operations.is_some() {
+            catalog.infrastructure = Some(crate::CatalogInventory {
+                snapshot_href: "/inventory/infrastructure".into(),
+            });
+        }
+        if self.domain_inventory.is_some() {
+            catalog.domain_inventory = Some(crate::CatalogInventory {
+                snapshot_href: "/inventory/domain".into(),
+            });
+        }
+        let workload_inspection = self.workload_memory.and_then(|source| {
+            crate::workload_memory::WorkloadInspection::new(source, self.domain_inventory.as_ref())
+        });
+        if workload_inspection.is_some() {
+            catalog.workloads = Some(crate::CatalogInventory {
+                snapshot_href: "/inventory/workloads".into(),
+            });
+        }
+        if self.server_monitoring.is_some() {
+            catalog.servers = Some(crate::CatalogInventory {
+                snapshot_href: "/inventory/servers".into(),
+            });
+        }
         let correlation_inspection = self.correlation_history.map(|reader| {
             build_correlation_inspection(reader, self.production_histories, &mut catalog)
         });
@@ -651,6 +718,12 @@ impl TracerBuilder {
             .collect();
         Ok(Tracer {
             inner: Arc::new(TracerInner {
+                server_monitoring: self.server_monitoring,
+                server_sample_permit: Semaphore::new(1),
+                broker_operations: self.broker_operations,
+                broker_sample_permit: Semaphore::new(1),
+                domain_inventory: self.domain_inventory,
+                workload_inspection,
                 event_codecs: self.event_codecs,
                 history: self.history,
                 correlation_inspection,
@@ -838,6 +911,12 @@ fn test_transport_payload_limit(transport: Option<&dyn CommandTransport>) -> usi
 }
 
 struct TracerInner {
+    workload_inspection: Option<crate::workload_memory::WorkloadInspection>,
+    server_monitoring: Option<Arc<dyn crate::server_monitoring::ServerMonitoring>>,
+    server_sample_permit: Semaphore,
+    broker_operations: Option<Arc<dyn crate::broker_operations::BrokerOperations>>,
+    broker_sample_permit: Semaphore,
+    domain_inventory: Option<crate::StudioDomainInventory>,
     event_codecs: Arc<rostfrei_core::AggregateCodecs>,
     history: Arc<dyn EventHistory>,
     correlation_inspection: Option<CorrelationInspection>,
@@ -1032,6 +1111,55 @@ struct OperationSubmission {
 }
 
 impl Tracer {
+    /// Sample the configured server nodes without queuing concurrent refreshes.
+    pub async fn server_snapshot(
+        &self,
+    ) -> Result<Option<crate::server_monitoring::ServerSnapshot>, &'static str> {
+        let Some(source) = &self.inner.server_monitoring else {
+            return Ok(None);
+        };
+        let _permit = self
+            .inner
+            .server_sample_permit
+            .try_acquire()
+            .map_err(|_| "Another server sample is in progress.")?;
+        tokio::time::timeout(Duration::from_secs(18), source.snapshot())
+            .await
+            .map(Some)
+            .map_err(|_| "Server sampling timed out.")
+    }
+
+    pub fn domain_inventory(&self) -> Option<&crate::StudioDomainInventory> {
+        self.inner.domain_inventory.as_ref()
+    }
+
+    /// An on-demand sample for the labels mapped by the host's declarations.
+    pub async fn workload_memory_snapshot(
+        &self,
+    ) -> Option<crate::workload_memory::WorkloadMemorySnapshot> {
+        Some(self.inner.workload_inspection.as_ref()?.snapshot().await)
+    }
+
+    /// A refresh must not queue unlimited account-wide scans behind a slow broker.
+    pub async fn infrastructure_snapshot(
+        &self,
+    ) -> Result<Option<crate::broker_operations::BrokerOperationsSnapshot>, &'static str> {
+        let Some(reader) = &self.inner.broker_operations else {
+            return Ok(None);
+        };
+        let _permit = self
+            .inner
+            .broker_sample_permit
+            .try_acquire()
+            .map_err(|_| "Another infrastructure sample is in progress.")?;
+        // Give the native source's eight-second deadline time to return partial
+        // rows from its other accounts before bounding a custom reader.
+        tokio::time::timeout(Duration::from_secs(9), reader.snapshot())
+            .await
+            .map(Some)
+            .map_err(|_| "Infrastructure sampling timed out.")
+    }
+
     pub async fn quarantine_messages(
         &self,
         scope: QuarantineScope,

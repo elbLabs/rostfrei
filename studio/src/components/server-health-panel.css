@@ -1,0 +1,68 @@
+.server-health-panel {
+  margin-block: 20px;
+  padding-block: 16px;
+  border-block: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.server-health-toolbar,
+.server-health-node-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px 14px;
+}
+
+.server-health-toolbar h2 {
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.server-health-panel p,
+.server-health-facts dt {
+  color: var(--muted-foreground);
+}
+
+.server-health-time {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.server-health-nodes {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.server-health-node {
+  padding-block: 10px;
+}
+
+.server-health-node + .server-health-node {
+  border-top: 1px solid var(--border);
+}
+
+.server-health-node-heading h3 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.server-health-status {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-size: 11px;
+}
+
+.server-health-status[data-warning="true"] {
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+}
+
+.server-health-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}

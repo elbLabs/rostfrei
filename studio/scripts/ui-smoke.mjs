@@ -23,6 +23,8 @@ import {
 } from "./fixtures.mjs"
 import { checkContinuousObservation } from "./observation-smoke.mjs"
 import { checkCorrelations } from "./correlation-smoke.mjs"
+import { checkInventory } from "./inventory-smoke.mjs"
+import { checkOperatorCommands } from "./operator-smoke.mjs"
 import { installScenario } from "./visual-scenarios.mjs"
 
 const { values } = parseArgs({ options: { check: { type: "string" } } })
@@ -30,8 +32,22 @@ if (values.check && !["saved-runs", "navigation"].includes(values.check))
   throw new Error("--check supports saved-runs or navigation")
 
 const { server, url } = await startStudioServer({
-  define: { "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api") },
+  define: {
+    "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api"),
+    "import.meta.env.VITE_STUDIO_WORKSPACES": "undefined",
+    "import.meta.env.VITE_TRACER_INSPECTION_TOKEN": "undefined",
+  },
 })
+
+const sharedViews = [
+  "commands",
+  "infrastructure",
+  "domain",
+  "read-models",
+  "observation",
+  "correlations",
+]
+const unifiedViews = ["tests", "runs", ...sharedViews]
 
 // All Tracer requests are intercepted before navigation. This test never resets
 // a real scenario or publishes a real command, even if a Tracer is running.
@@ -54,8 +70,10 @@ let page
 
 async function checkStudio() {
   browser = await launchStudioBrowser()
-  if (values.check !== "saved-runs")
-    await checkWorkspaceNavigation(browser, url)
+  if (values.check !== "saved-runs") {
+    await checkWorkspaceNavigation(browser)
+    await checkWorkspaceDeployments(browser)
+  }
   if (values.check === "navigation") return
   await checkSavedRunInspection(browser, url)
   if (values.check === "saved-runs") return
@@ -72,7 +90,12 @@ async function checkStudio() {
     void handleRequest(request)
   })
   await page.goto(url, { waitUntil: "networkidle0" })
+  assert.ok(
+    await page.$('[data-workspace="tests"]'),
+    "local Studio starts in Tests"
+  )
   await page.waitForSelector('[data-connection="disconnected"]')
+  await assertFloatingGraph(page)
   assert.match(
     await text(page, ".connection-notice"),
     /GET \/api\/catalog: 502/
@@ -124,7 +147,7 @@ async function checkStudio() {
   )
 
   for (const [mode, reason] of [
-    ["unauthorized", /401.*Authentication failed.*VITE_TRACER_TOKEN/],
+    ["unauthorized", /401.*Authentication failed/],
     ["network-error", /Could not reach the Tracer API/],
     ["invalid-json", /invalid or incomplete JSON response/],
     ["unsupported-catalog", /Unsupported Tracer catalog version 2/],
@@ -138,6 +161,8 @@ async function checkStudio() {
       `[data-connection="${["invalid-list", "fixture-error"].includes(mode) ? "tests-unavailable" : "disconnected"}"]`
     )
     assert.match(await text(page, ".connection-error-detail"), reason)
+    if (mode === "unauthorized")
+      assert.match(await text(page, ".connection-notice"), /VITE_TRACER_TOKEN/)
     assert.equal(
       await page.$$eval(
         "[data-graph-node], .test-row, .run-row",
@@ -169,6 +194,12 @@ async function checkStudio() {
     /Ready to run|Showing the test definition|reset isolated Test state/
   )
   assert.ok(await page.$(".react-flow__background"))
+  await assertFloatingGraph(
+    page,
+    ".test-panel-trigger",
+    "[aria-label='Fit graph to view']",
+    ".inspector-toggle"
+  )
   await page.click(".test-panel-trigger")
   await page.select("#studio-test-select", "reject-unavailable-bicycle")
   await ready(page)
@@ -211,6 +242,7 @@ async function checkStudio() {
   })
   await runSelectedTest(page)
   await page.waitForSelector('.execution-result[data-status="running"]')
+  await assertFloatingGraph(page)
   assert.equal(
     await page.$eval(".run-button", (button) => button.disabled),
     true
@@ -231,6 +263,8 @@ async function checkStudio() {
     true,
     "a pending command must not display a previous accepted response"
   )
+  // The outcome can render before React Flow has measured the new cards' handles.
+  await page.waitForSelector("[data-graph-edge]")
   assert.equal(
     await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
     5
@@ -755,6 +789,8 @@ async function checkStudio() {
   console.log("Verified API request deadlines and partial capture evidence")
   await checkContinuousObservation()
   await checkCorrelations()
+  await checkInventory()
+  await checkOperatorCommands()
   console.log(
     `PASS: explicit connection failures and read-only retry; no demo fallback; canonical bicycle-added fixtures; test panel, graph-first runs and offline history; overlay inspector and causal edges; 6 responsive widths; Test-default command forms, explicit uncommitted handler diagnostics without graph/capture, retired Preview absence, exact numeric payloads, idempotency, input refresh and operation identities; failed expectations, ambiguous responses and storage failure. All API responses were mocked. Screenshots: ${path.join(tmpdir(), "rostfrei-studio-*.png")}`
   )
@@ -781,32 +817,61 @@ try {
   console.log("UI resources closed")
 }
 
-async function checkWorkspaceNavigation(browser, url) {
+async function checkWorkspaceNavigation(browser) {
+  const { server, url } = await startStudioServer({
+    define: {
+      "import.meta.env.VITE_STUDIO_WORKSPACES": "undefined",
+      "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api"),
+      "import.meta.env.VITE_TRACER_INSPECTION_TOKEN": JSON.stringify(
+        "navigation-inspection"
+      ),
+    },
+  })
   const context = await browser.createBrowserContext()
   try {
     const page = await context.newPage()
     await page.setViewport({ width: 1440, height: 900 })
     const diagnostics = observePage(page)
     const writes = []
+    const reads = []
     page.on("request", (request) => {
       if (request.method() !== "GET") writes.push(request.method())
+      else if (new URL(request.url()).pathname.startsWith("/api/"))
+        reads.push({
+          url: request.url(),
+          authorization: request.headers().authorization,
+        })
     })
     await installScenario(
       page,
-      "overview",
+      "infrastructure",
       { SAMPLE_TESTS, SAMPLE_DEFINITIONS, SAMPLE_FIXTURES },
       diagnostics
     )
     await page.goto(url, { waitUntil: "networkidle0" })
-    await page.waitForSelector(".run-button:not(:disabled)")
-    const modes = ["commands", "tests", "runs", "observation", "correlations"]
+    assert.ok(
+      await page.$('[data-workspace="domain"]'),
+      "inspection starts in Domain"
+    )
+    assert.ok(reads.length > 0)
+    assert.ok(
+      reads.every(
+        ({ authorization }) => authorization === "Bearer navigation-inspection"
+      )
+    )
+    assert.equal(
+      await page.$('[aria-label="Studio mode"], .studio-workspace-label'),
+      null
+    )
     assert.deepEqual(
       await page.$$eval('[role="tab"]', (tabs) =>
         tabs.map((tab) => tab.dataset.workspaceTab)
       ),
-      modes,
-      "Studio has five stable mode tabs"
+      unifiedViews,
+      "All Studio views are available in one navigation"
     )
+    await page.click('[data-workspace-tab="tests"]')
+    await page.waitForSelector(".run-button:not(:disabled)")
     const testNodes = await page.$$eval("[data-graph-node]", (nodes) =>
       nodes.map((node) => node.dataset.nodeId)
     )
@@ -821,16 +886,15 @@ async function checkWorkspaceNavigation(browser, url) {
           }))
         )
       const original = await tabs()
-      for (const [index, mode] of modes.entries()) {
+      for (const [index, mode] of unifiedViews.slice(0, 3).entries()) {
         await page.keyboard.down("Control")
         await page.keyboard.press(String(index + 1))
         await page.keyboard.up("Control")
         await page.waitForSelector(`[data-workspace="${mode}"]`)
         await settlePage(page)
         assert.deepEqual(
-          await tabs(),
-          original,
-          "mode switches never rename or move tabs"
+          (await tabs()).map(({ label }) => label),
+          original.map(({ label }) => label)
         )
         assert.equal(
           await page.$eval(
@@ -861,6 +925,11 @@ async function checkWorkspaceNavigation(browser, url) {
           )
           assert.ok(await page.$("#studio-workspace .command-panel-trigger"))
         }
+        if (width === 1440)
+          await assertFloatingGraph(
+            page,
+            mode === "commands" ? ".command-panel-trigger" : ".sidebar-toggle"
+          )
         if (mode === "tests" && width === 1440)
           assert.deepEqual(
             await page.$$eval("[data-graph-node]", (nodes) =>
@@ -875,22 +944,202 @@ async function checkWorkspaceNavigation(browser, url) {
         )
       )
     }
+    await page.setViewport({ width: 1440, height: 900 })
+    for (const workspace of ["observation", "correlations"]) {
+      await page.click(`[data-workspace-tab="${workspace}"]`)
+      await settlePage(page)
+      await assertFloatingGraph(page, ".sidebar-toggle")
+    }
+    await page.setViewport({ width: 390, height: 900 })
     await page.focus('[data-workspace-tab="commands"]')
     await page.keyboard.press("ArrowRight")
-    await page.waitForSelector('[data-workspace="tests"]')
+    await page.waitForSelector('[data-workspace="infrastructure"]')
     await page.keyboard.press("End")
     await page.waitForSelector('[data-workspace="correlations"]')
     await page.keyboard.press("Home")
+    await page.waitForSelector('[data-workspace="tests"]')
+
+    await page.keyboard.down("Control")
+    await page.keyboard.press("8")
+    await page.keyboard.up("Control")
+    await page.waitForSelector('[data-workspace="correlations"]')
+    await page.keyboard.down("Control")
+    await page.keyboard.down("Shift")
+    await page.keyboard.press("KeyK")
+    await page.keyboard.up("Shift")
+    await page.keyboard.up("Control")
     await page.waitForSelector('[data-workspace="commands"]')
+    await page.waitForSelector("#studio-command-panel", { visible: true })
+    assert.equal(await page.$(".production-dispatch-trigger"), null)
+    assert.equal(await page.$("[data-operator-commands]"), null)
+    assert.equal(
+      reads.filter(({ url }) => url.endsWith("/api/behavior-tests")).length,
+      1
+    )
     assert.deepEqual(writes, [], "switching tabs is read-only")
     assert.deepEqual(diagnostics.pageErrors, [])
     assert.deepEqual(diagnostics.unexpectedRequests, [])
     console.log(
-      "Verified fixed mode tabs, Ctrl+1–5, tab keyboard navigation, local actions and separate graphs"
+      "Verified unified Studio navigation, keyboard shortcuts and separate graphs"
     )
   } finally {
     await context.close()
+    await server.close()
   }
+}
+
+async function checkWorkspaceDeployments(browser) {
+  for (const { value, token, initial } of [
+    { value: "develop", token: "mode-control", initial: "domain" },
+    { value: "observe", initial: "infrastructure" },
+    { value: "observe", token: "mode-control", initial: "infrastructure" },
+    { value: "observ", token: "mode-control" },
+  ]) {
+    const { server, url } = await startStudioServer({
+      define: {
+        "import.meta.env.VITE_STUDIO_WORKSPACES": JSON.stringify(value),
+        "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api"),
+        "import.meta.env.VITE_TRACER_TOKEN": token
+          ? JSON.stringify(token)
+          : "undefined",
+        "import.meta.env.VITE_TRACER_INSPECTION_TOKEN":
+          JSON.stringify("mode-inspection"),
+      },
+    })
+    const context = await browser.createBrowserContext()
+    try {
+      const page = await context.newPage()
+      const diagnostics = observePage(page)
+      const apiRequests = []
+      page.on("request", (request) => {
+        const pathname = new URL(request.url()).pathname
+        if (pathname.startsWith("/api/"))
+          apiRequests.push({
+            pathname,
+            authorization: request.headers().authorization,
+          })
+      })
+      if (value === "develop") {
+        // Advertise dispatch in the control catalog only; no dispatch request is sent.
+        await page.evaluateOnNewDocument(() => {
+          const fetch = window.fetch.bind(window)
+          window.fetch = async (url, options) => {
+            const response = await fetch(url, options)
+            if (
+              new URL(String(url), location.origin).pathname !==
+                "/api/catalog" ||
+              new Headers(options?.headers).get("authorization") !==
+                "Bearer mode-control"
+            )
+              return response
+            const catalog = await response.json()
+            catalog.contexts[0].commands[0].versions[0].dispatchHrefTemplate =
+              "/contexts/bike-rental/commands/rent-bicycle/dispatch"
+            return Response.json(catalog)
+          }
+        })
+      }
+      await installScenario(
+        page,
+        "observation",
+        { SAMPLE_TESTS, SAMPLE_DEFINITIONS, SAMPLE_FIXTURES },
+        diagnostics
+      )
+      await page.goto(url, { waitUntil: "networkidle0" })
+      assert.equal(
+        await page.$('[aria-label="Studio mode"], .studio-workspace-label'),
+        null,
+        `${value} hides the workspace switcher`
+      )
+      if (!initial) {
+        await page.waitForSelector(".studio-configuration-error")
+        assert.equal(await page.$('[role="tab"]'), null)
+        assert.deepEqual(
+          apiRequests,
+          [],
+          "invalid configuration must not query Tracer"
+        )
+      } else if (value === "develop") {
+        await page.waitForSelector(`[data-workspace="${initial}"]`)
+        await page.click('[data-workspace-tab="tests"]')
+        await page.waitForSelector(
+          '[data-workspace="tests"] .test-panel-trigger:not(:disabled)'
+        )
+        assert.deepEqual(
+          await page.$$eval("[data-workspace-tab]", (tabs) =>
+            tabs.map((tab) => tab.dataset.workspaceTab)
+          ),
+          unifiedViews
+        )
+        await page.click('[data-workspace-tab="commands"]')
+        await page.waitForSelector(".production-dispatch-trigger")
+        const beforeDispatch = apiRequests.length
+        assert.equal(await page.$("[data-operator-commands]"), null)
+        await page.click(".production-dispatch-trigger")
+        await page.waitForSelector('[data-operator-target="dispatch"]')
+        assert.equal(await page.$('[data-operator-target="test"]'), null)
+        assert.equal(await page.$(".command-panel-trigger"), null)
+        await page.waitForNetworkIdle()
+        assert.equal(
+          apiRequests.length,
+          beforeDispatch,
+          "Opening Production dispatch reuses the control catalog and does not publish"
+        )
+        await page.click(".production-dispatch-trigger")
+        await page.click(".command-panel-trigger")
+        await page.waitForSelector("#studio-command-panel", { visible: true })
+      } else {
+        await page.waitForSelector('[data-workspace="infrastructure"]')
+        assert.deepEqual(
+          await page.$$eval("[data-workspace-tab]", (tabs) =>
+            tabs.map((tab) => tab.dataset.workspaceTab)
+          ),
+          sharedViews
+        )
+        await page.click('[data-workspace-tab="commands"]')
+        await page.waitForSelector("[data-operator-commands]")
+        assert.equal(await page.$(".command-panel-trigger"), null)
+        await page.click('[data-workspace-tab="observation"]')
+        await page.waitForNetworkIdle({ timeout: 5000 })
+        const controlRequests = () =>
+          apiRequests.filter(
+            ({ authorization }) => authorization !== "Bearer mode-inspection"
+          )
+        assert.deepEqual(
+          controlRequests(),
+          [],
+          "Legacy inspection loads only inspection traffic by default"
+        )
+        const testOption =
+          '[aria-label="Observation scope"] option[value="test"]'
+        assert.equal(Boolean(await page.$(testOption)), Boolean(token))
+        if (token) {
+          await page.select('[aria-label="Observation scope"]', "test")
+          await page.waitForSelector(
+            '[data-observed-flow="test-external-flow"]'
+          )
+          assert.deepEqual(
+            controlRequests(),
+            [
+              {
+                pathname: "/api/catalog",
+                authorization: "Bearer mode-control",
+              },
+            ],
+            "explicit Test discovery does not load behavioral tests"
+          )
+        }
+      }
+      assert.deepEqual(diagnostics.pageErrors, [])
+      assert.deepEqual(diagnostics.unexpectedRequests, [])
+    } finally {
+      await context.close()
+      await server.close()
+    }
+  }
+  console.log(
+    "Verified unified and legacy inspection deployments, fail-closed configuration and explicit Test discovery"
+  )
 }
 
 async function checkThemeBoot(browser, url) {
@@ -1533,8 +1782,9 @@ async function runSelectedTest(page) {
   if (await page.$('[data-workspace="runs"]'))
     await page.click(".saved-run-rerun")
   await page.click('[data-workspace-tab="tests"]')
-  if (await page.$('.test-panel-trigger[aria-expanded="false"]'))
-    await page.click(".test-panel-trigger")
+  await page.waitForSelector('[data-workspace="tests"] .test-panel-trigger')
+  if (!(await page.$("#studio-test-panel.studio-floating-panel-open")))
+    await page.locator('.test-panel-trigger[aria-expanded="false"]').click()
   await page.waitForSelector("#studio-test-panel.studio-floating-panel-open")
   await page.click("#studio-test-panel .run-button")
 }
@@ -1544,6 +1794,35 @@ async function canvasGeometry(page) {
     bounds: graph.getBoundingClientRect().toJSON(),
     transform: graph.querySelector(".react-flow__viewport")?.style.transform,
   }))
+}
+
+async function assertFloatingGraph(page, ...controls) {
+  const { canvasTop, mainTop, paneTop, anchored } = await page.evaluate(
+    (selectors) => {
+      const main = document
+        .querySelector("#studio-workspace")
+        .getBoundingClientRect()
+      const graph = document.querySelector(".message-graph")
+      const canvas = graph.getBoundingClientRect()
+      const chrome = document.querySelector(".graph-chrome")
+      const chromeBounds = chrome?.getBoundingClientRect()
+      return {
+        canvasTop: canvas.top,
+        mainTop: main.top,
+        paneTop: graph.querySelector(".react-flow__pane")?.getBoundingClientRect()
+          .top,
+        anchored:
+          chromeBounds?.top === canvas.top + 12 &&
+          chromeBounds?.left === canvas.left + 14 &&
+          selectors.every((selector) => chrome.querySelector(selector)),
+      }
+    },
+    controls
+  )
+  assert.equal(canvasTop, mainTop, "the canvas starts directly below the tabs")
+  if (paneTop !== undefined)
+    assert.equal(paneTop, mainTop, "the interactive pane starts at the canvas top")
+  assert.ok(anchored, "graph actions belong to the floating top-left controls")
 }
 
 async function assertFitted(page) {

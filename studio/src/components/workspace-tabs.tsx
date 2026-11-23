@@ -1,13 +1,20 @@
 import { useEffect } from "react"
-import { workspaceModes, type Workspace } from "@/lib/workspace"
+import { workspaceViews, type WorkspaceView } from "@/lib/workspace"
+
+const inspectionViews = workspaceViews.filter(
+  (view) => !("requiresBehavioralTests" in view)
+)
 
 export function WorkspaceTabs({
+  behavioralTests,
   value,
   onChange,
 }: {
-  value: Workspace
-  onChange: (workspace: Workspace) => void
+  behavioralTests: boolean
+  value: WorkspaceView
+  onChange: (view: WorkspaceView) => void
 }) {
+  const views = behavioralTests ? workspaceViews : inspectionViews
   useEffect(() => {
     const navigate = (event: KeyboardEvent) => {
       if (
@@ -20,21 +27,22 @@ export function WorkspaceTabs({
         event.shiftKey
       )
         return
-      const index = Number(event.code.replace(/^Digit/, "")) - 1
-      const mode = workspaceModes[index]
-      if (!mode) return
+      if (!/^Digit[1-9]$/.test(event.code)) return
+      const index = Number(event.code.slice(-1)) - 1
+      const mode = workspaceViews[index]
+      if (!mode || !views.some((view) => view.id === mode.id)) return
       event.preventDefault()
       onChange(mode.id)
       document.getElementById(`studio-tab-${mode.id}`)?.focus()
     }
     window.addEventListener("keydown", navigate)
     return () => window.removeEventListener("keydown", navigate)
-  }, [onChange])
+  }, [onChange, views])
 
   return (
-    <nav className="studio-navigation-bar" aria-label="Studio modes">
-      <div className="workspace-tabs" role="tablist" aria-label="Workspace">
-        {workspaceModes.map((mode, index) => (
+    <nav className="studio-navigation-bar" aria-label="Studio navigation">
+      <div className="workspace-tabs" role="tablist" aria-label="Studio views">
+        {views.map((mode, index) => (
           <button
             key={mode.id}
             id={`studio-tab-${mode.id}`}
@@ -43,34 +51,30 @@ export function WorkspaceTabs({
             data-workspace-tab={mode.id}
             aria-label={mode.label}
             aria-selected={value === mode.id}
-            aria-controls="studio-workspace"
-            aria-keyshortcuts={`Control+${index + 1}`}
+            aria-controls={value === mode.id ? "studio-workspace" : undefined}
+            aria-keyshortcuts={`Control+${workspaceViews.indexOf(mode) + 1}`}
             tabIndex={value === mode.id ? 0 : -1}
-            title={`${mode.label} (Ctrl+${index + 1})`}
+            title={`${mode.label} (Ctrl+${workspaceViews.indexOf(mode) + 1})`}
             onClick={() => onChange(mode.id)}
             onKeyDown={(event) => {
               const next =
                 event.key === "ArrowRight"
-                  ? (index + 1) % workspaceModes.length
+                  ? (index + 1) % views.length
                   : event.key === "ArrowLeft"
-                    ? (index + workspaceModes.length - 1) %
-                      workspaceModes.length
+                    ? (index + views.length - 1) % views.length
                     : event.key === "Home"
                       ? 0
                       : event.key === "End"
-                        ? workspaceModes.length - 1
+                        ? views.length - 1
                         : undefined
               if (next === undefined) return
               event.preventDefault()
-              onChange(workspaceModes[next].id)
-              document
-                .getElementById(`studio-tab-${workspaceModes[next].id}`)
-                ?.focus()
+              onChange(views[next].id)
+              document.getElementById(`studio-tab-${views[next].id}`)?.focus()
             }}
           >
-            <mode.icon size={16} />
+            <mode.icon size={16} aria-hidden="true" />
             <span>{mode.label}</span>
-            <kbd aria-hidden="true">{index + 1}</kbd>
           </button>
         ))}
       </div>

@@ -20,6 +20,20 @@ pub fn assemble_descriptors_with_path(domain_path: &Path, fields: &[Field]) -> T
     quote!(&[#(#fields),*])
 }
 
+pub fn assemble_declared_field_types(domain_path: &Path, fields: &[Field]) -> TokenStream {
+    let fields = fields.iter().map(|field| {
+        let name = &field.name;
+        let declared_type = &field.declared_type;
+        quote!(#domain_path::DeclaredFieldType {
+            name: #name,
+            rust_type: #declared_type,
+        })
+    });
+    quote! {
+        const DECLARED_FIELD_TYPES: &'static [#domain_path::DeclaredFieldType] = &[#(#fields),*];
+    }
+}
+
 pub fn assemble_assertions_with_path(
     domain_path: &Path,
     container: &Ident,

@@ -22,6 +22,7 @@ where
             rust_command_type: type_name::<Self>(),
             rust_handler_type: type_name::<H>(),
             modeled_command: Self::DESCRIPTOR,
+            declared_field_types: Self::DECLARED_FIELD_TYPES,
         }
     }
 }
@@ -48,6 +49,8 @@ pub struct CommandDescriptor {
     pub rust_command_type: &'static str,
     pub rust_handler_type: &'static str,
     pub modeled_command: domain::CommandDescriptor,
+    /// Rust declarations supplied by the modeled command, independent of its wire shape.
+    pub declared_field_types: &'static [domain::DeclaredFieldType],
 }
 
 impl CommandDescriptor {
@@ -61,6 +64,11 @@ impl CommandDescriptor {
 
     pub const fn modeled_command(&self) -> &domain::CommandDescriptor {
         &self.modeled_command
+    }
+
+    /// Projects the same modeled field shape as the compiled domain model.
+    pub fn project_modeled_fields(&self) -> Vec<serde_json::Value> {
+        domain::project_fields(self.modeled_command.fields, self.declared_field_types)
     }
 }
 

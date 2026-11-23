@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use crate::{EntityDescriptor, EntityId};
+use crate::{DeclaredFieldType, EntityDescriptor, EntityId};
 
 use super::{
     field_projection,
@@ -18,8 +18,13 @@ impl EntityProjection {
         }
     }
 
-    pub(super) fn add(&mut self, descriptor: EntityDescriptor) {
-        self.entities.push((descriptor.id, entity(descriptor)));
+    pub(super) fn add(
+        &mut self,
+        descriptor: EntityDescriptor,
+        declared_types: &[DeclaredFieldType],
+    ) {
+        self.entities
+            .push((descriptor.id, entity(descriptor, declared_types)));
     }
 
     pub(super) fn contains(&self, id: EntityId) -> bool {
@@ -37,11 +42,11 @@ impl EntityProjection {
     }
 }
 
-fn entity(descriptor: EntityDescriptor) -> Value {
+fn entity(descriptor: EntityDescriptor, declared_types: &[DeclaredFieldType]) -> Value {
     json!({
         "id": entity_id(descriptor.id),
         "label": descriptor.label,
         "identity": domain_identity_id(descriptor.identity),
-        "fields": field_projection::fields(descriptor.fields),
+        "fields": field_projection::project_fields(descriptor.fields, declared_types),
     })
 }

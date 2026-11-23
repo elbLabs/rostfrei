@@ -14,10 +14,28 @@ import {
   observationFlow,
   observationSnapshot,
 } from "./observation-fixture.mjs"
+import {
+  brokerSnapshot,
+  collectionRequestedLabel,
+  collectionRequestedNodeId,
+  domainPath,
+  domainSnapshot,
+  fleetNodeId,
+  infrastructurePath,
+  inventoryCapabilities,
+  inventoryScenarios,
+  prepareInventoryScenario,
+  serverPath,
+  serverSnapshot,
+  workloadPath,
+  workloadSnapshot,
+} from "./inventory-fixture.mjs"
 
 export const scenarios = {
+  "studio-map": "Navigate the available Studio workspaces from the map",
   "saved-accepted":
     "Result-first inspection of the unchanged real accepted capture",
+  "saved-graph": "Interactive Runs canvas for an accepted recording",
   "saved-rejected": "Passing test with a recorded business rejection",
   "saved-details": "Saved rejected command with request disclosure open",
   "saved-partial":
@@ -38,7 +56,8 @@ export const scenarios = {
   branching: "A 25-message synthetic branching flow after Fit graph to view",
   "long-payload": "Nested, long payload values in the message inspector",
   narrow: "Accepted command details at 390 × 844",
-  observation: "Externally initiated flow in the continuous Observe panel",
+  observation: "Externally initiated flow in the Live flows view",
+  ...inventoryScenarios,
   correlations: "Anchor correlations and retained events across two contexts",
   "correlations-empty": "Correlations tab before choosing a recorded chain",
   "correlations-match":
@@ -216,13 +235,28 @@ export async function installScenario(page, scene, samples, diagnostics) {
     let status = 200
     let headers = {}
     const correlationScene = scene.startsWith("correlations")
+    const inventoryScene = Object.hasOwn(inventoryScenarios, scene)
     if (method === "GET" && pathname === "/catalog")
       body =
         scene === "observation"
           ? { ...catalog, observation: [observationCapability] }
           : correlationScene
             ? { ...catalog, correlations: correlationCapability }
-            : catalog
+            : inventoryScene
+              ? { ...catalog, ...inventoryCapabilities }
+              : catalog
+    else if (
+      inventoryScene &&
+      method === "GET" &&
+      pathname === infrastructurePath
+    )
+      body = brokerSnapshot
+    else if (inventoryScene && method === "GET" && pathname === domainPath)
+      body = domainSnapshot
+    else if (inventoryScene && method === "GET" && pathname === serverPath)
+      body = serverSnapshot
+    else if (inventoryScene && method === "GET" && pathname === workloadPath)
+      body = workloadSnapshot
     else if (correlationScene && method === "GET" && pathname === anchorPath) {
       const response = anchorResponse(new URL(request.url()).search)
       if (response) {
@@ -381,11 +415,7 @@ export async function installScenario(page, scene, samples, diagnostics) {
 }
 
 export async function prepareScenario(page, scene) {
-  await page.waitForFunction(() =>
-    document
-      .querySelector(".execution-header")
-      ?.textContent?.includes("Visual fixture:")
-  )
+  const inventoryScene = Object.hasOwn(inventoryScenarios, scene)
   await page.addStyleTag({
     content: `
     *, *::before, *::after {
@@ -397,12 +427,63 @@ export async function prepareScenario(page, scene) {
   `,
   })
   await settlePage(page)
+  if (scene === "studio-map") {
+    const trigger = '[aria-label="Open Studio map"]'
+    await page.click(trigger)
+    const map = '[data-workspace-map][open]'
+    const available = await page.$$eval('[data-workspace-tab]', tabs => tabs.map(tab => tab.dataset.workspaceTab))
+    assert.deepEqual(await page.$$eval(`${map} [data-map-view]`, nodes => nodes.map(node => node.dataset.mapView)), available)
+    await page.click(`${map} [data-map-view="runs"]`)
+    await page.waitForSelector('[data-workspace-tab="runs"][aria-selected="true"]')
+    await page.click(trigger)
+    await page.waitForSelector(`${map} [data-map-view="runs"][aria-current="page"]`)
+    return
+  }
+  if (inventoryScene) {
+    await prepareInventoryScenario(page, scene)
+    if (scene === "domain") {
+      const canvas = '[aria-label="Domain canvas"]'
+      const event = `${canvas} button[data-domain-node="${collectionRequestedNodeId}"]`
+      await page
+        .locator(`${canvas} button[data-domain-node="${fleetNodeId}"]`)
+        .click()
+      await page
+        .locator(`${canvas} button[aria-label="Fit domain to view"]`)
+        .click()
+      await page.locator(event).click()
+      await page.waitForSelector(`${event}[aria-pressed="true"]`)
+      const details = '[aria-label="Domain details"]'
+      await page.waitForSelector(details, { visible: true })
+      const title = await page.$eval(
+        details,
+        (panel) => panel.querySelector("h2, h3")?.textContent.trim()
+      )
+      assert.equal(title, collectionRequestedLabel)
+    }
+    return
+  }
+  const view = scene.startsWith("saved-")
+    ? "runs"
+    : scene.startsWith("correlations")
+      ? "correlations"
+      : scene === "observation"
+        ? "observation"
+        : scene === "overview" || scene === "test"
+          ? "tests"
+          : "commands"
+  const tab = `[data-workspace-tab="${view}"]`
+  const selected = `${tab}[aria-selected="true"]`
+  if (!(await page.$(selected))) await page.click(tab)
+  await page.waitForSelector(selected)
   if (scene.startsWith("saved-")) {
-    await page.click('[data-workspace-tab="runs"]')
     await setPanel(page, "tests", true)
     const index =
       scene === "saved-rejected" || scene === "saved-details" ? 1 : 0
     await page.$$eval(".run-row", (rows, index) => rows[index].click(), index)
+    if (scene === "saved-graph") {
+      await page.waitForSelector(".message-card", { visible: true })
+      return
+    }
     await page.locator("button::-p-text(Run summary)").click()
     await page.waitForSelector(".run-inspection")
     await settlePage(page)
@@ -528,6 +609,8 @@ export async function prepareScenario(page, scene) {
     return
   }
   if (scene === "overview" || scene === "test") {
+    await page.waitForSelector('[data-workspace="tests"] .test-panel-trigger')
+    await page.waitForSelector('[data-workspace="tests"] [data-graph-node]')
     if (scene === "test") {
       await page.click(".test-panel-trigger")
       await page.click(".test-definition summary")
@@ -540,7 +623,7 @@ export async function prepareScenario(page, scene) {
     return
   }
   if (scene === "observation") {
-    await page.click('[data-workspace-tab="observation"]')
+    await page.select('[aria-label="Observation scope"]', "test")
     await page.waitForSelector('[data-observation-status="live"]')
     await page.click('[data-observed-flow="test-external-flow"]')
     await page.waitForSelector('[data-message-id="published"]')
@@ -558,11 +641,11 @@ export async function prepareScenario(page, scene) {
       )
     return
   }
-  await setPanel(page, "tests", false)
-  await page.click('[data-workspace-tab="commands"]')
+  await page.waitForSelector('[data-tracer-source="live"]')
   if (scene === "commands-empty") return
   await setPanel(page, "command", true)
   const select = 'select[aria-label="Command and schema"]'
+  await page.waitForSelector(`${select} option:nth-child(2)`)
   const value = await page.$eval(select, (element) => element.options[1]?.value)
   assert.ok(value, "The visual catalog must contain a command")
   await page.select(select, value)
@@ -685,7 +768,6 @@ async function graphGeometry(page) {
 }
 
 async function prepareCorrelations(page, scene) {
-  await page.click('[data-workspace-tab="correlations"]')
   await page.waitForSelector(
     '[aria-label="Anchor aggregate type"] option[value="bike-rental/rental-fleet"]'
   )

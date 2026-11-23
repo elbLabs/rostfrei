@@ -158,11 +158,13 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
         model["entities"][0]["fields"],
         json!([{
             "name": "id",
+            "declaredType": "DocumentId",
             "value": {
                 "kind": "opaque",
             },
         }, {
             "name": "correlation_id",
+            "declaredType": "foreign::Uuid",
             "value": {
                 "kind": "scalar",
                 "scalar": {
@@ -174,6 +176,7 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
             },
         }, {
             "name": "related_ids",
+            "declaredType": "Option<Vec<foreign::Uuid>>",
             "value": {
                 "kind": "optional",
                 "value": {
@@ -191,6 +194,7 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
             },
         }, {
             "name": "title",
+            "declaredType": "String",
             "value": {
                 "kind": "scalar",
                 "scalar": "string",
@@ -198,7 +202,7 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
         }])
     );
 
-    let semantic_field = json!({
+    let mut semantic_field = json!({
         "name": "correlation_id",
         "value": {
             "kind": "scalar",
@@ -210,8 +214,9 @@ fn projects_semantic_scalars_and_canonical_regressions_to_exact_json() {
             },
         },
     });
-    assert_eq!(model["domainEvents"][0]["fields"][0], semantic_field);
     assert_eq!(model["domainErrors"][0]["fields"][0], semantic_field);
+    semantic_field["declaredType"] = json!("foreign::Uuid");
+    assert_eq!(model["domainEvents"][0]["fields"][0], semantic_field);
 
     assert_eq!(
         model["domainIdentities"],

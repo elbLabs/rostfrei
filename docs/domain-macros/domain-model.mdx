@@ -2,6 +2,11 @@
 
 Builds and validates a JSON description of the domain from an explicit inventory of contexts, aggregates, entities, value objects, services, and errors. Aggregate event sets and entity definitions supply event and identity metadata.
 
+Derived entity and event fields include `declaredType`, the Rust type as written
+in the declaration (for example, `Option<BicycleCategory>`). Their `value`
+describes the modeled semantics separately. A named Rust type alone does not
+establish an entity reference or a wire encoding.
+
 **Placement:** [Domain root](../project-structure/domain-root.mdx) — `model.rs`.
 
 ```rust

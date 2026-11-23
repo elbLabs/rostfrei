@@ -4,6 +4,7 @@ import { Input } from "@rostfrei/ui/components/input"
 import { NativeSelect } from "@rostfrei/ui/components/native-select"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { getCatalog } from "@/lib/api"
 import {
   followObservation,
   getObservedFlow,
@@ -13,7 +14,6 @@ import type {
   ObservationCapability,
   ObservationSnapshot,
   ObservedFlow,
-  TracerCatalog,
 } from "@/lib/types"
 
 export type ObservationConnection =
@@ -22,7 +22,7 @@ export type ObservationConnection =
 interface Props {
   open: boolean
   active: boolean
-  catalog?: TracerCatalog
+  testEnabled: boolean
   onClose: () => void
   onSelect: () => void
   onFlow: (flow: ObservedFlow | undefined) => void
@@ -33,7 +33,7 @@ interface Props {
 export function ObservationPanel({
   open,
   active,
-  catalog,
+  testEnabled,
   onClose,
   onSelect,
   onFlow,
@@ -42,7 +42,10 @@ export function ObservationPanel({
 }: Props) {
   const [production, setProduction] = useState<ObservationCapability[]>([])
   const [discoveryError, setDiscoveryError] = useState<string>()
-  const [scope, setScope] = useState<ObservationCapability["scope"]>("test")
+  const [test, setTest] = useState<ObservationCapability[]>([])
+  const [testDiscoveryError, setTestDiscoveryError] = useState<string>()
+  const [scope, setScope] =
+    useState<ObservationCapability["scope"]>("production")
   const [snapshot, setSnapshot] = useState<ObservationSnapshot>()
   const [connection, setConnection] =
     useState<ObservationConnection>("connecting")
@@ -51,12 +54,9 @@ export function ObservationPanel({
   const [selectedId, setSelectedId] = useState<string>()
   const [filter, setFilter] = useState("")
   const [paused, setPaused] = useState(false)
-  const capabilities = [
-    ...(catalog?.observation ?? []).filter((entry) => entry.scope === "test"),
-    ...production,
-  ]
-  const capability =
-    capabilities.find((entry) => entry.scope === scope) ?? capabilities[0]
+  const capability = (scope === "test" && testEnabled ? test : production).find(
+    (entry) => entry.scope === scope
+  )
   const { application, scope: effectiveScope, eventsHref } = capability ?? {}
   const selected = snapshot?.items.find((item) => item.id === selectedId)
   const expired = Boolean(selectedId && snapshot && !selected)
@@ -86,6 +86,25 @@ export function ObservationPanel({
       })
     return () => controller.abort()
   }, [active])
+
+  useEffect(() => {
+    if (!active || !testEnabled || scope !== "test") return
+    const controller = new AbortController()
+    void getCatalog(controller.signal)
+      .then((catalog) => {
+        if (controller.signal.aborted) return
+        setTest(
+          (catalog.observation ?? []).filter((entry) => entry.scope === "test")
+        )
+        setTestDiscoveryError(undefined)
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        setTest([])
+        setTestDiscoveryError(message(error))
+      })
+    return () => controller.abort()
+  }, [active, scope, testEnabled])
 
   useEffect(() => {
     if (!active) return
@@ -193,7 +212,7 @@ export function ObservationPanel({
     >
       <div className="sidebar-section-heading">
         <h2>
-          <Radio size={15} /> Observe
+          <Radio size={15} /> Live flows
         </h2>
         <Button
           variant="ghost"
@@ -211,8 +230,8 @@ export function ObservationPanel({
           Traffic scope
           <NativeSelect
             aria-label="Observation scope"
-            value={effectiveScope ?? ""}
-            disabled={!capability}
+            value={scope}
+            disabled={!testEnabled && !production.length}
             onChange={(event) => {
               setScope(event.target.value as ObservationCapability["scope"])
               setSnapshot(undefined)
@@ -224,13 +243,18 @@ export function ObservationPanel({
               onStatus("connecting")
             }}
           >
-            {!capability && <option value="">No observation capability</option>}
-            {capabilities.map((entry) => (
-              <option key={entry.scope} value={entry.scope}>
-                {entry.application} (
-                {entry.scope === "test" ? "Test" : "Production"})
+            <option value="production">
+              {production[0]?.application
+                ? `${production[0].application} (Production)`
+                : "Production"}
+            </option>
+            {testEnabled && (
+              <option value="test">
+                {test[0]?.application
+                  ? `${test[0].application} (Test)`
+                  : "Test"}
               </option>
-            ))}
+            )}
           </NativeSelect>
         </label>
         <div className="flex items-center justify-between gap-2">
@@ -265,9 +289,13 @@ export function ObservationPanel({
         />
       </div>
       <div className="observation-flows">
-        {(discoveryError || streamError || detailError) && (
+        {((scope === "test" ? testDiscoveryError : discoveryError) ||
+          streamError ||
+          detailError) && (
           <p className="observation-notice" role="alert">
-            {discoveryError || streamError || detailError}
+            {(scope === "test" ? testDiscoveryError : discoveryError) ||
+              streamError ||
+              detailError}
           </p>
         )}
         {expired && (

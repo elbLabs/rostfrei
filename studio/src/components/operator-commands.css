@@ -1,0 +1,98 @@
+.operator-commands {
+  display: grid;
+  gap: 14px;
+  justify-items: start;
+  min-width: 0;
+  max-width: 680px;
+  padding: clamp(16px, 3vw, 28px);
+  color: var(--foreground);
+}
+
+.operator-commands h2 {
+  font-size: 22px;
+}
+
+.operator-commands h3 {
+  font-size: 15px;
+}
+
+.operator-commands p {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.operator-commands header p {
+  margin-top: 2px;
+}
+
+.operator-commands > div,
+.operator-field,
+.operator-review,
+.operator-result {
+  width: 100%;
+  min-width: 0;
+}
+
+.operator-target,
+.operator-field,
+.operator-review,
+.operator-result {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+}
+
+.operator-field {
+  gap: 6px;
+}
+
+.operator-field textarea {
+  width: 100%;
+  font-family: var(--font-mono, monospace);
+}
+
+.operator-review,
+.operator-result {
+  border-block-start: 1px solid var(--border);
+  padding-block-start: 12px;
+}
+
+.operator-review[data-operator-review="dispatch"] {
+  border-color: var(--destructive);
+}
+
+.operator-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.operator-commands pre,
+.operator-commands code {
+  font-family: var(--font-mono, monospace);
+  overflow-wrap: anywhere;
+}
+
+.operator-commands pre {
+  width: 100%;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  padding: 10px;
+  background: var(--muted);
+  border-radius: var(--radius);
+}
+
+.operator-commands summary {
+  cursor: pointer;
+}
+
+.operator-commands ul {
+  margin: 4px 0 0;
+  padding-inline-start: 20px;
+  list-style: disc;
+}
+
+.operator-commands [role="alert"] {
+  color: var(--destructive);
+}

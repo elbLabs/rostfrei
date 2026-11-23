@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { FlaskConical, PanelLeft, Send } from "lucide-react"
 import { Brand } from "@rostfrei/ui/brand"
 import { ThemeToggle } from "@rostfrei/ui/theme"
@@ -19,7 +19,9 @@ import {
   type CorrelationSelection,
 } from "@/components/correlation-panel"
 import { ExecutionHeader } from "@/components/execution-header"
+import { InventoryPanel } from "@/components/inventory-panel"
 import { MessageGraph } from "@/components/message-graph"
+import { OperatorCommands } from "@/components/operator-commands"
 import { RunInspection } from "@/components/run-inspection"
 import {
   ObservationPanel,
@@ -28,7 +30,13 @@ import {
 import { StudioSidebar } from "@/components/studio-sidebar"
 import { TestPanel } from "@/components/test-panel"
 import { WorkspaceTabs } from "@/components/workspace-tabs"
-import { workspaceModes, type Workspace } from "@/lib/workspace"
+import { WorkspaceMap } from "@/components/workspace-map"
+import {
+  configuredFeatures,
+  workspaceViews,
+  type StudioFeatures,
+  type WorkspaceView,
+} from "@/lib/workspace"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
@@ -47,6 +55,7 @@ import {
   operationGraph,
   reportGraph,
 } from "@/lib/graph"
+import { operatorChoices } from "@/lib/operator-api"
 import type {
   Fixture,
   CommandExecutionResult,
@@ -62,12 +71,34 @@ import { cn } from "@/lib/utils"
 
 const STORED_RUNS_KEY = "rostfrei-tracer-studio-runs-v1"
 const MAXIMUM_STORED_RUNS = 16
+const features = configuredFeatures(
+  import.meta.env.VITE_STUDIO_WORKSPACES,
+  Boolean(import.meta.env.VITE_TRACER_INSPECTION_TOKEN?.trim())
+)
 
 function App() {
-  const [workspace, setWorkspace] = useState<Workspace>("tests")
-  const commandsActive = workspace === "commands"
+  if (!features) {
+    return (
+      <main className="studio-configuration-error">
+        <h1>Studio is not configured</h1>
+        <p>
+          Remove the unrecognized <code>VITE_STUDIO_WORKSPACES</code> setting
+          and restart Studio to enable the default navigation.
+        </p>
+      </main>
+    )
+  }
+  return <Studio features={features} />
+}
+
+function Studio({ features }: { features: StudioFeatures }) {
+  const { behavioralTests, initialView } = features
+  const [workspace, setWorkspace] = useState<WorkspaceView>(initialView)
+  const commandsActive = behavioralTests && workspace === "commands"
+  const operatorActive = !behavioralTests && workspace === "commands"
   const testsActive = workspace === "tests"
   const runsActive = workspace === "runs"
+  const needsTestDiscovery = testsActive || runsActive || commandsActive
   const observationActive = workspace === "observation"
   const correlationsActive = workspace === "correlations"
   const [correlationSelection, setCorrelationSelection] =
@@ -85,10 +116,15 @@ function App() {
     "connecting"
   )
   const [connectionAttempt, setConnectionAttempt] = useState(0)
+  const completedAttempt = useRef(-1)
   const [connectionError, setConnectionError] = useState<string>()
   const [testDiscoveryError, setTestDiscoveryError] = useState<string>()
   const [catalog, setCatalog] = useState<TracerCatalog>()
   const [commandOpen, setCommandOpen] = useState(false)
+  const [productionOpen, setProductionOpen] = useState(false)
+  const productionAvailable =
+    commandsActive && catalog && operatorChoices(catalog, "dispatch").length > 0
+  const productionActive = productionAvailable && productionOpen
   const [commandResult, setCommandResult] = useState<CommandExecutionResult>()
   const [commandError, setCommandError] = useState<string>()
   const [activeCommand, setActiveCommand] = useState<CommandView>()
@@ -101,7 +137,9 @@ function App() {
   const [inspectingRun, setInspectingRun] = useState(false)
   const [definition, setDefinition] = useState<TestDefinitionRevision>()
   const [nodes, setNodes] = useState<MessageGraphNode[]>([])
-  const [runs, setRuns] = useState<StoredRun[]>(readStoredRuns)
+  const [runs, setRuns] = useState<StoredRun[]>(() =>
+    behavioralTests ? readStoredRuns() : []
+  )
   const [executing, setExecuting] = useState<"commands" | "tests">()
   const running = Boolean(executing)
   const commandRunning = executing === "commands"
@@ -111,14 +149,15 @@ function App() {
   const [error, setError] = useState<string>()
   const [storageNote, setStorageNote] = useState<string>()
 
-  const changeWorkspace = useCallback(
-    (next: Workspace) => {
+  const changeView = useCallback(
+    (next: WorkspaceView) => {
       if (next === workspace) return
       setWorkspace(next)
       setSidebarOpen(
         next === "runs" || next === "observation" || next === "correlations"
       )
       setCommandOpen(false)
+      setProductionOpen(false)
       setTestOpen(false)
       setInspectingRun(false)
     },
@@ -126,52 +165,65 @@ function App() {
   )
 
   useEffect(() => {
+    if (!behavioralTests) return
     const toggleCommand = (event: KeyboardEvent) => {
       if (
+        !event.defaultPrevented &&
+        !event.isComposing &&
+        !event.repeat &&
         (event.ctrlKey || event.metaKey) &&
         event.shiftKey &&
         !event.altKey &&
-        event.code === "KeyK" &&
-        catalog
+        event.code === "KeyK"
       ) {
         event.preventDefault()
         setWorkspace("commands")
+        document.getElementById("studio-tab-commands")?.focus()
         setSidebarOpen(false)
         setTestOpen(false)
+        setProductionOpen(false)
         setCommandOpen((open) => !open)
       }
     }
     window.addEventListener("keydown", toggleCommand)
     return () => window.removeEventListener("keydown", toggleCommand)
-  }, [catalog])
+  }, [behavioralTests])
 
   useEffect(() => {
-    let active = true
+    if (!needsTestDiscovery || completedAttempt.current === connectionAttempt)
+      return
+    const controller = new AbortController()
+    const { signal } = controller
+    const finish = () => {
+      if (signal.aborted) return
+      completedAttempt.current = connectionAttempt
+      setLoading(false)
+    }
     const connect = async () => {
       let availableCatalog: TracerCatalog
       try {
-        availableCatalog = await getCatalog()
+        availableCatalog = await getCatalog(signal)
       } catch (connectError) {
-        if (active) {
+        if (!signal.aborted) {
           setSource("disconnected")
           setConnectionError(errorMessage(connectError))
-          setLoading(false)
+          finish()
         }
         return
       }
-      if (!active) return
+      if (signal.aborted) return
       setCatalog(availableCatalog)
       setSource("live")
       const definitionsHref =
         availableCatalog.testRepository?.definitionsHref ??
         availableCatalog.behavioralTest?.definitionsHref
       if (!definitionsHref) {
-        setLoading(false)
+        finish()
         return
       }
       try {
         const availableTests = await listTests(definitionsHref)
-        if (!active) return
+        if (signal.aborted) return
         const selected = availableTests[0]
         if (!selected) {
           setSource("live")
@@ -179,26 +231,28 @@ function App() {
           return
         }
         const revision = await getTest(selected.definitionHref)
+        if (signal.aborted) return
         const fixture = await getFixture(revision.definition.setup.fixture)
         const expectedNodes = expectedGraph(revision.definition, fixture)
-        if (!active) return
+        if (signal.aborted) return
         setTests(availableTests)
         setSelectedTestId(selected.id)
         setDefinition(revision)
         setNodes(expectedNodes)
         setSource("live")
       } catch (testError) {
-        if (!active) return
+        if (signal.aborted) return
         setTestDiscoveryError(errorMessage(testError))
       } finally {
-        if (active) setLoading(false)
+        finish()
       }
     }
-    void connect()
-    return () => {
-      active = false
-    }
-  }, [connectionAttempt])
+    // Don't start a request from an effect that was immediately cleaned up.
+    queueMicrotask(() => {
+      if (!signal.aborted) void connect()
+    })
+    return () => controller.abort()
+  }, [connectionAttempt, needsTestDiscovery])
 
   const retryConnection = () => {
     if (loading || running) return
@@ -449,7 +503,8 @@ function App() {
         : runsActive
           ? (selectedRun?.nodes ?? [])
           : nodes
-  const mode = workspaceModes.find((mode) => mode.id === workspace)!
+  const mode = workspaceViews.find((mode) => mode.id === workspace)!
+  const graphMode = !operatorActive && "emptyTitle" in mode ? mode : undefined
   const sidebarLabel = testsActive
     ? "Test library"
     : runsActive
@@ -457,12 +512,133 @@ function App() {
       : observationActive
         ? "Flows"
         : "Find correlation"
+  const floatingGraph = Boolean(
+    graphMode && !productionActive && !inspectionRun
+  )
+
+  const workspaceToolbar = graphMode && (
+    <header className="workspace-toolbar">
+      <div className="workspace-identity">
+        <span className="workspace-icon">
+          <mode.icon size={21} />
+        </span>
+        <div>
+          <div className="workspace-title">
+            <h1>{graphMode.label}</h1>
+            <span>{productionActive ? "Production" : graphMode.scope}</span>
+          </div>
+          <p>
+            {productionActive
+              ? "Dispatch a command to Production."
+              : graphMode.description}
+          </p>
+        </div>
+      </div>
+      <div className="workspace-actions">
+        {!commandsActive && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="sidebar-toggle"
+            onClick={() => setSidebarOpen((open) => !open)}
+            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            aria-expanded={sidebarOpen}
+            aria-controls={
+              observationActive
+                ? "studio-observation-panel"
+                : correlationsActive
+                  ? "studio-correlation-panel"
+                  : "studio-navigation"
+            }
+          >
+            <PanelLeft />
+            <span>{sidebarLabel}</span>
+          </Button>
+        )}
+        {productionAvailable && (
+          <Button
+            className="production-dispatch-trigger"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setCommandOpen(false)
+              setProductionOpen((open) => !open)
+            }}
+            aria-controls={
+              productionActive ? "studio-production-dispatch" : undefined
+            }
+            aria-expanded={productionActive}
+          >
+            {productionActive
+              ? "Close Production dispatch"
+              : "Production dispatch"}
+          </Button>
+        )}
+        {commandsActive && !productionActive && (
+          <Button
+            className="command-panel-trigger"
+            size="sm"
+            disabled={!catalog}
+            onClick={() => setCommandOpen((open) => !open)}
+            aria-controls="studio-command-panel"
+            aria-expanded={commandOpen}
+            aria-label={
+              commandOpen ? "Close command panel" : "Open command panel"
+            }
+            aria-keyshortcuts="Meta+Shift+K Control+Shift+K"
+          >
+            <Send />
+            <span>Send command</span>
+          </Button>
+        )}
+        {testsActive && (
+          <Button
+            className="test-panel-trigger"
+            size="sm"
+            disabled={!catalog}
+            onClick={() => setTestOpen((open) => !open)}
+            aria-controls="studio-test-panel"
+            aria-expanded={testOpen}
+            aria-label={testOpen ? "Close test panel" : "Open test panel"}
+          >
+            <FlaskConical />
+            <span>Run a test</span>
+          </Button>
+        )}
+        {runsActive && selectedRun && (
+          <Button
+            className="saved-run-rerun"
+            size="sm"
+            disabled={
+              source !== "live" ||
+              running ||
+              loading ||
+              !tests.some((test) => test.id === selectedRun.testId)
+            }
+            onClick={() => void prepareRerun(selectedRun)}
+          >
+            <FlaskConical /> Run again
+          </Button>
+        )}
+        {floatingGraph && (testsActive || runsActive) && selectedRun && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setInspectingRun(true)}
+          >
+            Run summary
+          </Button>
+        )}
+      </div>
+    </header>
+  )
 
   return (
     <TooltipProvider>
       <div
         className={cn(
           "studio-shell",
+          floatingGraph && "has-floating-graph",
           (observationActive || correlationsActive) && "observation-active",
           sidebarOpen && "sidebar-is-open"
         )}
@@ -472,36 +648,51 @@ function App() {
             <Brand compact className="studio-brand" />
             <strong>Tracer Studio</strong>
           </div>
-          <WorkspaceTabs value={workspace} onChange={changeWorkspace} />
-          <div
-            className="connection-status"
-            data-source={
-              observationActive
-                ? observationConnection
-                : correlationsActive
-                  ? correlationConnection
-                  : source
-            }
-            data-tracer-source={source}
-          >
-            <span className="connection-dot" />
-            <span className="connection-label">
-              {observationActive
-                ? `Observation ${observationConnection}`
-                : correlationsActive
-                  ? `Correlations ${correlationConnection}`
-                  : source === "connecting"
-                    ? "Connecting"
-                    : source === "live"
-                      ? "Isolated Test"
-                      : "Disconnected"}
-            </span>
-            {runsActive && selectedRun && (
-              <span className="connection-detail">Saved run</span>
-            )}
-          </div>
+          <WorkspaceMap
+            value={workspace}
+            behavioralTests={behavioralTests}
+            onChange={changeView}
+          />
+          {needsTestDiscovery || observationActive || correlationsActive ? (
+            <div
+              className="connection-status"
+              data-source={
+                observationActive
+                  ? observationConnection
+                  : correlationsActive
+                    ? correlationConnection
+                    : source
+              }
+              data-tracer-source={needsTestDiscovery ? source : undefined}
+            >
+              <span className="connection-dot" />
+              <span className="connection-label">
+                {observationActive
+                  ? `Observation ${observationConnection}`
+                  : correlationsActive
+                    ? `Correlations ${correlationConnection}`
+                    : source === "connecting"
+                      ? "Connecting"
+                      : source === "live"
+                        ? productionActive
+                          ? "Connected"
+                          : "Isolated Test"
+                        : "Disconnected"}
+              </span>
+              {runsActive && selectedRun && (
+                <span className="connection-detail">Saved run</span>
+              )}
+            </div>
+          ) : (
+            <div className="studio-topbar-spacer" />
+          )}
           <ThemeToggle className="studio-theme-toggle" />
         </header>
+        <WorkspaceTabs
+          behavioralTests={behavioralTests}
+          value={workspace}
+          onChange={changeView}
+        />
 
         <StudioSidebar
           open={sidebarOpen && (testsActive || runsActive)}
@@ -519,7 +710,10 @@ function App() {
         <ObservationPanel
           open={sidebarOpen && observationActive}
           active={observationActive}
-          catalog={catalog}
+          testEnabled={
+            behavioralTests ||
+            Boolean(import.meta.env.VITE_TRACER_TOKEN?.trim())
+          }
           onClose={() => setSidebarOpen(false)}
           onSelect={() => setSidebarOpen(false)}
           onFlow={setObservedFlow}
@@ -534,23 +728,26 @@ function App() {
           onSelection={setCorrelationSelection}
           onStatus={setCorrelationConnection}
         />
-        <CommandPanel
-          open={commandsActive && commandOpen}
-          catalog={catalog}
-          busy={running || loading}
-          result={commandResult}
-          requestError={commandError}
-          testStateRevision={testStateRevision}
-          onClose={() => setCommandOpen(false)}
-          onExecute={executeCommand}
-          onEdit={() => {
-            setCommandResult(undefined)
-            setCommandError(undefined)
-          }}
-          onRefreshTestState={() =>
-            setTestStateRevision((current) => current + 1)
-          }
-        />
+        {behavioralTests && (
+          <CommandPanel
+            active={needsTestDiscovery}
+            open={commandsActive && commandOpen}
+            catalog={catalog}
+            busy={running || loading}
+            result={commandResult}
+            requestError={commandError}
+            testStateRevision={testStateRevision}
+            onClose={() => setCommandOpen(false)}
+            onExecute={executeCommand}
+            onEdit={() => {
+              setCommandResult(undefined)
+              setCommandError(undefined)
+            }}
+            onRefreshTestState={() =>
+              setTestStateRevision((current) => current + 1)
+            }
+          />
+        )}
         {catalog && (
           <TestPanel
             open={testsActive && testOpen}
@@ -583,102 +780,34 @@ function App() {
 
         <main
           id="studio-workspace"
-          className="studio-main"
+          className={cn(
+            "studio-main",
+            (!graphMode || productionActive) && "workspace-standalone",
+            floatingGraph && "workspace-graph"
+          )}
           role="tabpanel"
           aria-labelledby={`studio-tab-${workspace}`}
           data-workspace={workspace}
+          tabIndex={0}
         >
-          <header className="workspace-toolbar">
-            <div className="workspace-identity">
-              <span className="workspace-icon">
-                <mode.icon size={21} />
-              </span>
-              <div>
-                <div className="workspace-title">
-                  <h1>{mode.label}</h1>
-                  <span>{mode.scope}</span>
-                </div>
-                <p>{mode.description}</p>
-              </div>
-            </div>
-            <div className="workspace-actions">
-              {!commandsActive && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="sidebar-toggle"
-                  onClick={() => setSidebarOpen((open) => !open)}
-                  aria-label={
-                    sidebarOpen ? "Collapse sidebar" : "Expand sidebar"
-                  }
-                  aria-expanded={sidebarOpen}
-                  aria-controls={
-                    observationActive
-                      ? "studio-observation-panel"
-                      : correlationsActive
-                        ? "studio-correlation-panel"
-                        : "studio-navigation"
-                  }
-                >
-                  <PanelLeft />
-                  <span>{sidebarLabel}</span>
-                </Button>
-              )}
-              {commandsActive && (
-                <Button
-                  className="command-panel-trigger"
-                  size="sm"
-                  disabled={!catalog}
-                  onClick={() => setCommandOpen((open) => !open)}
-                  aria-controls="studio-command-panel"
-                  aria-expanded={commandOpen}
-                  aria-label={
-                    commandOpen ? "Close command panel" : "Open command panel"
-                  }
-                  aria-keyshortcuts="Meta+Shift+K Control+Shift+K"
-                >
-                  <Send />
-                  <span>Send command</span>
-                </Button>
-              )}
-              {testsActive && (
-                <Button
-                  className="test-panel-trigger"
-                  size="sm"
-                  disabled={!catalog}
-                  onClick={() => setTestOpen((open) => !open)}
-                  aria-controls="studio-test-panel"
-                  aria-expanded={testOpen}
-                  aria-label={testOpen ? "Close test panel" : "Open test panel"}
-                >
-                  <FlaskConical />
-                  <span>Run a test</span>
-                </Button>
-              )}
-              {runsActive && selectedRun && (
-                <Button
-                  className="saved-run-rerun"
-                  size="sm"
-                  disabled={
-                    source !== "live" ||
-                    running ||
-                    loading ||
-                    !tests.some((test) => test.id === selectedRun.testId)
-                  }
-                  onClick={() => void prepareRerun(selectedRun)}
-                >
-                  <FlaskConical /> Run again
-                </Button>
-              )}
-            </div>
-          </header>
+          {!floatingGraph && workspaceToolbar}
           <div
             className={cn(
               "workspace-content",
               inspectionRun && "is-inspecting-run"
             )}
           >
-            {inspectionRun ? (
+            {operatorActive ? (
+              <OperatorCommands />
+            ) : productionActive ? (
+              <div id="studio-production-dispatch">
+                <OperatorCommands productionOnly controlCatalog={catalog} />
+              </div>
+            ) : workspace === "infrastructure" ||
+              workspace === "domain" ||
+              workspace === "read-models" ? (
+              <InventoryPanel view={workspace} />
+            ) : inspectionRun ? (
               <RunInspection
                 key={inspectionRun.runId}
                 run={inspectionRun}
@@ -691,143 +820,149 @@ function App() {
                 onRun={() => void prepareRerun(inspectionRun)}
                 onFullGraph={() => setInspectingRun(false)}
               />
-            ) : (
-              <>
-                <div className="studio-heading">
-                  {(commandsActive || testsActive || runsActive) &&
-                    (source !== "live" || testDiscoveryError) && (
-                      <ConnectionNotice
-                        connecting={source === "connecting"}
-                        testsOnly={source === "live"}
-                        error={testDiscoveryError ?? connectionError}
-                        onRetry={retryConnection}
+            ) : graphMode ? (
+              <MessageGraph
+                toolbar={workspaceToolbar}
+                summary={
+                  <div
+                    className="studio-heading"
+                    tabIndex={0}
+                    role="region"
+                    aria-label="Flow summary"
+                  >
+                    {(commandsActive || testsActive || runsActive) &&
+                      (source !== "live" || testDiscoveryError) && (
+                        <ConnectionNotice
+                          connecting={source === "connecting"}
+                          testsOnly={source === "live"}
+                          error={testDiscoveryError ?? connectionError}
+                          onRetry={retryConnection}
+                        />
+                      )}
+                    {correlationsActive ? (
+                      <CorrelationHeading
+                        selection={correlationSelection}
+                        status={correlationConnection}
                       />
-                    )}
-                  {correlationsActive ? (
-                    <CorrelationHeading
-                      selection={correlationSelection}
-                      status={correlationConnection}
-                    />
-                  ) : observationActive ? (
-                    observedFlow && (
-                      <section
-                        className="observation-heading"
-                        aria-live="polite"
-                      >
-                        <div>
-                          <h1>
-                            {observedFlow?.name ??
-                              "Observe application traffic"}
-                          </h1>
-                          <p>
-                            {observedFlow ? (
-                              <>
-                                {observedFlow.application} ({observedFlow.scope}
-                                )
-                                <code className="block">
-                                  {observedFlow.correlationId}
-                                </code>
-                              </>
-                            ) : (
-                              "Choose a flow from the observation sidebar."
-                            )}
+                    ) : observationActive ? (
+                      observedFlow && (
+                        <section
+                          className="observation-heading"
+                          aria-live="polite"
+                        >
+                          <div>
+                            <h1>
+                              {observedFlow?.name ??
+                                "Observe application traffic"}
+                            </h1>
+                            <p>
+                              {observedFlow ? (
+                                <>
+                                  {observedFlow.application} (
+                                  {observedFlow.scope})
+                                  <code className="block">
+                                    {observedFlow.correlationId}
+                                  </code>
+                                </>
+                              ) : (
+                                "Choose a flow from the observation sidebar."
+                              )}
+                            </p>
+                          </div>
+                          <p className="observation-evidence">
+                            {observedFlow
+                              ? `${observedFlow.fidelity === "exact" ? "Exact" : "Grouped"} observation. Capture is partial.${observationExpired ? " Retained snapshot." : ""}${observedFlow.truncated ? " Capture truncated." : ""}${observedFlow.conflicted ? " Conflicting evidence." : ""}`
+                              : observationConnection}
+                            <span>
+                              {observationExpired
+                                ? "This graph was evicted or reset; select another flow for live updates."
+                                : "Rolling window; silence does not establish completion."}
+                            </span>
                           </p>
-                        </div>
-                        <p className="observation-evidence">
-                          {observedFlow
-                            ? `${observedFlow.fidelity === "exact" ? "Exact" : "Grouped"} observation. Capture is partial.${observationExpired ? " Retained snapshot." : ""}${observedFlow.truncated ? " Capture truncated." : ""}${observedFlow.conflicted ? " Conflicting evidence." : ""}`
-                            : observationConnection}
-                          <span>
-                            {observationExpired
-                              ? "This graph was evicted or reset; select another flow for live updates."
-                              : "Rolling window; silence does not establish completion."}
-                          </span>
-                        </p>
-                      </section>
-                    )
-                  ) : commandsActive ? (
-                    activeCommand && (
-                      <CommandExecutionHeader
-                        execution={activeCommand}
-                        root={
-                          commandNodes.find((node) => node.subject) ??
-                          commandNodes.find(
-                            (node) =>
-                              node.kind === "command" && node.subject !== false
-                          )
-                        }
-                        running={commandRunning}
-                      />
-                    )
-                  ) : (
-                    (source === "live" || selectedRun) && (
-                      <ExecutionHeader
-                        name={
-                          selectedRun?.testName ??
-                          (testsActive ? selectedTest?.name : undefined)
-                        }
-                        run={selectedRun}
-                        nodes={displayNodes}
-                        view={view}
-                        loading={testsActive && loading}
-                        connected={source === "live"}
-                        canRun={
-                          runsActive
-                            ? tests.some(
-                                (test) => test.id === selectedRun?.testId
-                              ) && source === "live"
-                            : canRunTest
-                        }
-                        error={testsActive ? error : undefined}
-                        onInspect={() => setInspectingRun(true)}
-                      />
-                    )
-                  )}
-                </div>
-                <MessageGraph
-                  key={
-                    correlationsActive
-                      ? `correlation-${correlationSelection.correlationId ?? "empty"}`
-                      : observationActive
-                        ? `observation-${observedFlow?.scope ?? "empty"}-${observedFlow?.id ?? "empty"}`
-                        : commandsActive
-                          ? "command-execution"
-                          : `${workspace}-${selectedRun?.runId ?? (testsActive ? selectedTestId : "empty")}`
-                  }
-                  nodes={displayNodes}
-                  view={view}
-                  capture={
-                    correlationsActive
-                      ? undefined
-                      : observationActive
-                        ? observedFlow
-                          ? {
-                              fidelity: observedFlow.fidelity,
-                              settled: false,
-                              settledFor: "0ms",
-                            }
-                          : undefined
-                        : commandsActive
-                          ? activeCommand?.result?.series?.capture
-                          : selectedRun?.capture
-                  }
-                  emptyTitle={mode.emptyTitle}
-                  emptyMessage={
-                    correlationsActive
-                      ? correlationSelection.loading
-                        ? "Reading retained events…"
-                        : correlationSelection.chain
-                          ? "No events returned in this retained-history read."
-                          : mode.emptyMessage
-                      : observationActive
-                        ? mode.emptyMessage
-                        : source !== "live" && !runsActive
-                          ? "Connect to Tracer to load tests and message flows."
-                          : mode.emptyMessage
-                  }
-                />
-              </>
-            )}
+                        </section>
+                      )
+                    ) : commandsActive ? (
+                      activeCommand && (
+                        <CommandExecutionHeader
+                          execution={activeCommand}
+                          root={
+                            commandNodes.find((node) => node.subject) ??
+                            commandNodes.find(
+                              (node) =>
+                                node.kind === "command" &&
+                                node.subject !== false
+                            )
+                          }
+                          running={commandRunning}
+                        />
+                      )
+                    ) : (
+                      (source === "live" || selectedRun) && (
+                        <ExecutionHeader
+                          name={
+                            selectedRun?.testName ??
+                            (testsActive ? selectedTest?.name : undefined)
+                          }
+                          run={selectedRun}
+                          nodes={displayNodes}
+                          view={view}
+                          loading={testsActive && loading}
+                          connected={source === "live"}
+                          canRun={
+                            runsActive
+                              ? tests.some(
+                                  (test) => test.id === selectedRun?.testId
+                                ) && source === "live"
+                              : canRunTest
+                          }
+                          error={testsActive ? error : undefined}
+                        />
+                      )
+                    )}
+                  </div>
+                }
+                key={
+                  correlationsActive
+                    ? `correlation-${correlationSelection.correlationId ?? "empty"}`
+                    : observationActive
+                      ? `observation-${observedFlow?.scope ?? "empty"}-${observedFlow?.id ?? "empty"}`
+                      : commandsActive
+                        ? "command-execution"
+                        : `${workspace}-${selectedRun?.runId ?? (testsActive ? selectedTestId : "empty")}`
+                }
+                nodes={displayNodes}
+                view={view}
+                capture={
+                  correlationsActive
+                    ? undefined
+                    : observationActive
+                      ? observedFlow
+                        ? {
+                            fidelity: observedFlow.fidelity,
+                            settled: false,
+                            settledFor: "0ms",
+                          }
+                        : undefined
+                      : commandsActive
+                        ? activeCommand?.result?.series?.capture
+                        : selectedRun?.capture
+                }
+                emptyTitle={graphMode.emptyTitle}
+                emptyMessage={
+                  correlationsActive
+                    ? correlationSelection.loading
+                      ? "Reading retained events…"
+                      : correlationSelection.chain
+                        ? "No events returned in this retained-history read."
+                        : graphMode.emptyMessage
+                    : observationActive
+                      ? graphMode.emptyMessage
+                      : source !== "live" && !runsActive
+                        ? "Connect to Tracer to load tests and message flows."
+                        : graphMode.emptyMessage
+                }
+              />
+            ) : null}
           </div>
         </main>
       </div>

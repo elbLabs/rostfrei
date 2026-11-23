@@ -2,8 +2,25 @@
 
 Explore what your domain does, one command at a time.
 
-Tracer Studio is a React/Vite client for command execution, Tracer behavioral
-tests, and causal message-series visualization.
+Use the same Studio for development and production-hosted Tracer endpoints.
+Choose a view directly: **Domain**, **Infrastructure**, **Read models**, **Live
+flows**, **Correlations**, **Tests**, **Runs** or **Commands**. The endpoint
+determines which application you're talking to. Each action determines which
+state it uses: a behavioral test on a production-hosted Tracer uses that host’s
+isolated Test runtime when configured; **Production dispatch** sends a real
+command to its Normal runtime. Neither changing tabs nor browsing the domain
+runs a test or sends a command. **Studio map** puts the available views around
+a central hub. Choose a destination on the map or use its tab directly.
+
+Give a production-hosted Test runtime its own storage, workers and downstream
+test integrations. The framework isolates its Test traffic; a custom handler
+that calls an external service still uses the dependencies you configured.
+
+With an inspection token configured, Studio opens on **Domain**; a local setup
+with only Test control opens on **Tests**. Existing builds configured with
+`VITE_STUDIO_WORKSPACES=observe` keep the inspection-first preset: they open on
+Infrastructure, omit Tests and Runs, and discover command controls on request.
+That build setting changes the UI; the Tracer host enforces permissions.
 
 Open the **Runs** tab to inspect a saved run on the canvas without
 executing it again. **Run summary** opens its verdict, command outcome, capture
@@ -21,12 +38,10 @@ definition and resets isolated Test state to its fixture, then shows the result
 on the canvas. Selecting a test from **Test library** in that tab
 previews its expected flow without executing it.
 
-The canvas is the single workspace, with a dotted background and graph controls.
-The fixed tabs on the Tracer Studio line are **Commands**, **Tests**, **Runs**,
-**Observe**, and **Correlations**, selected with **Ctrl+1–5**. Arrow keys, Home,
-and End also navigate the focused tab bar. Switching tabs preserves each mode’s
-selected command, test, or saved run; it does not execute anything. Each mode has
-its own heading and actions below the tab bar.
+**Ctrl+number** selects a view; arrow keys, Home and
+End navigate its focused tab bar.
+Switching views does not execute commands or tests. Commands, tests, runs,
+live flows and correlations share the graph canvas.
 Its desktop message inspector overlays the flow without changing node positions,
 pan, or zoom. Click an empty area of the canvas to close it. Navigation and details
 open on demand. Narrow screens use a message list and a back-to-flow detail view.
@@ -56,7 +71,31 @@ Start with the [bike-rental walkthrough](https://elblabs.github.io/rostfrei/docs
 for a connected application. Studio requires a reachable Tracer API; synthetic
 responses are limited to the browser-test and visual-inspection fixtures below.
 
-The **Observe** panel continuously follows application-originated domain and
+**Infrastructure** takes a read-only sample of configured NATS sources.
+Use it to check account quotas and usage, stream size, KV allocation, consumer
+backlog, acknowledgements and the broker's evidence of a waiting or bound
+consumer. A durable with no waiting pull could be busy, idle or offline. A
+partial or inaccessible listing cannot establish that a resource is absent.
+Hosts can also report individual NATS node health and process RAM.
+**Domain** opens on a canvas of bounded contexts and aggregates. Open an
+aggregate to see its entities and events grouped beneath it. Select a card to inspect its field types,
+or select a bounded context and expand a registered command to see its payload;
+close the overlay or press **Esc** to return to the same spot. The canvas works
+on narrow screens too. Its links describe declarations, while **Live flows**
+shows recorded messages.
+**Read models** distinguishes declared storage policy
+from the bytes reported by the backing broker, and can show a mapped container's
+memory usage and limit separately. See [inventory setup and multi-service
+coverage](../docs/nats-application-host.md#studio-operational-inventory).
+
+**Production dispatch** is offered in Commands only when the host advertises it.
+Enter the separate Dispatch credential for this
+session and review the exact target and payload before publishing. An inspection
+credential alone cannot dispatch. Do not put a dispatch credential in the Studio
+build. A timeout after submission can leave the outcome unknown; retry only the
+same request with its original idempotency key. Status refresh is read-only.
+
+**Live flows** continuously follows application-originated domain and
 integration events. It supports Test/Production scope discovery, filtering,
 flow selection, pause/resume, reconnect, and explicit partial/retention status.
 See [continuous observation](../docs/continuous-observation.md) for backend wiring
@@ -65,7 +104,7 @@ It uses the same canvas, message cards, and inspector as command and
 test execution. **Commands** and **Tests** return to their saved view state; closing
 the observation sidebar does not stop capture.
 
-The **Correlations** panel reads [retained correlation events](../docs/continuous-observation.md#retained-correlation-inspection)
+**Correlations** reads [retained correlation events](../docs/continuous-observation.md#retained-correlation-inspection)
 that touched one business object.
 Choose an anchor the Tracer advertises (or **Other aggregate type…** to type
 `context/aggregate`), enter the anchor's aggregate ID and select a correlation,
@@ -188,6 +227,10 @@ In Docker, `127.0.0.1` refers to the Studio container itself. Configure
 `VITE_TRACER_TARGET` to a reachable Tracer container/host address, or explicitly use
 host networking for a local Tracer. Restart the dev/preview server after changing
 the proxy target; token and other frontend environment changes require a rebuild.
+Anyone who can download the Studio bundle can read its `VITE_*` values. Serve a
+token-configured build only to users entitled to that capability. For a private
+inspection-only deployment, use an inspection-only host and omit the Control
+and Dispatch credentials.
 
 Run summaries are retained in browser local storage because Tracer does not yet
 provide a run-history endpoint. Saved real runs can be inspected while disconnected,

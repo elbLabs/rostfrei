@@ -1,7 +1,7 @@
 # Continuous application observation
 
 Tracer can retain and stream a rolling window of real application events without
-creating an operation or submitting a command. Studio's **Observe** panel discovers
+creating an operation or submitting a command. Studio's **Live flows** view discovers
 these flows and follows a selected flow as later events arrive. An action can start
 in an application UI, an HTTP handler, a bot, or a background worker.
 
@@ -128,17 +128,19 @@ The host must have the corresponding control/inspection tokens configured. The
 inspection token is optional when observing only Test. As with the existing Studio
 control token, Vite credentials are browser configuration, not server-side secrets.
 
-1. Select the **Observe** tab and choose Test or Production in **Flows**.
+1. Open **Live flows**. **Flows** starts on Production; choose Test
+   explicitly. An inspection-first build offers Test only when a control credential
+   (`VITE_TRACER_TOKEN`) was configured.
 2. Wait for **Live**, then trigger an action through the application.
 3. Filter by event name or correlation ID and select a flow.
 4. Inspect events and payloads as the flow grows. Only explicit causation IDs draw
    graph edges; an unobserved command remains absent.
 5. **Pause** freezes browser updates. **Resume** reconnects to the current window.
 
-Observe shares the execution canvas, message cards, and overlay details inspector.
+Live flows shares the execution canvas, message cards, and details inspector.
 Choosing a flow closes navigation. Reopen **Flows** to filter or pause; closing
-navigation does not pause observation. Use the fixed **Commands**, **Tests**, or
-**Runs** tabs to return to those views.
+navigation does not pause observation. Open **Tests** to run a scenario against the
+same host's isolated Test runtime, or **Runs** to inspect a saved result.
 
 Disconnected, unavailable, resetting, paused, and live states are distinct. A
 selected flow that is evicted or reset is labelled as a retained snapshot, and
