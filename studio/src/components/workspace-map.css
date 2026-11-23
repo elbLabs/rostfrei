@@ -1,0 +1,107 @@
+.studio-map-trigger {
+  flex: none;
+}
+.studio-map-dialog {
+  position: fixed;
+  inset: var(--header-height) 0 0;
+  margin: 0;
+  width: 100%;
+  height: calc(100dvh - var(--header-height));
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  background: var(--background);
+  color: var(--foreground);
+}
+.studio-map-dialog[open] {
+  display: grid;
+  place-items: center;
+}
+.studio-map-dialog::backdrop {
+  background: transparent;
+}
+.studio-map-tools {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  z-index: 1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  padding: 3px 4px 3px 12px;
+}
+.studio-map-tools h2 {
+  font-size: 15px;
+}
+.studio-map-orbit {
+  position: relative;
+  width: min(850px, 100%);
+  height: min(545px, calc(100% - 70px));
+  min-height: 330px;
+  margin-top: 42px;
+}
+.studio-map-orbit > svg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.studio-map-orbit line {
+  stroke: var(--control-border);
+  stroke-width: 1.25;
+}
+.studio-map-destination,
+.studio-map-center {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: clamp(92px, 11vw, 132px);
+  height: clamp(62px, 8vw, 84px);
+  background: var(--card);
+  border: 1px solid var(--control-border);
+  border-radius: 50%;
+  font-family: var(--font-heading);
+  font-size: 15px;
+}
+.studio-map-destination {
+  cursor: pointer;
+}
+.studio-map-destination:hover,
+.studio-map-destination[aria-current="page"] {
+  background: var(--accent);
+  border-color: var(--primary);
+}
+.studio-map-destination:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.studio-map-center {
+  top: 50%;
+  left: 50%;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: none;
+}
+@media (max-width: 620px) {
+  .studio-map-trigger > span {
+    display: none;
+  }
+  .studio-map-destination {
+    font-size: 13px;
+  }
+}
+@media (max-height: 480px) {
+  .studio-map-dialog[open] {
+    display: block;
+  }
+  .studio-map-orbit {
+    margin: 58px auto 22px;
+  }
+}

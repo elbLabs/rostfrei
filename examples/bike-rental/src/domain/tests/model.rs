@@ -6,6 +6,24 @@ fn composed_domain_model_builds() {
 }
 
 #[test]
+fn projects_registered_command_field_declarations_without_inventing_links() {
+    let bindings = crate::tracer::command_bindings().expect("commands should register");
+    let command = bindings
+        .registry()
+        .command("bike-rental", "reserve-bicycle-category", 1)
+        .expect("reservation command should be registered");
+    let fields = command.project_modeled_fields();
+    assert_eq!(
+        fields.iter().find(|field| field["name"] == "category"),
+        Some(&json!({
+            "name": "category",
+            "declaredType": "BicycleCategory",
+            "value": { "kind": "opaque" }
+        }))
+    );
+}
+
+#[test]
 fn projects_registered_services_and_omits_unattached_capabilities() {
     let model = crate::domain::model::domain_model().expect("comparison domain model should build");
     assert_eq!(model["actions"], json!([]));
@@ -78,10 +96,10 @@ fn projects_registered_services_and_omits_unattached_capabilities() {
     assert_eq!(
         bicycle["fields"],
         json!([
-            {"name": "bicycle_id", "value": {"kind": "opaque"}},
-            {"name": "status", "value": {"kind": "opaque"}},
-            {"name": "condition", "value": {"kind": "opaque"}},
-            {"name": "category", "value": {"kind": "optional", "value": {"kind": "opaque"}}}
+            {"name": "bicycle_id", "declaredType": "BicycleId", "value": {"kind": "opaque"}},
+            {"name": "status", "declaredType": "BicycleStatus", "value": {"kind": "opaque"}},
+            {"name": "condition", "declaredType": "BicycleCondition", "value": {"kind": "opaque"}},
+            {"name": "category", "declaredType": "Option<BicycleCategory>", "value": {"kind": "optional", "value": {"kind": "opaque"}}}
         ])
     );
     assert_eq!(bicycle["lifecycle"], json!(null));

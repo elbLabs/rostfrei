@@ -31,6 +31,11 @@ interface RequestOptions extends RequestInit {
   timeoutMs?: number
 }
 
+export type TracerCapability =
+  | "control"
+  | "inspection"
+  | { kind: "dispatch"; token: string }
+
 export async function getCatalog(signal?: AbortSignal): Promise<TracerCatalog> {
   const catalog = await requestJson<TracerCatalog>("/catalog", {
     signal,
@@ -54,17 +59,17 @@ export async function listAggregateInstances(
 }
 
 export function getCommandInputs(
-  inputsHrefTemplate: string
+  inputsHrefTemplate: string,
+  signal?: AbortSignal
 ): Promise<CommandInputDocument> {
-  return requestCommandInputs(advertisedHref(inputsHrefTemplate))
+  return requestCommandInputs(advertisedHref(inputsHrefTemplate), signal)
 }
 
 async function requestCommandInputs(
-  path: string
+  path: string,
+  signal?: AbortSignal
 ): Promise<CommandInputDocument> {
-  const response = await request(path, {
-    signal: AbortSignal.timeout(12_000),
-  })
+  const response = await request(path, { signal, timeoutMs: 12_000 })
   const source = await response.text()
   const document = JSON.parse(source) as CommandInputDocument
   const root = parseJsonNode(source)
@@ -280,8 +285,12 @@ export async function submitCommand(
   }
 }
 
-async function requestJson<T>(path: string, init?: RequestOptions): Promise<T> {
-  const response = await request(path, init)
+export async function requestJson<T>(
+  path: string,
+  init?: RequestOptions,
+  capability?: TracerCapability
+): Promise<T> {
+  const response = await request(path, init, capability)
   try {
     return (await response.json()) as T
   } catch {
@@ -294,10 +303,14 @@ async function requestJson<T>(path: string, init?: RequestOptions): Promise<T> {
 export async function request(
   path: string,
   { timeoutMs, ...init }: RequestOptions = {},
-  capability: "control" | "inspection" = "control",
+  capability: TracerCapability = "control",
   streaming = false
 ): Promise<Response> {
   const label = requestLabel(path, init.method)
+  const url = tracerUrl(path)
+  const headers = new Headers(init.headers)
+  if (!headers.has("accept")) headers.set("accept", "application/json")
+  headers.set("authorization", `Bearer ${capabilityToken(capability)}`)
   const timeout = streaming
     ? undefined
     : AbortSignal.timeout(
@@ -309,14 +322,12 @@ export async function request(
       : (init.signal ?? timeout)
   let response: Response
   try {
-    response = await fetch(apiUrl(path), {
+    response = await fetch(url, {
       ...init,
       signal,
       redirect: "error",
-      headers: {
-        ...requestHeaders("application/json", capability),
-        ...init.headers,
-      },
+      credentials: "omit",
+      headers,
     })
   } catch {
     throw new Error(
@@ -333,28 +344,27 @@ export async function request(
 
 function requestLabel(path: string, method = "GET"): string {
   // Exclude URL credentials, query strings, and authorization headers.
-  return `${method} ${new URL(apiUrl(path), window.location.origin).pathname}`
+  return `${method} ${tracerUrl(path).pathname}`
 }
 
-function requestHeaders(
-  accept: string,
-  capability: "control" | "inspection"
-): HeadersInit {
+function capabilityToken(capability: TracerCapability): string {
   const token =
-    capability === "inspection"
-      ? import.meta.env.VITE_TRACER_INSPECTION_TOKEN
-      : CONTROL_TOKEN
-  if (!token)
-    throw new Error("Production inspection credential is not configured")
-  return {
-    accept,
-    authorization: `Bearer ${token}`,
-  }
+    typeof capability === "object"
+      ? capability.token
+      : capability === "inspection"
+        ? import.meta.env.VITE_TRACER_INSPECTION_TOKEN
+        : CONTROL_TOKEN
+  if (!token) throw new Error("The requested Tracer credential is not configured")
+  return token
 }
 
-function apiUrl(path: string): string {
-  if (/^https?:\/\//.test(path)) return path
-  return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`
+export function tracerUrl(path: string): URL {
+  const href = advertisedHref(path)
+  const url = new URL(`${API_BASE}${href}`, window.location.origin)
+  if (!/^https?:$/.test(url.protocol) || url.username || url.password) {
+    throw new Error("Studio's Tracer API URL is not safe for authenticated requests")
+  }
+  return url
 }
 
 export function advertisedHref(href: string): string {
@@ -363,6 +373,10 @@ export function advertisedHref(href: string): string {
     href.startsWith("//") ||
     href.includes("\\") ||
     href.includes("#") ||
+    href.split("?", 1)[0].split("/").some((segment) => {
+      const decodedDots = segment.replace(/%2e/gi, ".")
+      return decodedDots === "." || decodedDots === ".."
+    }) ||
     Array.from(href).some((character) => {
       const code = character.charCodeAt(0)
       return code <= 31 || code === 127
@@ -481,7 +495,7 @@ async function responseError(response: Response): Promise<TracerResponseError> {
   const fallback = `${response.status} ${response.statusText}`
   if (response.status === 401)
     return new TracerResponseError(
-      `${fallback}: Authentication failed. Check VITE_TRACER_TOKEN.`,
+      `${fallback}: Authentication failed for this Tracer capability.`,
       response.status
     )
   if (response.status === 403)

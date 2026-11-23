@@ -98,6 +98,22 @@ fn docker(args: &[&str], secrets: &[String]) -> Result<String> {
         output.stdout
     })
 }
+
+// An account-wide inventory is bounded. Give these contracts their own account
+// so streams retained by unrelated suites cannot displace the fixtures.
+fn test_accounts(password: &str, authenticated: bool) -> String {
+    let (default_user, suite_credentials) = if authenticated {
+        (
+            "",
+            format!(r#"user: "contract-tests", password: "{password}""#),
+        )
+    } else {
+        ("no_auth_user: suite", "user: suite".to_owned())
+    };
+    format!(
+        "\n{default_user}\naccounts {{\n SUITE {{ jetstream: enabled, users: [{{ {suite_credentials} }}] }}\n INVENTORY {{ jetstream: enabled, users: [{{ user: inventory, password: \"{password}\" }}] }}\n}}\n"
+    )
+}
 pub struct Broker {
     name: String,
     armed: bool,
@@ -113,14 +129,12 @@ impl Broker {
             .prefix("rostfrei-contract-")
             .tempdir()?;
         let mut config = fs::read_to_string(root().join("scripts/nats-test.conf"))?;
-        let mut secrets = Vec::new();
+        let password = format!("{}{}", nonce(), nonce());
+        let secrets = vec![password.clone()];
+        config.push_str(&test_accounts(&password, contracts));
         if contracts {
             let binary = process::executable(&std::env::var("ROSTFREI_NATS_SERVER").unwrap_or("nats-server".into()))
                 .context("contract tests require native NATS: set ROSTFREI_NATS_SERVER to a cached nats-server binary")?;
-            let password = format!("{}{}", nonce(), nonce());
-            config.push_str(&format!(
-                "\nauthorization {{ user: \"contract-tests\", password: \"{password}\" }}\n"
-            ));
             env.insert(
                 "ROSTFREI_CONTRACT_NATS_USER".into(),
                 "contract-tests".into(),
@@ -135,7 +149,6 @@ impl Broker {
                 "ROSTFREI_CONTRACT_EVIDENCE_DIR".into(),
                 private.path().display().to_string(),
             );
-            secrets.push(password);
         }
         let config_path = private.path().join("nats.conf");
         private_write(&config_path, config.as_bytes())?;
@@ -181,10 +194,15 @@ impl Broker {
             )?)?;
             let port = mapped_port(&ports, "4222/tcp")?;
             wait_ready(mapped_port(&ports, "8222/tcp")?, ready_timeout)?;
-            let auth = broker
-                .secrets
-                .first()
-                .map_or(String::new(), |p| format!("contract-tests:{p}@"));
+            let auth = if contracts {
+                format!("contract-tests:{password}@")
+            } else {
+                String::new()
+            };
+            broker.env.insert(
+                "ROSTFREI_INVENTORY_NATS_URL".into(),
+                format!("nats://inventory:{password}@127.0.0.1:{port}"),
+            );
             broker.env.insert(
                 "ROSTFREI_NATS_URL".into(),
                 format!("nats://{auth}127.0.0.1:{port}"),
@@ -301,7 +319,7 @@ pub fn native(binary: PathBuf, evidence: PathBuf, command: Vec<String>) -> Resul
     let monitor = self::port()?;
     let password = nonce();
     let config = run.join("nats.conf");
-    private_write(&config, format!("host: \"127.0.0.1\"\nport: {port}\nhttp: \"127.0.0.1:{monitor}\"\nmax_payload: 2113536\nauthorization {{ user: \"contract-tests\", password: \"{password}\" }}\njetstream {{ store_dir: {:?} }}\n", run.join("jetstream")).as_bytes())?;
+    private_write(&config, format!("host: \"127.0.0.1\"\nport: {port}\nhttp: \"127.0.0.1:{monitor}\"\nmax_payload: 2113536\njetstream {{ store_dir: {:?} }}\n{}", run.join("jetstream"), test_accounts(&password, true)).as_bytes())?;
     let mut env = environment();
     limits(&mut env);
     let toolchain = versions::read(&root().join("rust-toolchain.toml"))?["toolchain"]["channel"]
@@ -351,6 +369,10 @@ pub fn native(binary: PathBuf, evidence: PathBuf, command: Vec<String>) -> Resul
             format!("nats://contract-tests:{password}@127.0.0.1:{port}"),
         ),
         ("ROSTFREI_CONTRACT_NATS_USER", "contract-tests".into()),
+        (
+            "ROSTFREI_INVENTORY_NATS_URL",
+            format!("nats://inventory:{password}@127.0.0.1:{port}"),
+        ),
         ("ROSTFREI_CONTRACT_NATS_PASSWORD", password.clone()),
         (
             "ROSTFREI_CONTRACT_NATS_BINARY",

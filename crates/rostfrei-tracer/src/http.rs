@@ -197,6 +197,10 @@ pub fn router(tracer: Tracer, config: HttpConfig) -> Router {
             get(correlation_events),
         );
     let inspection_routes = Router::new()
+        .route("/inventory/infrastructure", get(get_infrastructure))
+        .route("/inventory/domain", get(get_domain_inventory))
+        .route("/inventory/servers", get(get_servers))
+        .route("/inventory/workloads", get(get_workloads))
         .route("/quarantine/production", get(get_production_quarantine))
         .route(
             "/quarantine/production/{record_id}",
@@ -231,6 +235,10 @@ async fn get_catalog(State(state): State<HttpState>, headers: HeaderMap) -> Resp
     let mut catalog = state.tracer.catalog().clone();
     match capability(&state.config, &headers) {
         Some(Capability::Control) => {
+            catalog.infrastructure = None;
+            catalog.domain_inventory = None;
+            catalog.servers = None;
+            catalog.workloads = None;
             catalog.correlations = None;
             catalog
                 .observation
@@ -277,6 +285,66 @@ async fn get_tests(State(state): State<HttpState>) -> Response {
         Ok(definitions) => private_no_store(Json(definitions).into_response()),
         Err(error) => test_repository_error_response(&error),
     }
+}
+
+async fn get_domain_inventory(State(state): State<HttpState>) -> Response {
+    state
+        .tracer
+        .domain_inventory()
+        .map_or_else(inventory_not_configured, |inventory| {
+            Json(inventory).into_response()
+        })
+}
+
+async fn get_infrastructure(State(state): State<HttpState>) -> Response {
+    match state.tracer.infrastructure_snapshot().await {
+        Ok(Some(snapshot)) => Json(snapshot).into_response(),
+        Ok(None) => inventory_not_configured(),
+        Err(reason) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody {
+                code: "inventory-unavailable",
+                message: reason.to_owned(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_servers(State(state): State<HttpState>) -> Response {
+    match state.tracer.server_snapshot().await {
+        Ok(Some(snapshot)) => Json(snapshot).into_response(),
+        Ok(None) => inventory_not_configured(),
+        Err(reason) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody {
+                code: "inventory-unavailable",
+                message: reason.to_owned(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_workloads(State(state): State<HttpState>) -> Response {
+    state
+        .tracer
+        .workload_memory_snapshot()
+        .await
+        .map_or_else(inventory_not_configured, |snapshot| {
+            Json(snapshot).into_response()
+        })
+}
+
+fn inventory_not_configured() -> Response {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ErrorBody {
+            code: "inventory-not-configured",
+            message: "This host has no source configured for this inventory.".into(),
+        }),
+    )
+        .into_response()
 }
 
 #[allow(clippy::result_large_err)]

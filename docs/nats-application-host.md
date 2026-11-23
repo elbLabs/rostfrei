@@ -31,6 +31,106 @@ configuration. Payloads are redacted unless a policy is explicitly supplied.
 Catalog v1 advertises fixture v1 and behavioral-definition v2 discovery links.
 Repository validation, execution and evidence use the existing Tracer engines.
 
+### Studio operational inventory
+
+Studio reads one Tracer API endpoint. Each optional inventory is a `snapshotHref`
+in that endpoint's **inspection** catalog. These GETs also work on an
+inspection-only router; Control and Dispatch credentials do not authorize them.
+
+| Catalog entry | Source | Question it answers |
+| --- | --- | --- |
+| `infrastructure` | Configured JetStream accounts | How much memory/storage is in use? Which streams, KV buckets and consumers are visible, paused or backed up? |
+| `servers` | Configured NATS monitoring endpoints | Does this server report healthy? What are its process RSS, uptime, version and reported JetStream limits? |
+| `workloads` | Explicitly mapped container memory source | What memory is charged to the read model's container and what is its limit? See [projection storage and workload bindings](read-models/nats.mdx). |
+| `domainInventory` | Linked model, registry and explicit projection declarations | Which contexts, aggregates, entities, policies, operations and read models does this host declare? |
+
+```rust,ignore
+use rostfrei::tracer::broker_operations::{NatsBrokerOperations, NatsBrokerSource};
+
+let inventory = bindings.studio_domain_inventory()?;
+let accounts = NatsBrokerOperations::new([
+    NatsBrokerSource::connected("Ordering", ordering_connection.clone())?,
+    NatsBrokerSource::configured("Billing", billing_inspection_connection_config)?,
+])?;
+let tracer = TracerConfig::new(listener, http)
+    .with_domain_inventory(inventory)
+    .with_broker_operations(Arc::new(accounts));
+```
+
+The labels identify operator-configured connections/accounts, not discovered
+servers. A connection may fail over between cluster nodes. Grant account-wide
+visibility only to an appropriate audience: even a read-only listing can expose
+another application's stream, bucket and durable names. Use a dedicated reader
+credential with `$JS.API.INFO`, `$JS.API.STREAM.LIST`, `$JS.API.CONSUMER.LIST.<stream>`
+and inbox replies; inspection needs no data-publish, message-read, provision or
+reset permission. Refresh takes a bounded sample; sections can be unavailable,
+timed out or truncated independently. Account memory/file storage and finite
+limits are broker figures. Do not add KV bytes to their backing stream's bytes,
+or treat an account quota as the memory limit of a container.
+
+In **Infrastructure**, open a configured broker source to explore its streams
+and KV buckets. Open a stream to see its consumers; select the current source,
+stream or another resource to inspect its readings. Configured NATS nodes are
+shown separately because a client connection does not identify a server.
+In **Read models**, selecting a projection shows its policy and any mapped
+container memory. A link leads to its declared KV store, where Studio shows
+broker usage only when both bucket and backing stream match on the named source.
+A declaration does not prove the store exists, and a partial listing cannot
+establish absence. Close a details overlay with **Esc** or its close button;
+exploring or inspecting cards does not take another sample.
+
+To sample individual nodes, pass a `server_monitoring::NatsServerMonitor` with
+one `NatsServerMonitorSource::new(label, base_url)?` per **server** to
+`with_server_monitoring`. Configure a private HTTP(S) monitoring endpoint, not
+a cluster load balancer. Only the host contacts `/healthz` and `/varz`; each
+probe has its own outcome. Studio sees labels and selected metrics, never raw
+monitoring responses. Bike-rental accepts a single `ROSTFREI_NATS_MONITOR_URL`.
+
+The domain inventory is built without a broker read. `compiledModelAvailable`
+distinguishes a supplied `domain_model!` projection from registry metadata alone.
+Only registered aggregates have `aggregateType`; a compiled root or entity does
+not imply an independently persisted record. Use IDs for joins, not labels.
+In Studio, open **Domain** and choose an aggregate. Its entities and events
+share one canvas. Hover or focus a card to trace its connections. Solid lines
+show membership; dashed lines show explicit field references. Select the card
+to see its fields and declared Rust types.
+For a command, choose its bounded
+context and expand **Registered commands**, then its version. These are modeled
+payload types: `PaymentId` is a type name, not a claim about the JSON encoding
+or a link to a payment aggregate. Closing the overlay keeps your place.
+
+**Read-model storage is an explicit binding.** A `ReadModel` derive or a KV bucket
+alone does not establish that a running service uses that storage. At the
+composition point that configures the projection, supply the actual model policy:
+
+```rust,ignore
+use rostfrei::tracer::domain_inventory::ReadModelDeclaration;
+
+let model = ReadModelDeclaration::from_nats_config::<OrganizationAccess>(&policy)
+    .ok_or("read-model declaration and storage config do not match")?;
+let inventory = bindings.studio_domain_inventory()?
+    .with_read_model(model, Some("Ordering".into()));
+```
+
+The source label binds the stream to a particular account; names can repeat
+across accounts. For a different backend, `ReadModelDeclaration::for_model`
+supplies the logical declaration without claiming a KV budget. Live usage,
+configured capacity, and the maximum size of one stored value are different
+measurements. The inventory never enumerates stored domain instances or KV values.
+
+**Across microservices:** an application-linked catalog describes the code and
+registrations supplied by that host. A bounded context is not a service replica.
+Point a Studio deployment at each service's Tracer for its commands and domain
+declarations, or compose the read-only inventory explicitly on an inspection
+host. Use separate credentials and Studio origins for independent services
+(saved development runs are browser-local). One inspection host can sample
+several configured brokers. For retained correlations **within one application**,
+register the participating Normal context stores on a shared connection as
+described below. Tracer does not crawl peers, merge unrelated correlation IDs,
+or route commands to services inferred from stream names. The standalone
+`TracerBuilder` accepts the same inventory and reader without starting Test
+workers; the `NatsApplication` convenience host still owns a Test runtime.
+
 ### Continuous external-flow observation
 
 Use the same feed API as `TracerBuilder` on the host's `TracerConfig`:
@@ -167,11 +267,15 @@ the released durable generation `2`. Changing a command payload schema does not
 change its subscription. Both modes seed Normal state through idempotent
 `RegisterBicycle` commands. Named fixtures are reserved for isolated Test state.
 
-Set `ROSTFREI_NATS_URL`. For Tracer also set `ROSTFREI_API_TOKEN` and the separately
-configured `ROSTFREI_DISPATCH_TOKEN`; optional `ROSTFREI_INSPECTION_TOKEN` enables
-production inspection. `ROSTFREI_API_ADDR` defaults to `127.0.0.1:1309`.
-With `--tracer`, bike-rental configures both Test and Production observation feeds;
-Production Observe requires the inspection token.
+Set `ROSTFREI_NATS_URL`. For Tracer also set `ROSTFREI_API_TOKEN` for isolated Test
+control. Set `ROSTFREI_INSPECTION_TOKEN` to enable production inspection, and set
+`ROSTFREI_DISPATCH_TOKEN` only if production command dispatch is wanted. Use
+distinct tokens. `ROSTFREI_API_ADDR` defaults to `127.0.0.1:1309`.
+The example includes its compiled domain inventory. Set `ROSTFREI_INSPECT_BROKER=true`
+to additionally expose metadata from its NATS account to the inspection capability.
+Bike-rental does not declare a KV-backed read model; it will not invent one for Studio.
+With `--tracer`, bike-rental configures both Test and Production observation feeds.
+Reading production traffic requires the inspection token.
 Existing `ROSTFREI_NATS_*_MAX_BYTES` limits remain supported. With Tracer disabled,
 HTTP and correlation-observer workers are absent and HTTP tokens are unnecessary.
 

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react"
-import { ArrowLeft, Check, Copy, ScanSearch, X } from "lucide-react"
+import { ArrowLeft, Check, Copy, ScanSearch } from "lucide-react"
 import { EvidenceDisclosure } from "@rostfrei/ui/evidence"
 import type { ReactNode } from "react"
 
+import { InspectorFrame } from "@/components/inspector-frame"
 import { Button } from "@/components/ui/button"
 import { kindLabels, messageState } from "@/lib/message-presentation"
 import type { FlowView, MessageGraphNode } from "@/lib/types"
@@ -29,11 +30,20 @@ export function MessageInspector({
   onBack,
 }: MessageInspectorProps) {
   return (
-    <aside
+    <InspectorFrame
       className="message-inspector"
-      aria-label="Message details"
+      label="Message details"
       tabIndex={-1}
       hidden={hidden}
+      back={
+        <Button className="inspector-back" variant="ghost" onClick={onBack}>
+          <ArrowLeft /> Back to flow
+        </Button>
+      }
+      close={
+        closable ? { label: "Close inspector", onClick: onBack } : undefined
+      }
+      headingIcon={<ScanSearch size={16} aria-hidden="true" />}
       onKeyDown={(event) => {
         if (event.key === "Escape" && closable) {
           event.preventDefault()
@@ -41,28 +51,9 @@ export function MessageInspector({
         }
       }}
     >
-      <div className="inspector-heading">
-        <Button className="inspector-back" variant="ghost" onClick={onBack}>
-          <ArrowLeft /> Back to flow
-        </Button>
-        <span>Message details</span>
-        {closable ? (
-          <Button
-            className="inspector-close"
-            variant="ghost"
-            size="icon"
-            onClick={onBack}
-            aria-label="Close inspector"
-          >
-            <X />
-          </Button>
-        ) : (
-          <ScanSearch size={16} aria-hidden="true" />
-        )}
-      </div>
       {node ? (
         <div className="inspector-scroll" key={node.id}>
-          <header className="inspector-message-heading">
+          <header className="inspector-content-heading inspector-message-heading">
             <span className={`message-kind kind-${node.kind}`}>
               {kindLabels[node.kind]}
             </span>
@@ -210,7 +201,7 @@ export function MessageInspector({
           </p>
         </div>
       )}
-    </aside>
+    </InspectorFrame>
   )
 }
 

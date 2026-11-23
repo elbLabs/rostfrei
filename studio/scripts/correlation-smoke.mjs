@@ -184,9 +184,11 @@ export async function checkCorrelations() {
       const diagnostics = observePage(page)
       try {
         await page.setViewport({ width: 1440, height: 900 })
-        await page.goto(url, { waitUntil: "domcontentloaded" })
-        await page.waitForSelector(".studio-shell")
-        await page.click('[data-workspace-tab="correlations"]')
+        await page.goto(url, { waitUntil: "networkidle0" })
+        const tab = '[data-workspace-tab="correlations"]'
+        await page.waitForSelector(tab, { visible: true })
+        await page.click(tab)
+        await page.waitForSelector(`${tab}[aria-selected="true"]`)
         await page.waitForSelector(
           '[aria-label="Anchor aggregate type"] option[value="bike-rental/rental-fleet"]'
         )
@@ -751,7 +753,7 @@ async function checkMobileLayouts(page) {
   )
   await page.setViewport({ width: 390, height: 844 })
   if (await page.$('[aria-label="Collapse sidebar"]'))
-    await page.click('[aria-label="Collapse sidebar"]')
+    await page.click('[aria-label="Close correlations panel"]')
   await page.waitForSelector(".message-list")
   assert.equal(
     await page.$$eval(".message-list > li", (nodes) => nodes.length),

@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
-use std::{fs, time::Duration};
+use std::{fs, path::Path, time::Duration};
 
 pub fn new_project() -> Result<()> {
     let mut env = environment();
@@ -198,20 +198,30 @@ pub fn bike_host(studio: bool) -> Result<()> {
         &environment(),
     )?;
     let temporary = tempfile::tempdir()?;
-    let env = live::host_environment("host")?;
-    let mut host = process::background(
-        &process::args(&[
-            &target().join("debug/bike-rental-api").display().to_string(),
-            "--tracer",
-        ]),
-        &root(),
-        &env,
-        &temporary.path().join("host.log"),
-    )?;
+    let command = process::args(&[
+        &target().join("debug/bike-rental-api").display().to_string(),
+        "--tracer",
+    ]);
+    check_default_broker_inventory(&command, temporary.path())?;
+    let mut env = live::host_environment("host")?;
+    env.insert("ROSTFREI_INSPECT_BROKER".into(), "true".into());
+    let mut host =
+        process::background(&command, &root(), &env, &temporary.path().join("host.log"))?;
     let result = (|| {
         let catalog = live::ready(&mut host, &env, Duration::from_secs(45))?;
         let mut client = Capabilities::new(&env, temporary.path())?;
         client.discover()?;
+        let inspection = &client.catalogs["production"];
+        let infrastructure_href = text(&inspection["infrastructure"]["snapshotHref"])
+            .context("inspection catalog must advertise opted-in broker inventory")?;
+        let domain_href = text(&inspection["domainInventory"]["snapshotHref"])
+            .context("inspection catalog must advertise opted-in domain inventory")?;
+        ensure!(
+            infrastructure_href == "/inventory/infrastructure"
+                && domain_href == "/inventory/domain",
+            "unexpected inventory routes in the inspection catalog"
+        );
+        let before_dispatch = normal_inventory_counts(&client, infrastructure_href)?;
         let dispatch = |name: &str, key: &str, expected: &str| -> Result<()> {
             let command = array(&catalog["contexts"])?
                 .iter()
@@ -231,6 +241,28 @@ pub fn bike_host(studio: bool) -> Result<()> {
             "direct rental must not be advertised"
         );
         dispatch("register-bicycle", "normal-before-test-reset", "accepted")?;
+        let before_inventory = normal_inventory_counts(&client, infrastructure_href)?;
+        ensure!(
+            before_inventory[0] > before_dispatch[0],
+            "production journal sample did not reflect the committed registration"
+        );
+        check_domain_inventory(&client, domain_href)?;
+        for (capability, href) in [
+            ("infrastructure", infrastructure_href),
+            ("domainInventory", domain_href),
+        ] {
+            ensure!(
+                catalog.get(capability).is_none(),
+                "Test catalog leaked {capability}"
+            );
+            for scope in ["test", "dispatch"] {
+                client.request(href, scope, None, 403, None, None)?;
+            }
+        }
+        ensure!(
+            normal_inventory_counts(&client, infrastructure_href)? == before_inventory,
+            "inventory reads changed production journal or command results"
+        );
         let definitions =
             client.get(text(&catalog["behavioralTest"]["definitionsHref"])?, "test")?;
         ensure!(
@@ -268,6 +300,10 @@ pub fn bike_host(studio: bool) -> Result<()> {
                 "VITE_TRACER_TOKEN".into(),
                 env["ROSTFREI_API_TOKEN"].clone(),
             );
+            browser.insert(
+                "VITE_TRACER_INSPECTION_TOKEN".into(),
+                env["ROSTFREI_INSPECTION_TOKEN"].clone(),
+            );
             let output = process::run(
                 &[
                     "node",
@@ -293,8 +329,129 @@ pub fn bike_host(studio: bool) -> Result<()> {
     result?;
     ensure!(stopped? == 0, "host shutdown failed");
     println!(
-        "Application-linked host suite, Normal preservation and shutdown passed ({})",
+        "Application-linked host suite, inventory inspection, Normal preservation and shutdown passed ({})",
         nonce()
     );
+    Ok(())
+}
+
+fn check_default_broker_inventory(command: &[String], temporary: &Path) -> Result<()> {
+    let mut env = live::host_environment("host-default")?;
+    env.remove("ROSTFREI_INSPECT_BROKER");
+    env.remove("ROSTFREI_DISPATCH_TOKEN");
+    let log = temporary.join("host-default.log");
+    let mut host = process::background(command, &root(), &env, &log)?;
+    let result = (|| {
+        let control = live::ready(&mut host, &env, Duration::from_secs(45))?;
+        ensure!(
+            !serde_json::to_string(&control)?.contains("\"dispatchHrefTemplate\""),
+            "Dispatch was advertised without an installed credential"
+        );
+        let client = Capabilities::new(&env, temporary)?;
+        let catalog = client.get("/catalog", "production")?;
+        ensure!(
+            catalog.get("infrastructure").is_none(),
+            "bike-rental advertised broker inventory without explicit opt-in"
+        );
+        client.request(
+            "/inventory/infrastructure",
+            "production",
+            None,
+            501,
+            None,
+            None,
+        )?;
+        Ok::<_, anyhow::Error>(())
+    })();
+    let stopped = host.stop(Duration::from_secs(50));
+    if result.is_err() {
+        eprintln!("{}", fs::read_to_string(log).unwrap_or_default());
+    }
+    result?;
+    ensure!(stopped? == 0, "default host shutdown failed");
+    Ok(())
+}
+
+fn normal_inventory_counts(client: &Capabilities, href: &str) -> Result<[u64; 2]> {
+    let snapshot = client.get(href, "production")?;
+    // Use the unique application name from this host, not arbitrary streams in
+    // the sampled broker account. Normal has no scope segment in its stream names.
+    let prefix = format!(
+        "{}__BIKE_RENTAL",
+        client.application.replace('-', "_").to_ascii_uppercase()
+    );
+    let journal = format!("{prefix}__JOURNAL");
+    let results = format!("{prefix}__COMMAND_RESULTS");
+    for source in array(&snapshot["sources"])? {
+        if source["connection"] != "connected" || source["streams"]["status"] != "complete" {
+            continue;
+        }
+        let streams = array(&source["streams"]["items"])?;
+        let find = |name: &str| streams.iter().find(|stream| stream["name"] == name);
+        if let (Some(journal), Some(results)) = (find(&journal), find(&results)) {
+            return Ok([
+                journal["messages"]
+                    .as_u64()
+                    .context("production journal message count")?,
+                results["messages"]
+                    .as_u64()
+                    .context("production command results message count")?,
+            ]);
+        }
+    }
+    anyhow::bail!("inventory did not sample {journal} and {results} from the connected broker")
+}
+
+fn check_domain_inventory(client: &Capabilities, href: &str) -> Result<()> {
+    let snapshot = client.get(href, "production")?;
+    let fleet_id = json!({"context":"bike-rental","local":"rental-fleet"});
+    ensure!(
+        snapshot["compiledModelAvailable"] == true
+            && array(&snapshot["aggregates"])?
+                .iter()
+                .any(|aggregate| aggregate["id"] == fleet_id
+                    && aggregate["aggregateType"] == "bike-rental/rental-fleet"
+                    && aggregate["root"]["local"] == "rental-fleet-root")
+            && array(&snapshot["entities"])?
+                .iter()
+                .any(|entity| entity["id"]["aggregate"] == fleet_id
+                    && entity["id"]["local"] == "bicycle")
+            && array(&snapshot["registeredCommands"])?
+                .iter()
+                .any(|command| command["context"] == "bike-rental"
+                    && command["name"] == "register-bicycle"),
+        "domain inventory missing the compiled fleet graph or its runtime registrations"
+    );
+    for (group, id, field, declared_type) in [
+        ("entities", "bicycle", "category", "Option<BicycleCategory>"),
+        (
+            "domainEvents",
+            "bicycle-collection-requested",
+            "payment_id",
+            "PaymentId",
+        ),
+        (
+            "registeredCommands",
+            "register-bicycle",
+            "bicycle_id",
+            "BicycleId",
+        ),
+    ] {
+        let declaration = array(&snapshot[group])?
+            .iter()
+            .find(|entry| {
+                (entry["id"]["aggregate"] == fleet_id && entry["id"]["local"] == id)
+                    || (entry["context"] == "bike-rental"
+                        && entry["name"] == id
+                        && entry["schemaVersion"] == 2)
+            })
+            .with_context(|| format!("missing declaration for {id}"))?;
+        ensure!(
+            array(&declaration["fields"])?
+                .iter()
+                .any(|row| row["name"] == field && row["declaredType"] == declared_type),
+            "missing declared type {declared_type} for {id}.{field}"
+        );
+    }
     Ok(())
 }

@@ -105,7 +105,7 @@ fn fixture_overrides_inherited_credentials_preserves_exit_and_cleans_its_contain
         fs::write(&docker,r#"#!/bin/sh
 echo "$*" >> "$FIXTURE/log"
 case "$1" in
-run) for arg in "$@"; do case "$arg" in type=bind,src=*) config=${arg#type=bind,src=}; config=${config%,dst=*}; cp "$config" "$FIXTURE/config"; stat -c %a "$config" > "$FIXTURE/mode";; esac; done;;
+run) for arg in "$@"; do case "$arg" in type=bind,src=*) config=${arg#type=bind,src=}; config=${config%,dst=*}; cp -p "$config" "$FIXTURE/config";; esac; done;;
 inspect) printf '{"4222/tcp":[{"HostIp":"127.0.0.1","HostPort":"14222"}],"8222/tcp":[{"HostIp":"127.0.0.1","HostPort":"%s"}]}' "$MONITOR";;
 logs) cat "$FIXTURE/config" >&2;;
 rm) if [ "$FAIL_CLEANUP" = 1 ]; then exit 9; fi;;
@@ -134,7 +134,7 @@ esac
             .unwrap();
         });
         let child = temp.path().join("child");
-        fs::write(&child,format!("#!/bin/sh\nprintf '%s\\n' \"$ROSTFREI_NATS_URL\" \"$ROSTFREI_CONTRACT_NATS_PASSWORD\"\nprintf '%s' \"$ROSTFREI_CONTRACT_EVIDENCE_DIR\" > \"$FIXTURE/evidence\"\nexit {code}\n")).unwrap();
+        fs::write(&child,format!("#!/bin/sh\nprintf '%s\\n' \"$ROSTFREI_NATS_URL\" \"$ROSTFREI_INVENTORY_NATS_URL\" \"$ROSTFREI_CONTRACT_NATS_PASSWORD\"\nprintf '%s' \"$ROSTFREI_CONTRACT_EVIDENCE_DIR\" > \"$FIXTURE/evidence\"\nexit {code}\n")).unwrap();
         fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
         let result = Command::new(env!("CARGO_BIN_EXE_xtask"))
             .args(["test", "--contracts", "--", child.to_str().unwrap()])
@@ -151,6 +151,7 @@ esac
             .env("MONITOR", port.to_string())
             .env("ROSTFREI_NATS_SERVER", std::env::current_exe().unwrap())
             .env("ROSTFREI_NATS_URL", "nats://do-not-use:4222")
+            .env("ROSTFREI_INVENTORY_NATS_URL", "nats://do-not-use:4222")
             .env("ROSTFREI_CONTRACT_NATS_PASSWORD", "inherited-password")
             .env("ROSTFREI_CONTRACT_EVIDENCE_DIR", "/do-not-use")
             .output()
@@ -169,6 +170,7 @@ esac
             output.contains("nats://contract-tests:[redacted]@127.0.0.1:14222"),
             "{output}"
         );
+        assert!(output.contains("nats://inventory:[redacted]@127.0.0.1:14222"));
         let config = fs::read_to_string(temp.path().join("config")).unwrap();
         let password = config
             .split("password: \"")
@@ -180,8 +182,12 @@ esac
         assert!(!output.contains(password));
         assert_ne!(password, "inherited-password");
         assert_eq!(
-            fs::read_to_string(temp.path().join("mode")).unwrap().trim(),
-            "600"
+            fs::metadata(temp.path().join("config"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
         );
         assert!(
             !std::path::Path::new(&fs::read_to_string(temp.path().join("evidence")).unwrap())

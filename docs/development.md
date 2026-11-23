@@ -50,6 +50,9 @@ default workspace command enables contract setup automatically.
 Shared-broker tests are non-ignored. Direct Cargo runs that include them require
 an explicit, nonempty `ROSTFREI_NATS_URL`; missing configuration is an error.
 Use a disposable broker because the tests provision and remove streams.
+For the account-wide broker inventory contracts, the runner also supplies
+`ROSTFREI_INVENTORY_NATS_URL` for a separate disposable account. This keeps
+unrelated suites' streams from filling its bounded inventory.
 
 Broker-free checks include:
 

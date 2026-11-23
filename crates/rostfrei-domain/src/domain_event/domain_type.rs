@@ -1,10 +1,11 @@
 use super::DomainEventDescriptor;
-use crate::{AggregateType, DomainEventId, FieldDescriptor};
+use crate::{AggregateType, DeclaredFieldType, DomainEventId, FieldDescriptor};
 
 pub trait DomainEvent: 'static {
     const LOCAL_ID: &'static str;
     const LABEL: &'static str;
     const FIELDS: &'static [FieldDescriptor];
+    const DECLARED_FIELD_TYPES: &'static [DeclaredFieldType] = &[];
     const SCHEMA_VERSION: u32 = 1;
 }
 

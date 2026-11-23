@@ -46,6 +46,8 @@ impl Host {
                         continue;
                     }
                 };
+                // On macOS accepted sockets can inherit the listener's nonblocking mode.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();

@@ -1,18 +1,24 @@
 mod behavioral;
 mod bindings;
+pub mod broker_operations;
 mod catalog;
 mod command_bus;
 mod correlation;
 mod correlation_view;
+pub mod domain_inventory;
 mod handler_simulation;
 mod input;
+mod inventory;
+pub use inventory::{StudioDomainInventory, StudioReadModel};
 mod message_series;
 mod observation;
 mod operation;
 mod quarantine;
 mod runtime;
+pub mod server_monitoring;
 mod service;
 pub mod transport;
+pub mod workload_memory;
 
 #[cfg(feature = "nats-host")]
 mod nats_host;
@@ -38,8 +44,9 @@ pub use behavioral::{
 pub use catalog::{
     AggregateInstanceCollection, AggregateInstanceSummary, CatalogAggregate, CatalogAnchor,
     CatalogBehavioralTest, CatalogCommand, CatalogCommandVersion, CatalogContext,
-    CatalogCorrelations, CatalogQuarantine, CatalogQuarantineScope, CatalogTestRepository,
-    CatalogTestScenario, TestFixtureCollection, TestFixtureSummary, TracerCatalog,
+    CatalogCorrelations, CatalogInventory, CatalogQuarantine, CatalogQuarantineScope,
+    CatalogTestRepository, CatalogTestScenario, TestFixtureCollection, TestFixtureSummary,
+    TracerCatalog,
 };
 pub use command_bus::CommandBusTransport;
 pub use correlation::{

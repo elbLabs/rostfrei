@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- Tracer Studio brings domain exploration, tests, commands and observation into
+  one navigation. The Domain canvas shows declared ownership; Infrastructure and
+  Read models show configured NATS sources, consumers, memory and storage budgets.
+
 ## [0.2.2] - 2026-11-11
 
 ### Added

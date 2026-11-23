@@ -129,8 +129,8 @@ export function TestPanel({
               </details>
             )}
             <p className="execution-note">
-              Uses the current definition and resets isolated Test state to its
-              fixture.
+              Runs on this host’s isolated Test runtime. Resets its Test state
+              to the selected fixture before sending the command.
             </p>
             <Button className="run-button" type="submit" disabled={!canRun}>
               {running ? <LoaderCircle className="animate-spin" /> : <Play />}

@@ -1,26 +1,27 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 import { createPortal } from "react-dom"
 import { useTheme } from "@rostfrei/ui/theme"
 import {
   ArrowRight,
   CircleDot,
-  Focus,
   GitBranch,
-  Minus,
   PanelRight,
-  Plus,
   Radio,
   Workflow,
 } from "lucide-react"
 import {
-  Background,
-  BackgroundVariant,
   Handle,
   Position,
   ReactFlow,
   getBezierPath,
-  useReactFlow,
-  useViewport,
   type Edge,
   type EdgeProps,
   type Node,
@@ -28,7 +29,9 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react"
 
+import { GraphCard } from "@/components/graph-card"
 import { MessageInspector } from "@/components/message-inspector"
+import { GraphBackground, GraphControls, GraphHeading } from "./graph-tools"
 import { Button } from "@/components/ui/button"
 import {
   layoutMessageGraph,
@@ -50,6 +53,8 @@ import { useMediaQuery } from "@/lib/use-media-query"
 import { cn } from "@/lib/utils"
 
 interface MessageGraphProps {
+  toolbar?: ReactNode
+  summary?: ReactNode
   nodes: MessageGraphNode[]
   view: FlowView
   emptyMessage?: string
@@ -83,6 +88,8 @@ const kindIcons = {
 }
 
 export function MessageGraph({
+  toolbar,
+  summary,
   nodes,
   view,
   emptyMessage,
@@ -95,6 +102,7 @@ export function MessageGraph({
   const [detailsOpen, setDetailsOpen] = useState(false)
   const inspectorVisible = detailsOpen
   const [controlsRoot, setControlsRoot] = useState<HTMLDivElement | null>(null)
+  const chromeRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const mobileTrigger = useRef<HTMLElement | null>(null)
   const [flow, setFlow] = useState<ReactFlowInstance<
@@ -168,20 +176,33 @@ export function MessageGraph({
     [layout.edges]
   )
   const nodeIds = nodes.map((node) => node.id).join("\u0000")
-  const fit = useCallback(() => {
-    if (view !== "running")
-      void flow?.fitView({
-        padding: 0.04,
+  const fit = useCallback(
+    (duration = 0) => {
+      if (!flow || !viewportRef.current || !chromeRef.current) return
+      const viewport = viewportRef.current.getBoundingClientRect()
+      const chrome = chromeRef.current.getBoundingClientRect()
+      // Keep the fitted graph clear of the floating summary without cropping the pane.
+      void flow.fitView({
+        padding: {
+          top: `${chrome.bottom - viewport.top + 12}px`,
+          x: "4%",
+          bottom: "4%",
+        },
         minZoom: 0.2,
         maxZoom: 1,
-        duration: 0,
+        duration,
       })
-  }, [flow, view])
+    },
+    [flow]
+  )
+  const autoFit = useCallback(() => {
+    if (view !== "running") fit()
+  }, [fit, view])
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(fit)
+    const frame = window.requestAnimationFrame(autoFit)
     return () => window.cancelAnimationFrame(frame)
-  }, [fit, nodeIds, compact])
+  }, [autoFit, nodeIds, compact])
 
   useEffect(() => {
     const element = viewportRef.current
@@ -189,14 +210,14 @@ export function MessageGraph({
     let frame = 0
     const observer = new ResizeObserver(() => {
       window.cancelAnimationFrame(frame)
-      frame = window.requestAnimationFrame(fit)
+      frame = window.requestAnimationFrame(autoFit)
     })
     observer.observe(element)
     return () => {
       observer.disconnect()
       window.cancelAnimationFrame(frame)
     }
-  }, [fit, compact])
+  }, [autoFit, compact])
 
   useEffect(() => {
     if (compact && detailsOpen)
@@ -251,16 +272,12 @@ export function MessageGraph({
     <div
       className={cn(
         "graph-workspace",
-        !compact && !inspectorVisible && "inspector-collapsed",
         compact && detailsOpen && "mobile-inspecting"
       )}
     >
-      <section className="flow-panel" aria-label={title}>
-        <header className="flow-heading">
-          <div>
-            <Workflow size={16} />
-            <h2>{title}</h2>
-          </div>
+      <div className="graph-chrome" ref={chromeRef}>
+        {toolbar}
+        <GraphHeading title={title} icon={<Workflow size={16} />}>
           <span>
             {nodes.length - fixtureCount}{" "}
             {nodes.length - fixtureCount === 1 ? "message" : "messages"}
@@ -271,6 +288,9 @@ export function MessageGraph({
               </>
             )}
           </span>
+          {!compact && nodes.length > 0 && (
+            <div className="graph-controls-slot" ref={setControlsRoot} />
+          )}
           {!compact && (
             <Button
               className="inspector-toggle"
@@ -294,7 +314,10 @@ export function MessageGraph({
               <PanelRight /> Details
             </Button>
           )}
-        </header>
+        </GraphHeading>
+        {summary}
+      </div>
+      <section className="flow-panel" aria-label={title}>
         <div className="message-graph" ref={viewportRef}>
           {nodes.length === 0 ? (
             <div className="graph-empty">
@@ -367,13 +390,12 @@ export function MessageGraph({
               zoomOnDoubleClick={false}
               proOptions={{ hideAttribution: true }}
             >
-              <Background
-                variant={BackgroundVariant.Dots}
-                gap={20}
-                size={1.2}
-                color="var(--canvas-dot)"
-              />
-              <GraphControls container={controlsRoot} />
+              <GraphBackground />
+              {controlsRoot &&
+                createPortal(
+                  <GraphControls onFit={() => fit(150)} />,
+                  controlsRoot
+                )}
             </ReactFlow>
           )}
           {overlayInspector && inspector}
@@ -407,9 +429,6 @@ export function MessageGraph({
                 : "grouped capture"}
               {capture.settled ? "" : " / partial"}
             </span>
-          )}
-          {!compact && (
-            <div className="graph-controls-slot" ref={setControlsRoot} />
           )}
         </footer>
       </section>
@@ -465,24 +484,13 @@ function MessageCard({
 }) {
   const Icon = kindIcons[node.kind]
   return (
-    <button
-      type="button"
-      className={cn(
-        "message-card nodrag nopan",
-        `message-card-${node.kind}`,
-        selected && "message-card-selected",
-        node.context && "message-card-fixture"
-      )}
-      onClick={() => onSelect(node.id)}
-      aria-label={`${kindLabels[node.kind]} ${node.name}`}
-      aria-pressed={selected}
-      data-message-id={node.id}
-    >
-      <span className="message-card-kind">
-        <Icon size={13} />
-        {kindLabels[node.kind]}
-        {node.context && <span className="fixture-tag">Fixture</span>}
-        {!node.context && view === "retained" && node.boundedContext && (
+    <GraphCard
+      kind={kindLabels[node.kind]}
+      icon={<Icon size={13} />}
+      kindTag={
+        node.context ? (
+          <span className="fixture-tag">Fixture</span>
+        ) : view === "retained" && node.boundedContext ? (
           <span
             className="context-tag"
             data-context-tone={contextTone}
@@ -490,26 +498,21 @@ function MessageCard({
           >
             {node.boundedContext}
           </span>
-        )}
-      </span>
-      <strong className="message-card-name" title={node.name}>
-        {node.name}
-      </strong>
-      <span className="message-card-facts">
-        {messageFacts(node, view).map(([key, value]) => (
-          <span key={key} title={`${key}: ${value}`}>
-            <span>{key}</span> <b>{value}</b>
-          </span>
-        ))}
-      </span>
-      <span
-        className="message-card-footer"
-        data-status={view === "expected" || node.context ? "idle" : node.status}
-      >
-        {messageState(node, view)}
-        <span aria-hidden="true">↗</span>
-      </span>
-    </button>
+        ) : null
+      }
+      label={node.name}
+      facts={messageFacts(node, view)}
+      footer={messageState(node, view)}
+      footerStatus={view === "expected" || node.context ? "idle" : node.status}
+      className={cn(
+        `message-card-${node.kind}`,
+        node.context && "message-card-fixture"
+      )}
+      onClick={() => onSelect(node.id)}
+      accessibleLabel={`${kindLabels[node.kind]} ${node.name}`}
+      selected={selected}
+      attributes={{ "data-message-id": node.id }}
+    />
   )
 }
 
@@ -566,48 +569,4 @@ function MessageEdge({
       />
     </g>
   )
-}
-
-function GraphControls({ container }: { container: HTMLDivElement | null }) {
-  const { fitView, zoomIn, zoomOut } = useReactFlow()
-  const { zoom } = useViewport()
-  return container
-    ? createPortal(
-        <div className="graph-controls nodrag nopan nowheel">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => void zoomOut({ duration: 150 })}
-            aria-label="Zoom out"
-          >
-            <Minus />
-          </Button>
-          <span className="graph-zoom-value">{Math.round(zoom * 100)}%</span>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => void zoomIn({ duration: 150 })}
-            aria-label="Zoom in"
-          >
-            <Plus />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() =>
-              void fitView({
-                padding: 0.04,
-                minZoom: 0.2,
-                maxZoom: 1,
-                duration: 150,
-              })
-            }
-            aria-label="Fit graph to view"
-          >
-            <Focus />
-          </Button>
-        </div>,
-        container
-      )
-    : null
 }

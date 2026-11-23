@@ -142,6 +142,28 @@ async fn external_events_stream_without_operations_and_remain_scope_isolated() -
 }
 
 #[tokio::test]
+async fn operational_inventory_requires_inspection_and_an_explicit_source() -> TestResult {
+    let app = app(tracer(false)?)?;
+    let (_, catalog) = get(&app, "/catalog", "inspection").await?;
+    assert!(catalog.get("infrastructure").is_none());
+    assert!(catalog.get("domainInventory").is_none());
+    for path in ["/inventory/infrastructure", "/inventory/domain"] {
+        for token in ["control", "dispatch"] {
+            assert_eq!(get(&app, path, token).await?.0, StatusCode::FORBIDDEN);
+        }
+        assert_eq!(
+            get(&app, path, "unrecognized").await?.0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            get(&app, path, "inspection").await?.0,
+            StatusCode::NOT_IMPLEMENTED
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn production_discovery_and_all_resources_require_inspection_capability() -> TestResult {
     let tracer = tracer(false)?;
     let observer = tracer.correlation_observer(OperationMode::Dispatch);

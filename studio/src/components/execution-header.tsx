@@ -1,6 +1,5 @@
 import { Check, LoaderCircle, TriangleAlert } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import type { FlowView, MessageGraphNode, StoredRun } from "@/lib/types"
 
 export function ExecutionHeader({
@@ -12,7 +11,6 @@ export function ExecutionHeader({
   canRun,
   connected,
   error,
-  onInspect,
 }: {
   name?: string
   run?: StoredRun
@@ -22,7 +20,6 @@ export function ExecutionHeader({
   canRun: boolean
   connected: boolean
   error?: string
-  onInspect: () => void
 }) {
   const root =
     nodes.find((node) => node.subject === true) ??
@@ -70,13 +67,6 @@ export function ExecutionHeader({
       <div className="execution-title-row">
         <div>
           <h1 title={name}>{name ?? "Loading test"}</h1>
-        </div>
-        <div className="execution-actions">
-          {run && (
-            <Button variant="ghost" onClick={onInspect}>
-              Run summary
-            </Button>
-          )}
         </div>
       </div>
       {status && (

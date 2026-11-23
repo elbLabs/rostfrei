@@ -133,6 +133,41 @@ TTL controls retention, not business freshness. Expiring a joined model removes
 all its source contributions and checkpoints. Reconstruct every contributing source
 before treating a recreated value as complete.
 
+To inspect this model's declared budget and current backing-stream usage in
+Studio, register this same policy with the host's
+[operational inventory](../nats-application-host.md#studio-operational-inventory).
+
+### Optional container memory in Studio
+
+Map the declaration to a public workload label and give Tracer the absolute
+directory for that container's cgroup v2, as visible to the Tracer process:
+
+```rust,ignore
+use std::sync::Arc;
+use rostfrei::tracer::{StudioReadModel, TracerConfig};
+use rostfrei::tracer::domain_inventory::ReadModelDeclaration;
+use rostfrei::tracer::workload_memory::CgroupV2Workloads;
+
+let declaration = ReadModelDeclaration::from_nats_config::<OrganizationAccess>(&policy)
+    .ok_or("read-model declaration and storage config do not match")?;
+let inventory = bindings.studio_domain_inventory()?.with_studio_read_model(
+    StudioReadModel::new(declaration, None).with_workload("access-worker"),
+);
+let memory = CgroupV2Workloads::new([("access-worker", operator_cgroup_directory)])?;
+let tracer = TracerConfig::new(listener, http)
+    .with_domain_inventory(inventory)
+    .with_workload_memory(Arc::new(memory));
+```
+
+Pass a broker source label instead of `None` to join live KV usage as well.
+Memory is a point-in-time, shared container sample, not projection heap usage
+or a KV budget. Several declarations can use the same label. Tracer reads only
+`memory.current` and `memory.max`; `max` means no limit at that cgroup, not that
+ancestors are unlimited. Missing or unreadable files are reported as unavailable.
+The inspection-only snapshot samples up to 32 distinct mapped labels. It never
+returns file paths or discovers containers. A separate inspection host can supply
+a different `WorkloadMemorySource`, such as a metrics-service adapter.
+
 ## Storage behavior
 
 The runtime uses the transport-neutral `ReadModelStore<T>` contract:

@@ -191,6 +191,7 @@ export interface CatalogCommandVersion {
 export interface CatalogCommandField {
   name: string
   value: CatalogFieldValue
+  declaredType?: string
 }
 
 export type CatalogScalar =

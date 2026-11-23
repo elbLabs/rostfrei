@@ -29,7 +29,7 @@ pub use command::{Command, CommandDescriptor};
 pub use domain_error::{DomainError, DomainErrorDescriptor, DomainErrorId};
 pub use domain_event::{DomainEvent, DomainEventDescriptor, DomainEventId, DomainEventType};
 pub use domain_identity::{DomainIdentity, DomainIdentityId};
-pub use domain_model::{DomainModelError, DomainModelReference};
+pub use domain_model::{DomainModelError, DomainModelReference, project_fields};
 pub use domain_query::{QueryDescriptor, QueryId};
 pub use domain_service::{
     DomainServiceDefinition, DomainServiceDescriptor, DomainServiceId, DomainServiceType,
@@ -43,8 +43,8 @@ pub use entity_lifecycle::{
     StateTransitionDescriptor, StateTransitionEdge,
 };
 pub use field::{
-    FieldDescriptor, FieldKind, FieldValue, FieldWrapper, ScalarType, SemanticScalar,
-    SemanticScalarDescriptor,
+    DeclaredFieldType, FieldDescriptor, FieldKind, FieldValue, FieldWrapper, ScalarType,
+    SemanticScalar, SemanticScalarDescriptor,
 };
 pub use invariant::{InvariantDescriptor, InvariantId, InvariantViolation};
 pub use json_wire::{JsonCommandPayload, JsonErrorPayload};

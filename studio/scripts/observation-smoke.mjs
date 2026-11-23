@@ -39,26 +39,22 @@ export async function checkContinuousObservation() {
     await page.setViewport({ width: 1440, height: 900 })
     await page.goto(url, { waitUntil: "networkidle0" })
     await page.waitForSelector(
-      '[data-tracer-source="live"], [data-tracer-source="disconnected"]'
+      '[data-workspace-tab="domain"][aria-selected="true"]'
     )
-    assert.equal(
-      await page.$eval(
-        "[data-tracer-source]",
-        (element) => element.dataset.tracerSource
-      ),
-      "live",
-      await page.$eval(".studio-heading", (element) => element.textContent)
-    )
+    assert.equal(await page.$('[aria-label="Studio mode"]'), null)
     assert.deepEqual(errors, [])
     await page.click('[data-workspace-tab="observation"]')
-    await page.waitForSelector('[data-observation-status="live"]')
+    await page.waitForSelector(
+      '[data-observed-flow="production-external-flow"]'
+    )
     assert.equal(
       await page.$eval(
         '[aria-label="Observation scope"]',
         (select) => select.value
       ),
-      "test"
+      "production"
     )
+    await page.select('[aria-label="Observation scope"]', "test")
     await page.waitForSelector('[data-observed-flow="test-external-flow"]')
     await page.click('[data-observed-flow="test-external-flow"]')
     await page.waitForSelector('[data-graph-node][data-node-id="received"]')
@@ -132,7 +128,7 @@ export async function checkContinuousObservation() {
         element.textContent.includes("message-published")
       )
     )
-    await page.click('[aria-label="Collapse sidebar"]')
+    await page.click('[aria-label="Close observation panel"]')
     await page.click(".inspector-close")
     await page.click('[aria-label="Open message details"]')
     assert.ok(
@@ -170,7 +166,7 @@ export async function checkContinuousObservation() {
         .querySelector(".observation-notice")
         ?.textContent.includes("evicted or reset")
     )
-    await page.click('[aria-label="Collapse sidebar"]')
+    await page.click('[aria-label="Close observation panel"]')
     await page.waitForFunction(() =>
       /retained snapshot/i.test(
         document.querySelector(".observation-evidence")?.textContent ?? ""
@@ -266,20 +262,21 @@ async function checkObservationApiSafety(browser, url, backend) {
     await page.setViewport({ width: 1440, height: 900 })
     backend.inspectionOnly(true)
     await page.goto(url, { waitUntil: "networkidle0" })
-    await page.waitForSelector('[data-tracer-source="disconnected"]')
     await page.click('[data-workspace-tab="observation"]')
     await page.waitForSelector(
       '[data-observed-flow="production-external-flow"]'
     )
     assert.deepEqual(
-      await page.$$eval('[aria-label="Observation scope"] option', (options) =>
-        options.map((option) => option.value)
+      await page.$eval(
+        '[aria-label="Observation scope"]',
+        (select) => select.value
       ),
-      ["production"]
+      "production"
     )
     await page.click('[data-observed-flow="production-external-flow"]')
     await page.waitForSelector('[data-graph-node][data-node-id="received"]')
     await page.click('[data-workspace-tab="tests"]')
+    await page.waitForSelector('[data-tracer-source="disconnected"]')
     backend.inspectionOnly(false)
     const results = await page.evaluate(async () => {
       const { followObservation } = await import("/src/lib/observation-api.ts")

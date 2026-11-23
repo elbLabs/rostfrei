@@ -175,8 +175,15 @@ async function main() {
         diagnostics,
       }
       const capture = async (extra = {}) => {
+        const view = await page.evaluate(
+          () =>
+            document
+              .querySelector('[data-workspace-tab][aria-selected="true"]')
+              ?.getAttribute("data-workspace-tab")
+        )
         const result = await capturePage(page, directory, {
           ...metadata,
+          view,
           ...extra,
         })
         console.log(
@@ -189,6 +196,8 @@ async function main() {
       try {
         if (name !== "live")
           await installScenario(page, name, samples, diagnostics)
+        // Let the default view settle before a fixture chooses its tab. An
+        // immediate click could cancel the initial inventory discovery.
         await page.goto(url, {
           waitUntil: "networkidle0",
           timeout: navigationTimeout,

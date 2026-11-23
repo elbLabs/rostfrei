@@ -14,10 +14,12 @@ pub fn assemble(
 ) -> TokenStream {
     let id = &attributes.id;
     let label = &attributes.label;
+    let declared_field_types = crate::field::assemble_declared_field_types(domain_path, fields);
     let fields = crate::field::assemble_descriptors_with_path(domain_path, fields);
     quote! {
         impl #domain_path::EntityType for #name {
             const LOCAL_ID: &'static str = #id;
+            #declared_field_types
             const DESCRIPTOR: #domain_path::EntityDescriptor = {
                 let id = #domain_path::EntityId {
                         aggregate: <<Self as #domain_path::EntityDefinition>::Owner as

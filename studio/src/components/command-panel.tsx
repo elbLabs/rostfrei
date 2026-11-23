@@ -37,6 +37,7 @@ export type CommandExecutionRequest = CommandExecutionRequestBase & {
 }
 
 interface CommandPanelProps {
+  active: boolean
   open: boolean
   catalog?: TracerCatalog
   busy: boolean
@@ -64,6 +65,7 @@ interface HandlerComputation {
 }
 
 export function CommandPanel({
+  active: workspaceActive,
   open,
   catalog,
   busy: executionBusy,
@@ -138,7 +140,7 @@ export function CommandPanel({
   const busy = executionBusy || currentComputation?.pending === true
 
   useEffect(() => {
-    if (!inputsHrefTemplate || !inputsKey) return
+    if (!workspaceActive || !inputsHrefTemplate || !inputsKey) return
     const requestKey = inputsKey
     let active = true
     void getCommandInputs(inputsHrefTemplate)
@@ -174,7 +176,13 @@ export function CommandPanel({
     return () => {
       active = false
     }
-  }, [inputsHrefTemplate, inputsKey, selectedFields, testStateRevision])
+  }, [
+    workspaceActive,
+    inputsHrefTemplate,
+    inputsKey,
+    selectedFields,
+    testStateRevision,
+  ])
 
   const markEdited = () => {
     setValidationError(undefined)
@@ -562,7 +570,14 @@ function PayloadField({
 
   return (
     <div className="command-field" data-payload-field={field.name}>
-      <span>{label}</span>
+      <span className="flex flex-wrap items-baseline justify-between gap-x-2">
+        {label}
+        {field.declaredType && (
+          <code className="text-xs font-normal text-muted-foreground">
+            {field.declaredType}
+          </code>
+        )}
+      </span>
       {identifier && !selectionInput ? (
         <Input
           type="text"

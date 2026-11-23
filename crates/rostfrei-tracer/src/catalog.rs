@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, fmt::Write as _};
 
 use rostfrei_registry::DomainRegistry;
 use serde::Serialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 const CATALOG_VERSION: u32 = 1;
 
@@ -23,6 +23,21 @@ pub struct TracerCatalog {
     pub observation: Vec<crate::CatalogObservation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correlations: Option<CatalogCorrelations>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub infrastructure: Option<CatalogInventory>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub servers: Option<CatalogInventory>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain_inventory: Option<CatalogInventory>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workloads: Option<CatalogInventory>,
+}
+
+/// Link to an optional inspection-only inventory, never an execution action.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogInventory {
+    pub snapshot_href: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -192,7 +207,7 @@ pub fn build_catalog<'a>(
         let context_label =
             model_context_label(domain_model, &context_id).unwrap_or_else(|| context_id.clone());
         let command_label = descriptor.modeled_command().label.to_owned();
-        let fields = command_fields(descriptor.modeled_command().fields);
+        let fields = descriptor.project_modeled_fields();
         let payload_template = payload_template(&fields);
         let context = contexts
             .entry(context_id.clone())
@@ -267,6 +282,10 @@ pub fn build_catalog<'a>(
         quarantine: None,
         observation: Vec::new(),
         correlations: None,
+        infrastructure: None,
+        servers: None,
+        domain_inventory: None,
+        workloads: None,
         contexts: contexts
             .into_iter()
             .map(|(id, context)| CatalogContext {
@@ -382,78 +401,6 @@ fn model_aggregate_anchor(model: Option<&Value>, context: &str, aggregate: &str)
         .and_then(|aggregate| aggregate.get("anchor"))
         .and_then(Value::as_bool)
         .unwrap_or(false)
-}
-
-fn command_fields(descriptors: &[domain::FieldDescriptor]) -> Vec<Value> {
-    descriptors
-        .iter()
-        .map(|descriptor| {
-            let mut value = field_kind(descriptor.value.kind);
-            for wrapper in descriptor.value.wrappers.iter().rev() {
-                value = match wrapper {
-                    domain::FieldWrapper::List => json!({ "kind": "list", "element": value }),
-                    domain::FieldWrapper::Optional => {
-                        json!({ "kind": "optional", "value": value })
-                    }
-                };
-            }
-            json!({ "name": descriptor.name, "value": value })
-        })
-        .collect()
-}
-
-fn field_kind(kind: domain::FieldKind) -> Value {
-    match kind {
-        domain::FieldKind::Scalar(scalar) => {
-            json!({ "kind": "scalar", "scalar": scalar_name(scalar) })
-        }
-        domain::FieldKind::SemanticScalar(descriptor) => json!({
-            "kind": "scalar",
-            "scalar": {
-                "kind": "semantic",
-                "id": descriptor.id,
-                "label": descriptor.label,
-                "representation": scalar_name(descriptor.representation),
-            }
-        }),
-        domain::FieldKind::Entity(id) => json!({
-            "kind": "entity",
-            "id": {
-                "aggregate": {
-                    "context": id.aggregate.context.0,
-                    "local": id.aggregate.local,
-                },
-                "local": id.local,
-            }
-        }),
-        domain::FieldKind::AggregateReference(id) => json!({
-            "kind": "aggregateReference",
-            "aggregate": { "context": id.context.0, "local": id.local }
-        }),
-        _ => json!({ "kind": "opaque" }),
-    }
-}
-
-const fn scalar_name(scalar: domain::ScalarType) -> &'static str {
-    match scalar {
-        domain::ScalarType::Bool => "bool",
-        domain::ScalarType::String => "string",
-        domain::ScalarType::Char => "char",
-        domain::ScalarType::F32 => "f32",
-        domain::ScalarType::F64 => "f64",
-        domain::ScalarType::I8 => "i8",
-        domain::ScalarType::I16 => "i16",
-        domain::ScalarType::I32 => "i32",
-        domain::ScalarType::I64 => "i64",
-        domain::ScalarType::I128 => "i128",
-        domain::ScalarType::Isize => "isize",
-        domain::ScalarType::U8 => "u8",
-        domain::ScalarType::U16 => "u16",
-        domain::ScalarType::U32 => "u32",
-        domain::ScalarType::U64 => "u64",
-        domain::ScalarType::U128 => "u128",
-        domain::ScalarType::Usize => "usize",
-    }
 }
 
 fn payload_template(fields: &[Value]) -> Value {

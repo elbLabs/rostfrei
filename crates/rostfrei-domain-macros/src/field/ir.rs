@@ -40,6 +40,7 @@ pub enum Role {
 pub struct Field {
     pub name: LitStr,
     pub member: Member,
+    pub declared_type: LitStr,
     pub base: TypePath,
     pub wrappers: Vec<Wrapper>,
     pub role: Role,

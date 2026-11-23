@@ -7,6 +7,7 @@ mod id_projection;
 mod projection;
 
 pub use error::{DomainModelError, DomainModelReference};
+pub use field_projection::project_fields;
 pub use projection::DomainModelBuilder;
 
 #[doc(hidden)]

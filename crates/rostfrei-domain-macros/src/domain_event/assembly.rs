@@ -22,6 +22,7 @@ pub fn assemble(
             .map(|_| quote!(const SCHEMA_VERSION: u32 = #version;))
     });
     let assertions = crate::field::assemble_assertions_with_path(domain_path, name, None, fields);
+    let declared_field_types = crate::field::assemble_declared_field_types(domain_path, fields);
     let fields = crate::field::assemble_descriptors_with_path(domain_path, fields);
 
     quote! {
@@ -29,6 +30,7 @@ pub fn assemble(
             const LOCAL_ID: &'static str = #id;
             const LABEL: &'static str = #label;
             const FIELDS: &'static [#domain_path::FieldDescriptor] = #fields;
+            #declared_field_types
             #schema_version
         }
 

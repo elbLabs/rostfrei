@@ -19,7 +19,10 @@ try {
   await build({
     root: studioRoot,
     logLevel: 'error',
-    define: { 'import.meta.env.VITE_TRACER_API_URL': JSON.stringify('/api') },
+    define: {
+      'import.meta.env.VITE_TRACER_API_URL': JSON.stringify('/api'),
+      'import.meta.env.VITE_STUDIO_WORKSPACES': 'undefined',
+    },
     build: { outDir: directory, emptyOutDir: true },
   })
   server = await preview({
@@ -34,6 +37,16 @@ try {
   diagnostics = observePage(page)
   await page.setViewport({ width: 1440, height: 900 })
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 120000 })
+  const domain = '[data-inventory-view="domain"][data-inventory-state="ready"]'
+  await page.waitForSelector('[data-workspace-tab="domain"][aria-selected="true"]')
+  assert.equal(await page.$('[aria-label="Studio mode"]'), null)
+  assert.deepEqual(
+    await page.$$eval('[data-workspace-tab]', tabs => tabs.map(tab => tab.dataset.workspaceTab).sort()),
+    ['commands', 'correlations', 'domain', 'infrastructure', 'observation', 'read-models', 'runs', 'tests'],
+  )
+  const fleet = `${domain} [data-domain-node="aggregate:bike-rental/rental-fleet"]`
+  await page.waitForSelector(fleet, { visible: true, timeout: 120000 })
+  await page.click('[data-workspace-tab="tests"]')
   await page.waitForSelector('.test-row, [data-connection="disconnected"], [data-connection="tests-unavailable"]', { timeout: 120000 })
   assert.equal(await page.$('.connection-notice'), null, await page.$eval('body', body => body.innerText))
   await page.waitForSelector('.test-row', { timeout: 15000 })
@@ -97,6 +110,16 @@ try {
    await page.click('[data-workspace-tab="tests"]')
    assert.deepEqual(await page.$$eval('[data-graph-node]', nodes => nodes.map(node => node.dataset.nodeId)), graphBefore)
    console.log('Studio passed: live handler diagnostic remains separate from real Test graph')
+
+   await page.click('[data-workspace-tab="infrastructure"]')
+   const infrastructure = '[data-inventory-view="infrastructure"][data-inventory-state="ready"]'
+   const sourceNode = `${infrastructure} [data-inventory-resource="source"]`
+   await page.waitForSelector(sourceNode, { visible: true })
+   await page.click(sourceNode)
+   await page.waitForSelector(`${infrastructure} [data-inventory-stream]`)
+   const liveStreams = await page.$$eval(`${infrastructure} [data-inventory-stream]`, nodes => nodes.map(node => node.dataset.inventoryStream))
+   assert.ok(liveStreams.some(name => /__JOURNAL/.test(name)), 'The configured broker source reports its live journal stream')
+   console.log('Studio passed: compiled domain and live JetStream inventory on the linked host')
    assert.deepEqual(diagnostics.pageErrors, [])
   // Chrome may request an unadvertised optional icon. Keep every application/API
   // failure fatal while allowing that browser-generated request on the live host.

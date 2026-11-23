@@ -2,8 +2,8 @@ use serde_json::{Value, json};
 
 use crate::{
     AggregateDefinition, AggregateDescriptor, AggregateEventSet, AggregateId,
-    BoundedContextDescriptor, BoundedContextId, DomainErrorDescriptor, DomainErrorId,
-    DomainEventDescriptor, DomainEventId, DomainIdentityId, DomainServiceDescriptor,
+    BoundedContextDescriptor, BoundedContextId, DeclaredFieldType, DomainErrorDescriptor,
+    DomainErrorId, DomainEventDescriptor, DomainEventId, DomainIdentityId, DomainServiceDescriptor,
     DomainServiceId, DomainServiceType, EntityDefinition, EntityDescriptor, ValueObject,
     ValueObjectDescriptor, ValueObjectId,
 };
@@ -103,12 +103,21 @@ impl DomainModelBuilder {
 
         self.insert_aggregate(descriptor, A::ANCHOR);
         for event in events {
-            self.insert_domain_event(*event);
+            let declared_types = <A::Event as AggregateEventSet<A>>::declared_field_types(event.id);
+            self.insert_domain_event(*event, declared_types);
         }
         Ok(())
     }
 
     pub fn add_entity(&mut self, descriptor: EntityDescriptor) -> Result<(), DomainModelError> {
+        self.add_entity_with_types(descriptor, &[])
+    }
+
+    fn add_entity_with_types(
+        &mut self,
+        descriptor: EntityDescriptor,
+        declared_types: &[DeclaredFieldType],
+    ) -> Result<(), DomainModelError> {
         if self.entities.contains(descriptor.id) {
             return Err(DomainModelError::DuplicateEntityId {
                 id: Box::new(descriptor.id),
@@ -117,13 +126,13 @@ impl DomainModelBuilder {
         self.validate_domain_identity_id(descriptor.identity)?;
 
         self.insert_domain_identity(descriptor.identity);
-        self.entities.add(descriptor);
+        self.entities.add(descriptor, declared_types);
         self.field_references.add_entity(descriptor);
         Ok(())
     }
 
     pub fn add_entity_type<E: EntityDefinition>(&mut self) -> Result<(), DomainModelError> {
-        self.add_entity(E::DESCRIPTOR)
+        self.add_entity_with_types(E::DESCRIPTOR, E::DECLARED_FIELD_TYPES)
     }
 
     fn validate_domain_identity_id(&self, id: DomainIdentityId) -> Result<(), DomainModelError> {
@@ -196,7 +205,7 @@ impl DomainModelBuilder {
         descriptor: DomainEventDescriptor,
     ) -> Result<(), DomainModelError> {
         self.validate_domain_event_id(descriptor.id)?;
-        self.insert_domain_event(descriptor);
+        self.insert_domain_event(descriptor, &[]);
         Ok(())
     }
 
@@ -226,7 +235,11 @@ impl DomainModelBuilder {
         Ok(())
     }
 
-    fn insert_domain_event(&mut self, descriptor: DomainEventDescriptor) {
+    fn insert_domain_event(
+        &mut self,
+        descriptor: DomainEventDescriptor,
+        declared_types: &[DeclaredFieldType],
+    ) {
         self.domain_events.push((
             descriptor.id,
             json!({
@@ -236,7 +249,7 @@ impl DomainModelBuilder {
                 },
                 "label": descriptor.label,
                 "schemaVersion": descriptor.schema_version,
-                "fields": field_projection::fields(descriptor.fields),
+                "fields": field_projection::project_fields(descriptor.fields, declared_types),
             }),
         ));
         self.field_references.add_domain_event(descriptor);
@@ -262,7 +275,7 @@ impl DomainModelBuilder {
                 "label": descriptor.label,
                 "code": descriptor.code,
                 "message": descriptor.message,
-                "fields": field_projection::fields(descriptor.fields),
+                "fields": field_projection::project_fields(descriptor.fields, &[]),
             }),
         ));
         self.field_references.add_domain_error(descriptor);

@@ -782,6 +782,10 @@ impl TestScenarioReset for NatsRuntime {
 /// HTTP capabilities, listener and observation feeds for the optional Tracer.
 /// Enabling it never selects Normal state for Test.
 pub struct TracerConfig {
+    workload_memory: Option<Arc<dyn crate::workload_memory::WorkloadMemorySource>>,
+    server_monitoring: Option<Arc<dyn crate::server_monitoring::ServerMonitoring>>,
+    broker_operations: Option<Arc<dyn crate::broker_operations::BrokerOperations>>,
+    domain_inventory: Option<crate::StudioDomainInventory>,
     listener: tokio::net::TcpListener,
     http: HttpConfig,
     repository: Option<Arc<dyn TestRepository>>,
@@ -793,6 +797,10 @@ pub struct TracerConfig {
 impl TracerConfig {
     pub fn new(listener: tokio::net::TcpListener, http: HttpConfig) -> Self {
         Self {
+            broker_operations: None,
+            server_monitoring: None,
+            domain_inventory: None,
+            workload_memory: None,
             listener,
             http,
             repository: None,
@@ -805,6 +813,40 @@ impl TracerConfig {
     #[must_use]
     pub fn with_test_repository(mut self, repository: Arc<dyn TestRepository>) -> Self {
         self.repository = Some(repository);
+        self
+    }
+    /// Opt into account-wide metadata inspection for the configured source(s).
+    #[must_use]
+    pub fn with_broker_operations(
+        mut self,
+        reader: Arc<dyn crate::broker_operations::BrokerOperations>,
+    ) -> Self {
+        self.broker_operations = Some(reader);
+        self
+    }
+    #[must_use]
+    pub fn with_domain_inventory(mut self, inventory: crate::StudioDomainInventory) -> Self {
+        self.domain_inventory = Some(inventory);
+        self
+    }
+
+    /// Opt into read-only memory sampling for explicitly mapped workloads.
+    #[must_use]
+    pub fn with_workload_memory(
+        mut self,
+        source: Arc<dyn crate::workload_memory::WorkloadMemorySource>,
+    ) -> Self {
+        self.workload_memory = Some(source);
+        self
+    }
+
+    /// Advertise read-only health and process metrics independently of account inventory.
+    #[must_use]
+    pub fn with_server_monitoring(
+        mut self,
+        source: Arc<dyn crate::server_monitoring::ServerMonitoring>,
+    ) -> Self {
+        self.server_monitoring = Some(source);
         self
     }
     #[must_use]
@@ -968,6 +1010,18 @@ impl NatsApplicationBuilder {
                     .with_test_scenario_reset(runtime.clone())
                     .with_default_test_fixture(fixture)
                     .with_trace_payload_policy(config.payload_policy);
+                if let Some(reader) = config.broker_operations {
+                    builder = builder.with_broker_operations(reader);
+                }
+                if let Some(domain) = config.domain_inventory {
+                    builder = builder.with_domain_inventory(domain);
+                }
+                if let Some(source) = config.server_monitoring {
+                    builder = builder.with_server_monitoring(source);
+                }
+                if let Some(source) = config.workload_memory {
+                    builder = builder.with_workload_memory(source);
+                }
                 for feed in config.observation.into_values() {
                     builder = builder.with_continuous_observation(feed);
                 }
