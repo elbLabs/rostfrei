@@ -50,12 +50,10 @@ reevaluation of a completed decision.
 
 ## Back up and restore a split authority
 
-Use [the paired-store script](../scripts/paired-store.sh) with **NATS Server
-2.12.15 and [NATS CLI 0.5.2](https://github.com/nats-io/natscli/releases/tag/v0.5.2)**,
-Bash, `jq` and `shasum`. It uses native `nats backup stream` and `nats backup
-restore stream` without overriding either configuration. CLI 0.1.6 can report a
-successful restore while losing the journal's atomic-publish policy. Do not use
-that path or edit the restored flag to make the adapter connect.
+`cargo rostfrei store backup` and `cargo rostfrei store restore` use JetStream's
+native snapshot protocol directly. Use a Rostfrei CLI build containing these
+commands and NATS Server **2.12.15**. The qualified layout is the split journal
+and command-results pair (version 2). No external NATS CLI is required.
 
 1. **Establish one recovery point.** Stop intake, drain in-flight commands and
    broker-fence writers, detail expiry, provisioning and other administration
@@ -65,19 +63,22 @@ that path or edit the restored flag to make the adapter connect.
    `authority()`, both configured stream names and representative original
    command envelopes/outcomes. Keep this evidence with the deployment config.
 2. Back up to a **new** directory. Set `NATS_URL` explicitly and supply the
-   maintenance credential/TLS settings via NATS environment variables (absolute
-   paths; the script disables CLI contexts). For example, from the checkout:
+   maintenance credentials separately: `NATS_USER` and `NATS_PASSWORD`, `NATS_TOKEN`,
+   or `NATS_CREDS` (credentials file). Use `tls://` for TLS, `NATS_CA` for a private
+   root, and `NATS_CERT` plus `NATS_KEY` for a client certificate. No CLI context
+   or implicit default endpoint is used. For example:
 
    ```sh
    # JOURNAL and RESULTS are the exact names from the verified store config.
-   NATS_URL="$SOURCE_URL" bash scripts/paired-store.sh backup "$BACKUP_DIR" "$JOURNAL" "$RESULTS"
+   NATS_URL="$SOURCE_URL" cargo rostfrei store backup "$BACKUP_DIR" "$JOURNAL" "$RESULTS"
    ```
 
-   The script checks the cross-bindings and compares both streams' policies,
+   The command checks the cross-bindings and compares both streams' policies,
    creation times, message counts, byte counts and sequence ranges before and
    after backup. Archive the **whole** successful directory as one immutable,
-   access-controlled set; protect its checksum manifest independently. It contains
-   historical result bodies. No consumer positions, messaging streams, read
+   access-controlled set: the archives contain historical result bodies. Keep
+   a trusted copy of `pair.sha256` separately and compare it before restoring.
+   No consumer positions, messaging streams, read
    models or other application resources are backed up by this procedure.
 3. **Restore only to a fenced destination** with compatible capacity/placement,
    both stream names absent, and no provisioning or workers. Keep the original
@@ -85,7 +86,7 @@ that path or edit the restored flag to make the adapter connect.
    authority. Restore the trusted set with the original names:
 
    ```sh
-   NATS_URL="$DESTINATION_URL" bash scripts/paired-store.sh restore "$BACKUP_DIR" "$JOURNAL" "$RESULTS"
+   NATS_URL="$DESTINATION_URL" cargo rostfrei store restore "$BACKUP_DIR" "$JOURNAL" "$RESULTS"
    ```
 
    It checks the entire set and both destination names before restoring, then
@@ -104,7 +105,7 @@ that path or edit the restored flag to make the adapter connect.
 
 The [disposable recovery test](development.md#nats-authentication-and-workers)
 exercises this procedure with a file-backed, single-node source and destination.
-Qualify other broker/CLI versions and deployment topologies before relying on them.
+Qualify other layouts, broker versions and deployment topologies before relying on them.
 
 ## Legacy replay (not mutable in-place activation)
 

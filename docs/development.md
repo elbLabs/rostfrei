@@ -72,10 +72,13 @@ pinned Git release.
 ### NATS authentication and workers
 
 To qualify the [paired backup and restore procedure](completed-outcome-cutover.md#back-up-and-restore-a-split-authority),
-install its pinned CLI and shell tools on PATH and run:
+build the operator CLI and run it against the private broker fixtures. The test
+invokes the binary by absolute path with an empty `PATH`:
 
 ```sh
-ROSTFREI_NATS_SERVER=/path/to/nats-server cargo xtask test --contracts -- \
+cargo build --locked -p rostfrei-structure --bin cargo-rostfrei
+ROSTFREI_STORE_CLI="$PWD/target/debug/cargo-rostfrei" \
+  ROSTFREI_NATS_SERVER=/path/to/nats-server cargo xtask test --contracts -- \
   cargo test --locked -p rostfrei-nats --test completed_outcome_fencing -- --ignored
 ```
 

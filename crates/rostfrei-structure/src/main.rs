@@ -7,6 +7,7 @@ use rostfrei_structure::{
 };
 
 mod agent_tools;
+mod store;
 
 #[derive(Debug, Parser)]
 #[command(name = "cargo", bin_name = "cargo")]
@@ -32,6 +33,9 @@ enum Command {
     Test(TestArgs),
     /// Installs and identifies release-matched portable Agent Skills.
     Skills(SkillsArgs),
+    /// Back up and restore the paired streams of a fenced command store.
+    #[command(subcommand)]
+    Store(store::Command),
 }
 
 #[derive(Args, Debug)]
@@ -143,6 +147,9 @@ fn run(command: Command) -> Result<bool, String> {
     match command {
         Command::Check(arguments) => run_check(arguments),
         Command::New(arguments) => run_new(arguments),
+        Command::Store(command) => store::run(command)
+            .map(|()| true)
+            .map_err(|e| e.to_string()),
         Command::Skills(arguments) => match arguments.command {
             SkillsCommand::Info => {
                 println!(

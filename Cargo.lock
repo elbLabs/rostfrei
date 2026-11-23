@@ -1879,7 +1879,9 @@ dependencies = [
 name = "rostfrei-structure"
 version = "0.2.3"
 dependencies = [
+ "async-nats",
  "clap",
+ "futures-util",
  "heck",
  "jsonschema",
  "proc-macro2",
@@ -1890,6 +1892,8 @@ dependencies = [
  "syn 2.0.119",
  "tempfile",
  "thiserror",
+ "time",
+ "tokio",
  "toml",
 ]
 

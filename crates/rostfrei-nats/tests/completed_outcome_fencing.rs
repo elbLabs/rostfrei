@@ -245,18 +245,20 @@ fn paired_snapshot(
     config: &NatsEventStoreConfig,
     path: &std::path::Path,
 ) -> TestResult {
-    let output = Command::new("bash")
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../scripts/paired-store.sh"
-        ))
-        .arg(mode)
-        .arg(path)
-        .args([config.stream_name(), config.outcome_state_stream_name()])
-        .env("NATS_URL", url)
-        .env("NATS_USER", "new-writer")
-        .env("NATS_PASSWORD", "private-new-writer")
-        .output()?;
+    let empty_path = tempfile::tempdir()?;
+    let output = Command::new(
+        std::env::var_os("ROSTFREI_STORE_CLI")
+            .ok_or("build cargo-rostfrei and set ROSTFREI_STORE_CLI to its absolute path")?,
+    )
+    .env_clear()
+    .env("PATH", empty_path.path())
+    .args(["rostfrei", "store", mode])
+    .arg(path)
+    .args([config.stream_name(), config.outcome_state_stream_name()])
+    .env("NATS_URL", url)
+    .env("NATS_USER", "new-writer")
+    .env("NATS_PASSWORD", "private-new-writer")
+    .output()?;
     if !output.status.success() {
         return Err(format!("{mode}: {}", String::from_utf8_lossy(&output.stderr)).into());
     }
@@ -274,8 +276,26 @@ async fn writer_context(url: &str) -> TestResult<async_nats::jetstream::Context>
     ))
 }
 
+// A real event large enough that even its compressed snapshot needs chunk ACKs.
+fn large_item() -> TestResult<CommandRequest<Act>> {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+    let mut item = String::new();
+    for i in 0..4096_u32 {
+        write!(item, "{:x}", Sha256::digest(i.to_be_bytes()))?;
+    }
+    Ok(CommandRequest::new(
+        OperationId::new("large-item")?,
+        Act {
+            action: "add".to_owned(),
+            target: "target".to_owned(),
+            item,
+        },
+    ))
+}
+
 #[tokio::test]
-#[ignore = "paired restore qualification requires the pinned NATS CLI and private server fixtures"]
+#[ignore = "paired restore qualification requires the Rostfrei CLI and private server fixtures"]
 async fn paired_restore_replays_original_decisions_before_resuming_writes() -> TestResult {
     let (source, url) = broker("backup").await?;
     let context = ApplicationName::new("paired-restore")?.bounded_context("release-contract")?;
@@ -295,15 +315,24 @@ async fn paired_restore_replays_original_decisions_before_resuming_writes() -> T
     let acceptance = seed.process(&create).await?;
     assert!(rejected(refusal.outcome()));
     assert_eq!(acceptance.outcome(), &CommandResponseOutcome::Accepted);
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let large = bus.encode(large_item()?)?;
+    assert_eq!(
+        seed.process(&large).await?.outcome(),
+        &CommandResponseOutcome::Accepted
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
     let id = stream("target")?;
     let history = store.load(&id).await?;
-    assert_eq!(history.len(), 1);
+    assert_eq!(history.len(), 2);
     drop((bus, seed, store));
 
     let backup = tempfile::tempdir()?;
     let path = backup.path().join("pair");
     paired_snapshot("backup", &url, &config, &path)?;
+    assert!(
+        path.join("journal.tar.s2").metadata()?.len() > 128 * 1024,
+        "multi-chunk journal fixture became too small"
+    );
     drop((js, source));
     let (_destination, url) = broker("restore").await?;
     paired_snapshot("restore", &url, &config, &path)?;
@@ -317,7 +346,7 @@ async fn paired_restore_replays_original_decisions_before_resuming_writes() -> T
     assert_eq!(verify.process(&create).await?, acceptance);
     assert_eq!(
         calls.load(Ordering::SeqCst),
-        2,
+        3,
         "exact retries ran a handler"
     );
     assert_eq!(reader.load(&id).await?, history);
@@ -329,13 +358,13 @@ async fn paired_restore_replays_original_decisions_before_resuming_writes() -> T
         fresh.process(&new_command).await?.outcome(),
         &CommandResponseOutcome::Accepted
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 3);
-    assert_eq!(restored.load(&id).await?.len(), 2);
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
+    assert_eq!(restored.load(&id).await?.len(), 3);
     Ok(())
 }
 
 #[tokio::test]
-#[ignore = "paired restore qualification requires the pinned NATS CLI and private server fixtures"]
+#[ignore = "paired restore qualification requires the Rostfrei CLI and private server fixtures"]
 async fn partial_destination_is_refused_before_restoring_either_stream() -> TestResult {
     let (_broker, url) = broker("partial").await?;
     let context = ApplicationName::new("partial-restore")?.bounded_context("release-contract")?;
@@ -358,5 +387,30 @@ async fn partial_destination_is_refused_before_restoring_either_stream() -> Test
     assert!(
         matches!(missing.kind(), async_nats::jetstream::context::GetStreamErrorKind::JetStream(ref err) if err.code() == 404)
     );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "paired restore qualification requires the Rostfrei CLI and private server fixtures"]
+async fn damaged_results_archive_is_refused_before_restoring_journal() -> TestResult {
+    let (_broker, url) = broker("damaged").await?;
+    let context = ApplicationName::new("damaged-backup")?.bounded_context("release-contract")?;
+    let config = NatsEventStoreConfig::for_bounded_context(&context)?.with_fresh_outcomes()?;
+    let js = writer_context(&url).await?;
+    provision_event_store(&js, &config).await?;
+    let backup = tempfile::tempdir()?;
+    let path = backup.path().join("pair");
+    paired_snapshot("backup", &url, &config, &path)?;
+    js.delete_stream(config.stream_name()).await?;
+    js.delete_stream(config.outcome_state_stream_name()).await?;
+    std::fs::write(path.join("results.tar.s2"), b"truncated")?;
+    let error = paired_snapshot("restore", &url, &config, &path).unwrap_err();
+    assert!(error.to_string().contains("archive checksum"), "{error}");
+    for name in [config.stream_name(), config.outcome_state_stream_name()] {
+        let missing = js.get_stream(name).await.unwrap_err();
+        assert!(
+            matches!(missing.kind(), async_nats::jetstream::context::GetStreamErrorKind::JetStream(ref err) if err.code() == 404)
+        );
+    }
     Ok(())
 }
