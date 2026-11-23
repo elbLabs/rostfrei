@@ -112,6 +112,9 @@ struct CheckArgs {
 struct NewArgs {
     /// Directory to create. Its name is used as the package and context name.
     path: PathBuf,
+    /// Generate the project without installing release-matched Agent Skills.
+    #[arg(long)]
+    no_skills: bool,
 }
 
 fn main() -> ExitCode {
@@ -203,9 +206,16 @@ fn run_check(arguments: CheckArgs) -> Result<bool, String> {
 fn run_new(arguments: NewArgs) -> Result<bool, String> {
     let (release, revision, supports_skills) = scaffold_dependency();
     let project = create_project_with_setup(arguments.path, |staged| {
-        if supports_skills {
+        if supports_skills && !arguments.no_skills {
             agent_tools::setup_scaffold(staged, release.trim_start_matches('v'), revision)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| {
+                    let path = error
+                        .details
+                        .get("path")
+                        .and_then(serde_json::Value::as_str)
+                        .map_or_else(String::new, |p| format!(" ({p})"));
+                    format!("{error}{path}. To generate without skills, retry with --no-skills.")
+                })?;
         }
         Ok(())
     })
@@ -220,14 +230,11 @@ fn run_new(arguments: NewArgs) -> Result<bool, String> {
     println!("  cargo check");
     println!("  cargo test");
     println!("  docker compose up -d");
-    println!("  cargo run");
-    if !supports_skills {
-        println!(
-            "\nSkills not installed: the published starter {release} ({revision}) predates skills-enabled tooling."
-        );
-        println!(
-            "After upgrading to a published skills-enabled framework release, run cargo rostfrei skills install."
-        );
+    println!("  cargo run --example first_rental");
+    if arguments.no_skills {
+        println!("\nSkills skipped. After cargo check, run: cargo rostfrei skills install");
+    } else if supports_skills {
+        println!("\nInstalled Agent Skills for {release} in .agents/skills");
     }
     Ok(true)
 }

@@ -206,22 +206,13 @@ pub fn run() -> Result<()> {
         "ambiguous defaults accepted"
     );
     setup(&cli(), &rooted, &env, "install", &["--package", "app"])?.checked()?;
-    let starter = base.join("published-starter");
-    let result = command(
-        &[
-            &cli().display().to_string(),
-            "rostfrei",
-            "new",
-            &starter.display().to_string(),
-        ],
-        base,
-        &env,
-    )?
-    .checked()?;
-    ensure!(
-        result.stdout.contains("predates skills-enabled tooling"),
-        "starter capability gap not reported"
-    );
+    // Older applications still need a clean refusal even as the starter moves on.
+    let starter = base.join("pre-kit-app");
+    app(
+        &starter,
+        "pre-kit-app",
+        "[dependencies]\nrostfrei = { git = \"https://github.com/elbLabs/rostfrei\", rev = \"c9f5516ddc324265916b60e1eb7300dad9acac9d\" }",
+    )?;
     lock(&starter, &env, false)?;
     env.insert("CARGO_PROFILE_RELEASE_OPT_LEVEL".into(), "0".into());
     env.insert("CARGO_PROFILE_RELEASE_DEBUG".into(), "0".into());

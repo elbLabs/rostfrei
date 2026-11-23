@@ -1,6 +1,6 @@
 use std::env;
 
-use rostfrei_nats::{NatsConnectionConfig, ServerVersion, connect};
+use rostfrei::nats::{NatsConnectionConfig, ServerVersion, connect};
 
 const DEFAULT_NATS_URL: &str = "nats://127.0.0.1:4222";
 

@@ -77,9 +77,20 @@ supported; the facade re-exports the same types.
 
 Declare other libraries your code uses, such as Serde, Tokio, and Axum, separately.
 Install the [development CLI and Agent Skills](agent-skills-install.md) separately
-too. The [generated starter](development.md#starter-dependency-contract) documents
-its own release pin; the bike-rental checkout inherits dependencies with
-`workspace = true`.
+too. To try the updated project generator from this checkout:
+
+```sh
+cargo rostfrei-dev new ../my-app
+cd ../my-app
+docker compose up -d
+cargo run --example first_rental
+```
+
+The example rents a bike, retries the same command, then reads the stored events:
+there should be exactly one. Run it again with the same broker to see the first
+command replay too. Use `docker compose down` when finished. See the
+[starter release pin](development.md#starter-dependency-contract); the published
+0.2.3 CLI predates this generator change.
 
 ## Upgrading from 0.1
 
