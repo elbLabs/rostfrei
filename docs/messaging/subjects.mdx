@@ -92,7 +92,7 @@ an append-only journal plus a separate command-results stream, selected with
 | Command | Ask a bounded context to make a decision. | `command.bike-rental.rent-bicycle` | `command.>` | `_COMMANDS` |
 | Command response | Retain the accepted or rejected outcome for one operation. | `command-response.bike-rental.<response-digest>` | `command-response.>` | `_COMMAND_RESPONSES` |
 | Private domain event | Append BicycleRented and permanent decision evidence to the journal. | `domain.bike-rental.aggregate.bike-rental%2Frental-fleet.city-fleet` | `domain.bike-rental.aggregate.*.*`, `domain.bike-rental.transaction.>`, `domain.bike-rental.fixture.*.receipt.*.*` | `__BIKE_RENTAL__JOURNAL` |
-| Command results (layout 2) | Retain active result details or terminal expiry; the journal owns the decision. | `domain.bike-rental.outcome.<candidate-digest>` | `domain.bike-rental.outcome.*` | `__BIKE_RENTAL__COMMAND_RESULTS` |
+| Command results | Layout 2 retains active result details or terminal expiry; the journal owns the decision. | `domain.bike-rental.outcome.<candidate-digest>` | `domain.bike-rental.outcome.*` | `__BIKE_RENTAL__COMMAND_RESULTS` |
 | Command results (layout 3) | Keep bodies until displaced by newer results. | `domain.bike-rental.body.<candidate-digest>` | `domain.bike-rental.body.*` | `__BIKE_RENTAL__COMMAND_RESULTS` |
 | Integration event | Publish the public BicycleRentalStarted contract after commit. | `integration.bike-rental.bicycle-rental-started.<correlation>.<causation>` | `integration.>` | `_INTEGRATION_EVENTS` |
 | Query (illustrative) | Read state with Core NATS request/reply; the example does not mount a NATS responder. | `query.bike-rental.bicycle-availability` | None | None |
