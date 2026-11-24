@@ -76,6 +76,11 @@ flowchart LR
     command -->|unavailable| rejection["Business rejection<br/>No domain events appended"]
 ```
 
+Suppose a rental request is rejected because the bike is already out, but the
+customer never gets the reply. A minute later, the bike is back. If the app
+retries the original request, rostfrei returns the original rejection. Renting
+the bike now takes a new request. See the [retry tests](crates/rostfrei-nats/tests/completed_outcome_faults.rs).
+
 Replaying private domain events reconstructs aggregate state: history is the
 source of truth. Separately versioned integration events share public contracts
 after commit. The example also transfers bicycles between two fleets atomically.
@@ -99,6 +104,7 @@ development and runtime inspection.
 | --- | --- |
 | Model the business | [Domain macros](docs/domain-macros/index.mdx) and [project structure](docs/project-structure/index.mdx) |
 | Run an application | [Command runtime](docs/command-runtime.md), [read models](docs/read-models/index.mdx), and [operations](docs/README.md#runtime-and-operations) |
+| Measure performance | [Running commands as history grows](docs/benchmarks/aggregate-loading.md) and [querying a saved view versus replaying events](docs/benchmarks/read-models.md) |
 | Browse the reference | [Shared documentation](docs/README.md) and the [machine-readable index](https://elblabs.github.io/rostfrei/llms.txt) |
 | Understand the design | [Architectural maxims](docs/adr/README.md) and [release changes](CHANGELOG.md) |
 
