@@ -623,6 +623,7 @@ async function checkStudio() {
       aggregate: { ...fixture.messages[0].aggregate, id: "other-fleet" },
     })
     const definition = sample.definitions["rent-available-bicycle"].definition
+    const subject = definition.expected.graphs[0].nodes[0]
     const expected = layoutMessageGraph(expectedGraph(definition, fixture))
     const report = {
       expected: definition.expected,
@@ -630,11 +631,11 @@ async function checkStudio() {
         messages: [
           {
             kind: "command",
-            name: "rent-bicycle",
+            name: subject.name,
             messageId: "command",
             observationOrder: 1,
-            schemaVersion: 1,
-            context: "bike-rental",
+            schemaVersion: subject.schemaVersion,
+            context: subject.context,
           },
           {
             kind: "domain-event",

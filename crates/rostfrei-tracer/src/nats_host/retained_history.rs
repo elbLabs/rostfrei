@@ -38,23 +38,37 @@ pub(super) fn sources(
     Ok(sources.into_values().collect())
 }
 
-pub(super) async fn attach(
+pub(super) async fn attach<'a>(
     mut builder: crate::TracerBuilder,
     test: &NatsRuntime,
-    dispatch: Option<&NatsRuntime>,
+    dispatch: impl IntoIterator<Item = &'a NatsRuntime>,
     configs: Vec<NatsEventStoreConfig>,
 ) -> Result<crate::TracerBuilder, NatsHostError> {
     if configs.is_empty() {
         return Ok(builder);
     }
-    let defaults = ApplicationMessagingConfig::new(test.config.context.application())?;
-    let topology = dispatch.map_or_else(
-        || defaults.topology(),
-        |runtime| runtime.config.messaging.topology(),
-    );
-    let connection = dispatch.map_or(&test.connection, |runtime| &runtime.connection);
+    let mut dispatch = dispatch.into_iter();
+    let (connection, topology) = if let Some(runtime) = dispatch.next() {
+        let topology = runtime.config.messaging.topology();
+        if dispatch.any(|peer| {
+            peer.config.messaging.topology().integration_event_stream()
+                != topology.integration_event_stream()
+        }) {
+            return Err(NatsHostError::Configuration(
+                "production inspection requires a shared integration-event stream".into(),
+            ));
+        }
+        (&runtime.connection, topology.clone())
+    } else {
+        (
+            &test.connection,
+            ApplicationMessagingConfig::new(test.config.context.application())?
+                .topology()
+                .clone(),
+        )
+    };
     let reader =
-        NatsCorrelationHistory::connect(connection.jetstream().clone(), configs.clone(), topology)
+        NatsCorrelationHistory::connect(connection.jetstream().clone(), configs.clone(), &topology)
             .await?;
     for config in configs {
         let context = config.bounded_context().as_str().to_owned();

@@ -9,7 +9,7 @@ An aggregate root or nested entity lifecycle declares states and legal transitio
 - Keep every `(transition, source state)` pair unambiguous.
 - Keep state-changing actions in separate capability directories.
 
-Path: `src/domain/bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs`
+Path: `src/domain/rental/rental_fleet/bicycle/rental_status/lifecycle.rs`
 
 This example belongs to the nested `Bicycle` entity. An aggregate-root lifecycle uses the same directory shape directly beneath the aggregate.
 
@@ -33,7 +33,7 @@ pub enum BicycleStatus {
 
 </ProjectStructureExample>
 
-Path: `src/domain/bike_rental/rental_fleet/bicycle/rental_status/transition.rs`
+Path: `src/domain/rental/rental_fleet/bicycle/rental_status/transition.rs`
 
 ```rust
 use rostfrei::StateTransition;

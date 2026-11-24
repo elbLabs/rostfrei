@@ -6,7 +6,7 @@ interface ProjectStructureExample {
 }
 
 const domainDirectory = "src/domain"
-const contextDirectory = `${domainDirectory}/bike_rental`
+const contextDirectory = `${domainDirectory}/rental`
 const fleetDirectory = `${contextDirectory}/rental_fleet`
 const bicycleDirectory = `${fleetDirectory}/bicycle`
 const registrationDirectory = `${bicycleDirectory}/registration_number`
@@ -16,10 +16,16 @@ export const projectStructureExamples = {
     root: "domain",
     directory: domainDirectory,
     activeFile: "model.rs",
-    files: ["mod.rs", "model.rs"],
+    files: [
+      "mod.rs",
+      "model.rs",
+      "rental/context.rs",
+      "finance/context.rs",
+      "workshop/context.rs",
+    ],
   },
   "bounded-context": {
-    root: "bike_rental",
+    root: "rental",
     directory: contextDirectory,
     activeFile: "context.rs",
     files: ["mod.rs", "context.rs"],

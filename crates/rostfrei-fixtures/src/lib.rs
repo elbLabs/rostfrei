@@ -500,34 +500,25 @@ impl MessageSeriesEngine {
         Ok(())
     }
 
-    /// Applies only missing domain events after preflighting every stream.
-    ///
-    /// Every domain-event node is one atomic event-store batch. Multi-stream
-    /// fixture application is deliberately not globally atomic; retrying uses
-    /// the same operation, commit, event, and fingerprint identities.
-    #[allow(clippy::too_many_lines)]
-    pub async fn apply(
-        &self,
-        store: &dyn FixtureEventStore,
-        fixture: &Fixture,
-    ) -> Result<FixtureApplyReport, FixtureApplyError> {
+    /// Validates fixture topology and event codecs without reading or writing a store.
+    pub fn validate_fixture(&self, fixture: &Fixture) -> Result<(), FixtureApplyError> {
+        self.validate_plan(fixture).map(drop)
+    }
+
+    fn validate_plan(&self, fixture: &Fixture) -> Result<Vec<PlannedEvent>, FixtureApplyError> {
         fixture.validate()?;
         self.validate_aggregate_types(fixture)?;
 
         let plan = build_plan(fixture)?;
-        let mut events_by_stream = BTreeMap::<StreamId, Vec<&PlannedEvent>>::new();
+        let mut events_by_stream = BTreeMap::<&StreamId, Vec<RecordedEvent>>::new();
         for event in &plan {
             events_by_stream
-                .entry(event.recorded.stream_id().clone())
+                .entry(event.recorded.stream_id())
                 .or_default()
-                .push(event);
+                .push(event.recorded.clone());
         }
 
-        for (stream_id, events) in &events_by_stream {
-            let events: Vec<_> = events
-                .iter()
-                .map(|planned| planned.recorded.clone())
-                .collect();
+        for (stream_id, events) in events_by_stream {
             self.codecs
                 .validate_history(stream_id, &events)
                 .map_err(|error| match error {
@@ -546,6 +537,27 @@ impl MessageSeriesEngine {
                         source,
                     },
                 })?;
+        }
+        Ok(plan)
+    }
+
+    /// Applies only missing domain events after preflighting every stream.
+    ///
+    /// Every domain-event node is one atomic event-store batch. Multi-stream
+    /// fixture application is deliberately not globally atomic; retrying uses
+    /// the same operation, commit, event, and fingerprint identities.
+    pub async fn apply(
+        &self,
+        store: &dyn FixtureEventStore,
+        fixture: &Fixture,
+    ) -> Result<FixtureApplyReport, FixtureApplyError> {
+        let plan = self.validate_plan(fixture)?;
+        let mut events_by_stream = BTreeMap::<StreamId, Vec<&PlannedEvent>>::new();
+        for event in &plan {
+            events_by_stream
+                .entry(event.recorded.stream_id().clone())
+                .or_default()
+                .push(event);
         }
 
         let mut reused_prefixes = BTreeMap::<StreamId, usize>::new();

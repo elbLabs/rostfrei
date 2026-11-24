@@ -1,7 +1,7 @@
 use rostfrei::domain_model;
 
 use super::{
-    BikeRental,
+    Finance, Rental, Workshop,
     bicycle_transfer::BicycleTransfer,
     rental_fleet::{
         Bicycle, BicycleAlreadyInFleet, BicycleCannotBeRetired, BicycleCategory, BicycleCondition,
@@ -21,7 +21,7 @@ use super::{
 
 pub fn domain_model() -> Result<serde_json::Value, rostfrei::DomainModelError> {
     domain_model! {
-        contexts: [BikeRental],
+        contexts: [Rental, Finance, Workshop],
         aggregates: [RentalFleetAggregate, RepairJobAggregate, RentalTariffAggregate, RentalPaymentAggregate],
         entities: [RentalFleet, Bicycle, Reservation, RepairJob, RentalTariff, RentalPayment],
         value_objects: [BicycleCondition, RegistrationNumber, BicycleTransferRejectionReason, RepairDetails, BicycleCategory, RentalPeriod, RentalTariffTerms, RentalQuote, CollectionPayment, CollectionAssignment, PaymentOutcome, RentalReturn, ReturnTime],

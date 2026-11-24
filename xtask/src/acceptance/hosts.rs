@@ -279,34 +279,79 @@ pub fn bike_host(studio: bool) -> Result<()> {
     )?;
     let result = (|| {
         let catalog = live::ready(&mut host, &env, Duration::from_secs(45))?;
+        let contexts = array(&catalog["contexts"])?;
+        ensure!(
+            contexts.len() == 3,
+            "expected three bounded contexts: {contexts:?}"
+        );
+        let context = |id: &str| {
+            contexts
+                .iter()
+                .find(|context| context["id"] == id)
+                .with_context(|| format!("missing bounded context {id}"))
+        };
+        for (id, expected) in [
+            ("finance", &["finance/rental-payment"][..]),
+            (
+                "rental",
+                &["rental/rental-fleet", "rental/rental-tariff"][..],
+            ),
+            ("workshop", &["workshop/repair-job"][..]),
+        ] {
+            let mut actual = array(&context(id)?["aggregates"])?
+                .iter()
+                .map(|aggregate| text(&aggregate["aggregateType"]))
+                .collect::<Result<Vec<_>>>()?;
+            actual.sort_unstable();
+            ensure!(
+                actual == expected,
+                "{id} aggregates: expected {expected:?}, got {actual:?}"
+            );
+        }
         let mut client = Capabilities::new(&env, temporary.path())?;
         client.discover()?;
         let dispatch = |name: &str, key: &str, expected: &str| -> Result<()> {
-            let command = array(&catalog["contexts"])?
+            let command = array(&context("rental")?["commands"])?
                 .iter()
-                .flat_map(|c| c["commands"].as_array().into_iter().flatten())
                 .find(|c| c["id"] == name)
                 .context("bike command")?;
             let versions = array(&command["versions"])?;
             ensure!(versions.len() == 1, "command versions");
-            client.normal_command(&json!({"context":"bike-rental","name":name,"schemaVersion":versions[0]["schemaVersion"],"payload":{"fleet_id":"city-fleet","bicycle_id":"normal-registration","condition":"serviceable"}}),key,expected)?;
+            client.normal_command(
+                &json!({
+                    "context": "rental", "name": name, "schemaVersion": versions[0]["schemaVersion"],
+                    "payload": {"fleet_id":"city-fleet", "bicycle_id":"normal-registration", "condition":"serviceable"}
+                }),
+                key,
+                expected,
+            )?;
             Ok(())
         };
         ensure!(
-            !array(&catalog["contexts"])?
+            !contexts
                 .iter()
                 .flat_map(|c| c["commands"].as_array().into_iter().flatten())
-                .any(|c| c["id"] == "rent-bicycle"),
-            "direct rental must not be advertised"
+                .any(|c| matches!(
+                    c["id"].as_str(),
+                    Some("rent-bicycle" | "process-rental-payment" | "settle-rental-deposit")
+                )),
+            "obsolete commands must not be advertised"
         );
         dispatch("register-bicycle", "normal-before-test-reset", "accepted")?;
         let definitions =
             client.get(text(&catalog["behavioralTest"]["definitionsHref"])?, "test")?;
-        ensure!(
-            array(&definitions["items"])?.len() == 7,
-            "expected seven host definitions"
-        );
-        for definition in array(&definitions["items"])? {
+        let definitions = array(&definitions["items"])?.as_slice();
+        ensure!(definitions.len() == 7, "expected seven host definitions");
+        let selected = std::env::var("ROSTFREI_BIKE_HOST_SCENARIO")
+            .ok()
+            .map(|id| {
+                definitions
+                    .iter()
+                    .find(|definition| definition["id"] == id)
+                    .with_context(|| format!("unknown bike-rental host scenario: {id}"))
+            })
+            .transpose()?;
+        for definition in selected.map_or(definitions, std::slice::from_ref) {
             let report = client
                 .request(
                     text(&definition["runHref"])?,
@@ -329,6 +374,12 @@ pub fn bike_host(studio: bool) -> Result<()> {
         dispatch("register-bicycle", "normal-after-test-reset", "rejected")?;
         if studio {
             let mut browser = env.clone();
+            if let Some(definition) = selected {
+                browser.insert(
+                    "ROSTFREI_BIKE_HOST_STUDIO_SCENARIO_NAME".into(),
+                    text(&definition["name"])?.into(),
+                );
+            }
             browser.insert(
                 "VITE_TRACER_TARGET".into(),
                 env["ROSTFREI_TRACER_URL"].clone(),

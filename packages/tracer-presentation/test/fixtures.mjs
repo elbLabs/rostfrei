@@ -1,16 +1,17 @@
-// Synthetic presentation fixtures, not evidence of a runtime execution. Business
-// names/payloads come from the registered example; IDs mirror Studio's fixtures.
+// Synthetic presentation fixtures, not evidence of a runtime execution. The
+// test-only direct-rental definition mirrors Studio's compatibility fixtures.
 import definition from '../../../examples/bike-rental/tests/support/definitions/rent-available-bicycle.json' with { type: 'json' }
 import fixture from '../../../examples/bike-rental/fixtures/demo-fleet.json' with { type: 'json' }
 
 export function savedEvidence() {
   const nodes = definition.expected.graphs[0].nodes
+  const command = nodes[0]
   const ids = ['command-rent', 'event-rented', 'integration-started']
   const messages = nodes.map((node, index) => ({
     kind: node.kind,
     messageId: ids[index],
     correlationId: 'correlation-1',
-    ...(index ? { causationId: ids[index - 1] } : { context: 'bike-rental' }),
+    ...(index ? { causationId: ids[index - 1] } : { context: command.context }),
     observationOrder: index,
     name: node.name,
     schemaVersion: node.schemaVersion,
@@ -26,8 +27,8 @@ export function savedEvidence() {
   }
   const operation = {
     operationId: 'operation-1', correlationId: 'correlation-1', mode: 'test',
-    status: 'completed', context: 'bike-rental', command: 'rent-bicycle',
-    schemaVersion: 2, latestEventId: 5,
+    status: 'completed', context: command.context, command: command.name,
+    schemaVersion: command.schemaVersion, latestEventId: 5,
     operationEventsHref: '/operations/operation-1/events',
     correlationEventsHref: '/correlations/correlation-1/events',
     messageSeriesHref: '/operations/operation-1/message-series',
@@ -60,9 +61,10 @@ export function savedEvidence() {
 }
 
 export function simulation() {
+  const command = definition.expected.graphs[0].nodes[0]
   return {
-    kind: 'handlerSimulation', committed: false, context: 'bike-rental',
-    command: 'rent-bicycle', schemaVersion: 2, outcome: { decision: 'accepted' },
+    kind: 'handlerSimulation', committed: false, context: command.context,
+    command: command.name, schemaVersion: command.schemaVersion, outcome: { decision: 'accepted' },
     streams: [{
       aggregateType: 'RentalFleet', aggregateId: 'city-fleet',
       baseStreamVersion: '18446744073709551614', readGuard: false,

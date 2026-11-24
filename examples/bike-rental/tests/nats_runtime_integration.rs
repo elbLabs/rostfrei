@@ -8,8 +8,7 @@
 
 mod support;
 rostfrei::install_macro_support!();
-use bike_rental::tracer;
-use support::{BikeRentalNatsRuntime, RentBicycle, RentBicycleHandler};
+use support::{BikeRentalNatsRuntime, RentBicycle};
 
 use std::{
     error::Error,
@@ -29,25 +28,30 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bike_rental::{
-    BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
+    BicycleRentalStarted, BikeRentalNatsConfig, BikeRentalNatsResourceLimits, FINANCE_CONTEXT,
+    RENTAL_CONTEXT, WORKSHOP_CONTEXT,
     demo::{
         demo_fixture, demo_stream, no_rental_fleets_fixture, rented_demo_fixture,
         reservable_branch_fixture, seed_demo,
     },
-    payments::{PaymentProvider, PaymentResult, SandboxPaymentProvider},
+    payments::{
+        CollectionPaymentDecided, CollectionPaymentRequested, PaymentProvider, PaymentResult,
+        RentalPaymentChargeReady, RentalReturnAssessed, SandboxPaymentProvider,
+    },
     rental_fleet::{
-        BicycleRented, BicycleReturned, RegisterBicycle, RegisterBicycleHandler,
-        RentalFleetAggregate, ReserveBicycleCategory, ReserveBicycleCategoryHandler, ReturnBicycle,
-        ReturnBicycleHandler, TransferBicycle, TransferBicycleHandler,
+        BicycleRented, BicycleReturned, RegisterBicycle, RentalFleetAggregate,
+        ReserveBicycleCategory, ReturnBicycle,
     },
     rental_payment::{CollectionPayment, PaymentId},
-    rental_tariff::{ConfigureRentalTariff, ConfigureRentalTariffHandler},
+    rental_tariff::{ConfigureRentalTariff, RentalTariffAggregate},
+    tracer,
+    workshop::BicycleMaintenanceRequested,
 };
 use http_body_util::BodyExt as _;
 use rostfrei::messaging::{
-    CausationId, CommandResponse, CommandResponseOutcome, ConsumerConfig, CorrelationId,
-    IntegrationEventEnvelope, MessageId, OperationId as MessagingOperationId, RetryDelay,
-    SchemaVersion,
+    CausationId, CommandAddress, CommandResponse, CommandResponseOutcome, ConsumerConfig,
+    CorrelationId, IntegrationEventEnvelope, MessageId, OperationId as MessagingOperationId,
+    RetryDelay, SchemaVersion,
 };
 use rostfrei::nats::{
     CORRELATION_ID_HEADER, IntegrationEventSubject, NatsConnection, NatsConnectionConfig,
@@ -57,14 +61,15 @@ use rostfrei::testing::integration::nats_url as required_nats_url;
 use rostfrei::tracer::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandTransportObserver,
     ExpectedMessageKind, ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository,
-    ObservedMessageSeries, OperationMode, TestRepository, TestScenarioReset,
-    command_execution_fingerprint,
+    NatsApplication, NatsRuntime, ObservedMessageSeries, OperationMode, TestRepository,
+    TestScenarioReset, TracerConfig, command_execution_fingerprint,
     http::{self, HttpConfig},
 };
 use rostfrei::{
     Aggregate, Command, CommandBus, CommandMessageAdapter, DomainEvent, EventHistory,
-    IntegrationCommandMapper, IntegrationEventCommandHandler, OperationId, OutcomeReader as _,
-    RecordedEvent, command_message_id, command_response_message_id, integration_message_id,
+    IntegrationCommandMapper, IntegrationEvent, IntegrationEventCommandHandler, OperationId,
+    OutcomeReader as _, RecordedEvent, command_message_id, command_response_message_id,
+    integration_message_id,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -77,6 +82,51 @@ use tower::ServiceExt as _;
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 const API_TOKEN: &str = "behavioral-integration-capability";
+
+fn context_runtime<'a>(app: &'a NatsApplication, context: &str) -> TestResult<&'a NatsRuntime> {
+    app.runtime_for(context)
+        .map(Arc::as_ref)
+        .ok_or_else(|| io::Error::other(format!("missing runtime for {context}")).into())
+}
+
+async fn start_contexts(
+    provider: Arc<dyn PaymentProvider>,
+    fixture: rostfrei::fixtures::Fixture,
+) -> TestResult<(
+    NatsConnection,
+    tracer::ContextConfigurations,
+    NatsApplication,
+)> {
+    let scope = unique_scope()?;
+    let configs = tracer::configurations_with_payments(
+        &scope,
+        rostfrei::TrafficScope::Test,
+        BikeRentalNatsResourceLimits::from_env()?,
+        provider,
+    )?
+    .with_fresh_outcomes()?;
+    let connection = connect(&NatsConnectionConfig::new(&scope, required_nats_url()?)).await?;
+    let app = configs
+        .application_builder(connection.clone())?
+        .with_initial_fixture(fixture)
+        .provision_and_start()
+        .await?;
+    Ok((connection, configs, app))
+}
+
+async fn stop_contexts(
+    connection: &NatsConnection,
+    configs: &tracer::ContextConfigurations,
+    app: NatsApplication,
+) -> TestResult {
+    let stopped = app.shutdown().await;
+    let cleaned = cleanup_contexts(connection, configs).await;
+    let drained = connection.drain().await;
+    stopped?;
+    cleaned?;
+    drained?;
+    Ok(())
+}
 
 #[derive(Default)]
 struct RecordingObserver {
@@ -139,37 +189,28 @@ impl PaymentProvider for GatedSandboxRefund {
 
 #[tokio::test]
 async fn satisfactory_return_automatically_refunds_only_the_deposit_once() -> TestResult {
-    let scope = unique_scope()?;
     let provider = Arc::new(GatedSandboxRefund {
         entered: Notify::new(),
         release: Semaphore::new(0),
         calls: Mutex::new(Vec::new()),
     });
-    let bindings = Arc::new(tracer::command_bindings_with_payments(provider.clone())?);
-    let config = BikeRentalNatsConfig::for_bindings(
-        &scope,
-        rostfrei::TrafficScope::Test,
-        BikeRentalNatsResourceLimits::from_env()?,
-        &bindings,
-    )?
-    .with_fresh_outcomes()?;
-    let connection = connect(&NatsConnectionConfig::new(&scope, required_nats_url()?)).await?;
-    let runtime = rostfrei::tracer::NatsRuntime::provision(
-        connection.clone(),
-        config.host_config().clone(),
-        bindings,
+    let (connection, configs, app) = start_contexts(
+        provider.clone(),
+        bike_rental::demo::booked_city_bike_fixture()?,
     )
     .await?;
     let result: TestResult = async {
-        runtime.apply_fixture(&bike_rental::demo::booked_city_bike_fixture()?).await?;
-        runtime.start_workers().await?;
-        ensure(runtime.config().commands.iter().all(|route| !route.address().as_str().ends_with(".rent-bicycle")), "direct rental must not have an application command consumer")?;
+        let runtime = context_runtime(&app, RENTAL_CONTEXT)?;
+        let finance = context_runtime(&app, FINANCE_CONTEXT)?;
+        ensure(configs.contexts().all(|(config, _)| config.commands.iter().all(|route| route.address().name() != "rent-bicycle")), "direct rental must not have an application command consumer")?;
         let catalog = serde_json::to_value(runtime.tracer_builder().build()?.catalog())?;
         ensure(!catalog["contexts"].as_array().into_iter().flatten().flat_map(|context| context["commands"].as_array().into_iter().flatten()).any(|command| command["id"] == "rent-bicycle"), "direct rental must not be in the application catalog")?;
         let collected = runtime.transport().invoke(invocation("collect-for-refund", "refund-flow", "collect-reserved-bicycle", 1, collection_payload("payment-42", "sandbox-approved"))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(collected.outcome(), CommandOutcome::Accepted), "collection failed")?;
-        let paid = wait_for_payment(&runtime.store(), "payment-42").await?;
-        let premature = runtime.transport().invoke(invocation("refund-before-return", "refund-flow", "refund-eligible-rental-deposit", 1, json!({"payment_id":"payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
+        let paid = wait_for_payment(&finance.store(), "payment-42").await?;
+        let hired = wait_for_events(&runtime.store(), &demo_stream(), 6).await?;
+        ensure(hired.len() == 6 && hired[4].event_type() == "bicycle-rented", "the approved receipt must start the rental before return")?;
+        let premature = finance.transport().invoke(invocation("refund-before-return", "refund-flow", "refund-eligible-rental-deposit", 1, json!({"payment_id":"payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(premature.outcome(), CommandOutcome::Rejected(_)) && provider.calls.lock().await.is_empty(), "an unreturned rental must not contact the refund provider")?;
         let request = invocation("return-for-refund", "refund-flow", "return-bicycle", 2, json!({"fleet_id":"city-fleet", "bicycle_id":"bike-42", "returned_at":"2026-12-01T17:00:00Z"}))?;
         let returned = runtime.transport().invoke(request.clone(), Arc::new(RecordingObserver::default())).await?;
@@ -177,36 +218,32 @@ async fn satisfactory_return_automatically_refunds_only_the_deposit_once() -> Te
         tokio::time::timeout(Duration::from_secs(10), provider.entered.notified()).await?;
         let history = runtime.store().load(&demo_stream()).await?;
         ensure(history.len() == 8 && history[6].event_type() == "bicycle-returned" && history[7].event_type() == "reserved-bicycle-returned", "physical return and reservation return must both persist before refund confirmation")?;
-        ensure_one_operation(&runtime.store(), &config, &[&history[6], &history[7]]).await?;
+        ensure_one_operation(&runtime.store(), RENTAL_CONTEXT, &[&history[6], &history[7]]).await?;
         let fleet = rostfrei::CommandExecutor::new(runtime.store()).rehydrate::<RentalFleetAggregate>(&demo_stream()).await?;
         ensure(fleet.state().bicycles()[0].status() == bike_rental::rental_fleet::BicycleStatus::Available, "the bicycle must already be available while the refund is pending")?;
-        ensure(runtime.store().load(&payment_stream("payment-42")?).await? == paid, "refund must not be recorded before provider confirmation")?;
+        ensure(finance.store().load(&payment_stream("payment-42")?).await? == paid, "refund must not be recorded before provider confirmation")?;
         ensure(*provider.calls.lock().await == vec![json!({"payment_id":"payment-42", "charge_reference":"sandbox:payment-42", "currency":"EUR", "amount_minor":10000})], "refund must use the original charge and deposit, not the rental charge")?;
         let repeated = runtime.transport().invoke(request, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(repeated.outcome(), CommandOutcome::Accepted), "return retry did not replay")?;
         provider.release.add_permits(1);
-        let refunded = tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                let events = runtime.store().load(&payment_stream("payment-42")?).await?;
-                if events.len() == 3 { return TestResult::Ok(events); }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        }).await??;
-        let payload: Value = serde_json::from_slice(refunded[2].payload())?;
-        ensure(refunded[2].event_type() == "security-deposit-refunded" && payload["amount_minor"] == 10000 && payload["currency"] == "EUR", "full deposit refund was not persisted")?;
-        let repeated = runtime.transport().invoke(invocation("refund-again", "refund-flow", "refund-eligible-rental-deposit", 1, json!({"payment_id":"payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
+        let refunded = wait_for_events(&finance.store(), &payment_stream("payment-42")?, 4).await?;
+        ensure(refunded.len() == 4 && refunded[2].event_type() == "rental-return-eligibility-recorded", "Finance must record return eligibility once before its refund")?;
+        let payload: Value = serde_json::from_slice(refunded[3].payload())?;
+        ensure(refunded[3].event_type() == "security-deposit-refunded" && payload["amount_minor"] == 10000 && payload["currency"] == "EUR", "full deposit refund was not persisted")?;
+        let assessment = integration_from::<RentalReturnAssessed>(&connection, &configs, &history[7]).await?;
+        ensure(assessment.payload()["eligible"] == true, "on-time undamaged return was not assessed as refundable")?;
+        ensure_operation(&finance.store(), FINANCE_CONTEXT, &[&refunded[2], &refunded[3]], Some((assessment.message_id(), "assess-rental-return"))).await?;
+        let repeated = finance.transport().invoke(invocation("refund-again", "refund-flow", "refund-eligible-rental-deposit", 1, json!({"payment_id":"payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(repeated.outcome(), CommandOutcome::Accepted) && provider.calls.lock().await.len() == 1, "completed settlement must replay without contacting the provider")?;
-        ensure(runtime.store().load(&payment_stream("payment-42")?).await? == refunded && runtime.store().load(&demo_stream()).await? == history, "retries duplicated refund or return effects")?;
+        ensure(finance.store().load(&payment_stream("payment-42")?).await? == refunded && runtime.store().load(&demo_stream()).await? == history, "retries duplicated refund or return effects")?;
+        ensure_owned_effect(&refunded[3], "finance/rental-payment")?;
+        ensure_owned_effect(&history[7], "rental/rental-fleet")?;
         Ok(())
     }.await;
     provider.release.close();
-    runtime.stop_workers().await;
-    let cleaned = cleanup(&connection, [&config]).await;
-    let drained = connection.drain().await;
+    let cleaned = stop_contexts(&connection, &configs, app).await;
     result?;
-    cleaned?;
-    drained?;
-    Ok(())
+    cleaned
 }
 
 #[tokio::test]
@@ -224,50 +261,44 @@ async fn late_return_keeps_the_deposit_while_returning_the_bicycle() -> TestResu
 }
 
 async fn return_keeps_deposit(returned_at: &str, damage_report: Option<&str>) -> TestResult {
-    let scope = unique_scope()?;
     let provider = Arc::new(GatedSandboxRefund {
         entered: Notify::new(),
         release: Semaphore::new(0),
         calls: Mutex::new(Vec::new()),
     });
-    let bindings = Arc::new(tracer::command_bindings_with_payments(provider.clone())?);
-    let config = BikeRentalNatsConfig::for_bindings(
-        &scope,
-        rostfrei::TrafficScope::Test,
-        BikeRentalNatsResourceLimits::from_env()?,
-        &bindings,
-    )?
-    .with_fresh_outcomes()?;
-    let connection = connect(&NatsConnectionConfig::new(&scope, required_nats_url()?)).await?;
-    let runtime = rostfrei::tracer::NatsRuntime::provision(
-        connection.clone(),
-        config.host_config().clone(),
-        bindings,
+    let (connection, configs, app) = start_contexts(
+        provider.clone(),
+        bike_rental::demo::booked_city_bike_fixture()?,
     )
     .await?;
     let result: TestResult = async {
-        runtime.apply_fixture(&bike_rental::demo::booked_city_bike_fixture()?).await?;
-        runtime.start_workers().await?;
-        runtime.transport().invoke(invocation("collect-for-review", "review-flow", "collect-reserved-bicycle", 1, collection_payload("payment-42", "sandbox-approved"))?, Arc::new(RecordingObserver::default())).await?;
-        let paid = wait_for_payment(&runtime.store(), "payment-42").await?;
+        let runtime = context_runtime(&app, RENTAL_CONTEXT)?;
+        let finance = context_runtime(&app, FINANCE_CONTEXT)?;
+        let collected = runtime.transport().invoke(invocation("collect-for-review", "review-flow", "collect-reserved-bicycle", 1, collection_payload("payment-42", "sandbox-approved"))?, Arc::new(RecordingObserver::default())).await?;
+        ensure(matches!(collected.outcome(), CommandOutcome::Accepted), "collection for review was not accepted")?;
+        let paid = wait_for_payment(&finance.store(), "payment-42").await?;
+        let hired = wait_for_events(&runtime.store(), &demo_stream(), 6).await?;
+        ensure(hired.len() == 6 && hired[4].event_type() == "bicycle-rented", "the approved receipt must start the rental before return")?;
         let returned = runtime.transport().invoke(invocation("return-for-review", "review-flow", "return-bicycle", 2, json!({"fleet_id":"city-fleet", "bicycle_id":"bike-42", "returned_at":returned_at, "damage_report":damage_report}))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(returned.outcome(), CommandOutcome::Accepted), "review must not prevent recording the physical return")?;
-        let settled = runtime.transport().invoke(invocation("settle-held-deposit", "review-flow", "refund-eligible-rental-deposit", 1, json!({"payment_id":"payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
+        let history = wait_for_events(&runtime.store(), &demo_stream(), if damage_report.is_some() { 9 } else { 8 }).await?;
+        let returned = history.iter().find(|event| event.event_type() == "reserved-bicycle-returned").ok_or("missing reservation return")?;
+        let assessment = integration_from::<RentalReturnAssessed>(&connection, &configs, returned).await?;
+        let reviewed = wait_for_events(&finance.store(), &payment_stream("payment-42")?, 3).await?;
+        ensure(reviewed.len() == 3 && reviewed[..2] == paid && reviewed[2].event_type() == "rental-return-eligibility-recorded" && assessment.payload()["eligible"] == false, "Finance must record that the return is not eligible without refunding")?;
+        ensure_operation(&finance.store(), FINANCE_CONTEXT, &[&reviewed[2]], Some((assessment.message_id(), "assess-rental-return"))).await?;
+        let settled = finance.transport().invoke(invocation("settle-held-deposit", "review-flow", "refund-eligible-rental-deposit", 1, json!({"payment_id":"payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(settled.outcome(), CommandOutcome::Accepted), "settlement must accept retaining the deposit for review")?;
-        ensure(provider.calls.lock().await.is_empty() && runtime.store().load(&payment_stream("payment-42")?).await? == paid, "a damaged or late return must retain the paid deposit without calling the provider")?;
+        ensure(provider.calls.lock().await.is_empty() && finance.store().load(&payment_stream("payment-42")?).await? == reviewed, "a damaged or late return must retain the paid deposit without calling the provider")?;
         let fleet = rostfrei::CommandExecutor::new(runtime.store()).rehydrate::<RentalFleetAggregate>(&demo_stream()).await?;
         ensure(fleet.state().bicycles()[0].status() == bike_rental::rental_fleet::BicycleStatus::Available, "review must not keep the bicycle rented")?;
         ensure(fleet.state().bicycles()[0].condition() == if damage_report.is_some() { bike_rental::rental_fleet::BicycleCondition::MaintenanceRequired } else { bike_rental::rental_fleet::BicycleCondition::Serviceable }, "return lost the bicycle condition")?;
         Ok(())
     }.await;
     provider.release.close();
-    runtime.stop_workers().await;
-    let cleaned = cleanup(&connection, [&config]).await;
-    let drained = connection.drain().await;
+    let cleaned = stop_contexts(&connection, &configs, app).await;
     result?;
-    cleaned?;
-    drained?;
-    Ok(())
+    cleaned
 }
 
 struct GatedSandboxPayment {
@@ -301,7 +332,7 @@ impl PaymentProvider for GatedSandboxPayment {
 
 fn payment_stream(id: &str) -> TestResult<rostfrei::StreamId> {
     Ok(rostfrei::StreamId::new(
-        rostfrei::StreamAggregateType::new("bike-rental/rental-payment")?,
+        rostfrei::StreamAggregateType::new("finance/rental-payment")?,
         rostfrei::StreamAggregateId::new(id)?,
     ))
 }
@@ -312,13 +343,22 @@ fn collection_payload(payment: &str, method: &str) -> Value {
 
 async fn ensure_one_operation(
     store: &rostfrei::nats::NatsEventStore,
-    config: &BikeRentalNatsConfig,
+    context: &str,
     events: &[&RecordedEvent],
+) -> TestResult {
+    ensure_operation(store, context, events, None).await
+}
+
+async fn ensure_operation(
+    store: &rostfrei::nats::NatsEventStore,
+    context: &str,
+    events: &[&RecordedEvent],
+    cause: Option<(&MessageId, &str)>,
 ) -> TestResult {
     let first = events.first().ok_or("operation has no events")?;
     let key = rostfrei::OutcomeKey::new(
         store.authority().clone(),
-        config.context().name().clone(),
+        rostfrei::messaging::BoundedContextName::new(context)?,
         first.operation_id().clone(),
     );
     let rostfrei::OutcomeLookup::Completed(outcome) = store.lookup_outcome(&key).await? else {
@@ -330,109 +370,264 @@ async fn ensure_one_operation(
             && recorded.len() == events.len()
             && events.iter().all(|event| recorded.contains(event)),
         "one accepted operation receipt must contain all expected effects",
+    )?;
+    if let Some((cause, command)) = cause {
+        ensure(
+            outcome.marker().evidence().is_some_and(|evidence| {
+                evidence.original_causation.as_deref() == Some(cause.as_str())
+                    && evidence.command_type == command
+                    && evidence.events_caused_by_command
+            }),
+            &format!(
+                "{} must be causally linked to integration message {cause}",
+                first.event_type()
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_owned_effect(event: &RecordedEvent, aggregate_type: &str) -> TestResult {
+    let actual = event.stream_id().aggregate_type().as_str();
+    ensure(
+        actual == aggregate_type,
+        &format!(
+            "{} must persist in {aggregate_type}; recorded in {actual}",
+            event.event_type()
+        ),
     )
 }
 
-async fn wait_for_payment(store: &impl EventHistory, id: &str) -> TestResult<Vec<RecordedEvent>> {
-    let stream = payment_stream(id)?;
+async fn wait_for_events(
+    store: &impl EventHistory,
+    stream: &rostfrei::StreamId,
+    expected: usize,
+) -> TestResult<Vec<RecordedEvent>> {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let events = store.load(&stream).await?;
-            if events.len() == 2 {
+            let events = store.load(stream).await?;
+            if events.len() >= expected {
                 return TestResult::Ok(events);
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
-    .await?
+    .await
+    .map_err(|_| {
+        io::Error::other(format!(
+            "timed out waiting for {expected} events in {stream:?}"
+        ))
+    })?
+}
+
+async fn wait_for_payment(store: &impl EventHistory, id: &str) -> TestResult<Vec<RecordedEvent>> {
+    let events = wait_for_events(store, &payment_stream(id)?, 2).await?;
+    ensure(
+        events.len() == 2,
+        "payment must have one request and one decision",
+    )?;
+    Ok(events)
+}
+
+async fn integration_from<E: IntegrationEvent>(
+    connection: &NatsConnection,
+    configs: &tracer::ContextConfigurations,
+    source: &RecordedEvent,
+) -> TestResult<IntegrationEventEnvelope<Value>> {
+    let context = configs
+        .runtime_config(E::BOUNDED_CONTEXT.ok_or("missing publisher context")?)
+        .ok_or("publisher runtime is not configured")?;
+    let address = context.context.integration_event_address(E::EVENT_NAME)?;
+    let correlation = source
+        .correlation_id()
+        .ok_or("source event has no correlation")?;
+    let subject = IntegrationEventSubject::new(
+        address.clone(),
+        correlation.clone(),
+        Some(CausationId::new(source.event_id().as_str())?),
+    )?;
+    let expected_id = integration_message_id(
+        &address,
+        SchemaVersion::new(E::SCHEMA_VERSION)?,
+        source.event_id(),
+    )?;
+    let stream = connection
+        .jetstream()
+        .get_stream(
+            context
+                .messaging
+                .topology()
+                .integration_event_stream()
+                .as_str(),
+        )
+        .await?;
+    let raw = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match stream.get_last_raw_message_by_subject(subject.as_str()).await {
+                Ok(raw) => break Ok(raw),
+                Err(error) if error.kind() == async_nats::jetstream::stream::LastRawMessageErrorKind::NoMessageFound => {},
+                Err(error) => return Err(error),
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }).await.map_err(|_| io::Error::other(format!("timed out waiting for {} caused by {}", E::EVENT_NAME, source.event_id())))??;
+    let envelope: IntegrationEventEnvelope<Value> = serde_json::from_slice(&raw.payload)?;
+    ensure(
+        envelope.message_id() == &expected_id
+            && envelope.correlation_id() == correlation
+            && envelope.causation_id().map(CausationId::as_str) == Some(source.event_id().as_str()),
+        "integration receipt must identify the committed source event and retain its correlation",
+    )?;
+    Ok(envelope)
+}
+
+async fn replay_integration<E: IntegrationEvent>(
+    connection: &NatsConnection,
+    configs: &tracer::ContextConfigurations,
+    app: &NatsApplication,
+    destination: &str,
+) -> TestResult {
+    let config = configs
+        .runtime_config(destination)
+        .ok_or("destination runtime is not configured")?;
+    let consumer = config
+        .integrations
+        .iter()
+        .find(|route| route.address().name() == E::EVENT_NAME)
+        .ok_or("integration consumer is not configured")?;
+    let runtime = context_runtime(app, destination)?;
+    let stream_name = config
+        .messaging
+        .topology()
+        .integration_event_stream()
+        .as_str();
+    let durable = consumer.durable_name().as_str();
+    wait_for_consumer_acknowledgement(connection, stream_name, durable).await?;
+    runtime.stop_workers().await;
+    // Recreate only the selected subscription, retaining the source messages,
+    // owning store and command replay evidence. This forces real broker redelivery.
+    let stream = connection.jetstream().get_stream(stream_name).await?;
+    ensure(
+        stream.delete_consumer(durable).await?.success,
+        "broker did not delete the selected integration subscription",
+    )?;
+    provision_durable_consumer(
+        connection.jetstream(),
+        config.messaging.topology(),
+        consumer,
+    )
+    .await?;
+    runtime.start_workers().await?;
+    wait_for_consumer_acknowledgement(connection, stream_name, durable).await
 }
 
 #[tokio::test]
 async fn collection_waits_for_payment_and_commits_finance_and_rental_once() -> TestResult {
-    let scope = unique_scope()?;
     let provider = Arc::new(GatedSandboxPayment {
         entered: Notify::new(),
         release: Semaphore::new(0),
         calls: AtomicUsize::new(0),
     });
-    let bindings = Arc::new(tracer::command_bindings_with_payments(provider.clone())?);
-    let config = BikeRentalNatsConfig::for_bindings(
-        &scope,
-        rostfrei::TrafficScope::Test,
-        BikeRentalNatsResourceLimits::from_env()?,
-        &bindings,
-    )?
-    .with_fresh_outcomes()?;
-    let connection = connect(&NatsConnectionConfig::new(&scope, required_nats_url()?)).await?;
-    let runtime = rostfrei::tracer::NatsRuntime::provision(
-        connection.clone(),
-        config.host_config().clone(),
-        bindings,
+    let (connection, configs, app) = start_contexts(
+        provider.clone(),
+        bike_rental::demo::booked_city_bike_fixture()?,
     )
     .await?;
     let result: TestResult = async {
-        runtime.apply_fixture(&bike_rental::demo::booked_city_bike_fixture()?).await?;
-        runtime.start_workers().await?;
+        let runtime = context_runtime(&app, RENTAL_CONTEXT)?;
+        let finance = context_runtime(&app, FINANCE_CONTEXT)?;
         let receipt = runtime.transport().invoke(invocation("collect", "collection-flow", "collect-reserved-bicycle", 1, collection_payload("payment-42", "sandbox-approved"))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(receipt.outcome(), CommandOutcome::Accepted), "collection was not accepted")?;
         tokio::time::timeout(Duration::from_secs(10), provider.entered.notified()).await?;
         let fleet_events = runtime.store().load(&demo_stream()).await?;
-        let payment_events = runtime.store().load(&payment_stream("payment-42")?).await?;
+        let payment_events = finance.store().load(&payment_stream("payment-42")?).await?;
         ensure(fleet_events.len() == 4 && fleet_events[3].event_type() == "bicycle-collection-requested" && payment_events.len() == 1,
             "before provider confirmation only the hold and payment request may persist")?;
-        ensure_one_operation(&runtime.store(), &config, &[&fleet_events[3], &payment_events[0]]).await?;
+        ensure_owned_effect(&payment_events[0], "finance/rental-payment")?;
+        ensure_owned_effect(&fleet_events[3], "rental/rental-fleet")?;
+        ensure_one_operation(&runtime.store(), RENTAL_CONTEXT, &[&fleet_events[3]]).await?;
+        let requested = integration_from::<CollectionPaymentRequested>(&connection, &configs, &fleet_events[3]).await?;
+        ensure_operation(&finance.store(), FINANCE_CONTEXT, &[&payment_events[0]], Some((requested.message_id(), "record-rental-payment-request"))).await?;
+        ensure(runtime.store().authority() != finance.store().authority()
+            && runtime.store().load(&payment_stream("payment-42")?).await?.is_empty()
+            && finance.store().load(&demo_stream()).await?.is_empty(), "Rental and Finance effects must be physically isolated by context")?;
+        ensure(fleet_events[3].correlation_id().is_some() && fleet_events[3].correlation_id() == payment_events[0].correlation_id(), "Finance request must retain the Rental hold's correlation")?;
         let payload: Value = serde_json::from_slice(payment_events[0].payload())?;
         ensure(payload["details"]["quote"] == json!({"currency": "EUR", "rental_charge_minor": 2500, "security_deposit_minor": 10000}), "payment request must preserve rent and refundable deposit separately")?;
         let repeated = runtime.transport().invoke(invocation("repeat-collection-new-request", "collection-flow", "collect-reserved-bicycle", 1, collection_payload("payment-42", "sandbox-approved"))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(repeated.outcome(), CommandOutcome::Accepted), "logical collection retry was not accepted")?;
-        let mut conflicting_payload = collection_payload("payment-42", "sandbox-approved");
-        conflicting_payload["fleet_id"] = json!("harbor-fleet");
-        let conflicting = runtime.transport().invoke(invocation("reuse-payment-other-branch", "collection-flow", "collect-reserved-bicycle", 1, conflicting_payload)?, Arc::new(RecordingObserver::default())).await?;
-        ensure(matches!(conflicting.outcome(), CommandOutcome::Rejected(_)), "a payment identity must not be adopted by another branch")?;
         let competing = runtime.transport().invoke(invocation("competing-collection", "collection-flow", "collect-reserved-bicycle", 1, collection_payload("competing-payment", "sandbox-approved"))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(competing.outcome(), CommandOutcome::Rejected(_)), "a second payment attempt must not claim a pending reservation")?;
-        ensure(runtime.store().load(&payment_stream("competing-payment")?).await?.is_empty(), "refused collection must not leave a partial payment request")?;
+        ensure(finance.store().load(&payment_stream("competing-payment")?).await?.is_empty(), "refused collection must not leave a partial payment request")?;
         ensure(runtime.store().load(&demo_stream()).await? == fleet_events, "pending retries and refusals must preserve the hold")?;
+        runtime.stop_workers().await;
         provider.release.add_permits(1);
-        let paid = wait_for_payment(&runtime.store(), "payment-42").await?;
-        let final_fleet = runtime.store().load(&demo_stream()).await?;
+        let paid = wait_for_payment(&finance.store(), "payment-42").await?;
+        let decided = integration_from::<CollectionPaymentDecided>(&connection, &configs, &paid[1]).await?;
+        ensure(decided.payload() == &json!({"payment_id":"payment-42", "fleet_id":"city-fleet", "reservation_id":"booking-42", "bicycle_id":"bike-42", "outcome":"approved"}), "Finance receipt omitted the approved collection identity")?;
+        ensure(runtime.store().load(&demo_stream()).await? == fleet_events, "Finance can commit and publish approval while Rental is stopped, but must not write Rental state")?;
+        runtime.start_workers().await?;
+        let final_fleet = wait_for_events(&runtime.store(), &demo_stream(), 6).await?;
         let decision: Value = serde_json::from_slice(paid[1].payload())?;
         ensure(paid[1].event_type() == "rental-payment-approved" && decision["provider_reference"] == "sandbox:payment-42" && decision.get("outcome").is_none(), "provider approval must be an explicit fact")?;
         ensure(final_fleet.len() == 6 && final_fleet[4].event_type() == "bicycle-rented" && final_fleet[5].event_type() == "reserved-bicycle-collected", "approval must start exactly one rental")?;
-        ensure_one_operation(&runtime.store(), &config, &[&paid[1], &final_fleet[4], &final_fleet[5]]).await?;
-        let replay = runtime.transport().invoke(invocation("repeat-provider-processing", "collection-flow", "collect-rental-payment", 1, json!({"payment_id": "payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
+        ensure_owned_effect(&paid[1], "finance/rental-payment")?;
+        let charge_ready = integration_from::<RentalPaymentChargeReady>(&connection, &configs, &paid[0]).await?;
+        ensure_operation(&finance.store(), FINANCE_CONTEXT, &[&paid[1]], Some((charge_ready.message_id(), "collect-rental-payment"))).await?;
+        ensure_operation(&runtime.store(), RENTAL_CONTEXT, &[&final_fleet[4], &final_fleet[5]], Some((decided.message_id(), "resolve-bicycle-collection"))).await?;
+        ensure(paid[1].operation_id() != final_fleet[4].operation_id() && paid[1].correlation_id() == final_fleet[4].correlation_id() && final_fleet[4].causation_id().is_some(), "the Finance decision must cause a separate Rental operation in the same conversation")?;
+        let replay = finance.transport().invoke(invocation("repeat-provider-processing", "collection-flow", "collect-rental-payment", 1, json!({"payment_id": "payment-42"}))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(replay.outcome(), CommandOutcome::Accepted), "completed provider processing must replay")?;
+        replay_integration::<CollectionPaymentRequested>(&connection, &configs, &app, FINANCE_CONTEXT).await?;
+        replay_integration::<RentalPaymentChargeReady>(&connection, &configs, &app, FINANCE_CONTEXT).await?;
+        replay_integration::<CollectionPaymentDecided>(&connection, &configs, &app, RENTAL_CONTEXT).await?;
         ensure(provider.calls.load(Ordering::SeqCst) == 1, "logical retries must not contact the provider again")?;
-        ensure(runtime.store().load(&demo_stream()).await? == final_fleet && runtime.store().load(&payment_stream("payment-42")?).await? == paid, "payment processing retry duplicated durable effects")?;
+        ensure(runtime.store().load(&demo_stream()).await? == final_fleet && finance.store().load(&payment_stream("payment-42")?).await? == paid, "payment processing retry duplicated durable effects")?;
+        let harbor = bike_rental::rental_fleet::stream_id("harbor-fleet")?;
+        for (operation, command, version, payload) in [
+            ("configure-city-tariff", ConfigureRentalTariff::LOCAL_ID, ConfigureRentalTariff::SCHEMA_VERSION,
+                json!({"category":"city", "terms":{"currency":"EUR", "hourly_rate_minor":500, "daily_cap_minor":2500, "security_deposit_minor":10000}})),
+            ("add-harbor-bicycle", RegisterBicycle::LOCAL_ID, RegisterBicycle::SCHEMA_VERSION,
+                json!({"fleet_id":"harbor-fleet", "bicycle_id":"harbor-42", "condition":"serviceable", "category":"city"})),
+            ("book-harbor-bicycle", ReserveBicycleCategory::LOCAL_ID, ReserveBicycleCategory::SCHEMA_VERSION,
+                json!({"fleet_id":"harbor-fleet", "reservation_id":"harbor-booking", "customer_id":"customer-sam", "category":"city", "period":{"starts_at":"2026-12-01T09:00:00Z", "ends_at":"2026-12-01T17:00:00Z"}})),
+            ("reuse-payment-other-branch", "collect-reserved-bicycle", 1,
+                json!({"fleet_id":"harbor-fleet", "reservation_id":"harbor-booking", "bicycle_id":"harbor-42", "payment_id":"payment-42", "payment_method":"sandbox-approved"})),
+        ] {
+            let receipt = runtime.transport().invoke(invocation(operation, "payment-conflict-flow", command, version, payload)?, Arc::new(RecordingObserver::default())).await?;
+            ensure(matches!(receipt.outcome(), CommandOutcome::Accepted), &format!("{operation} was not accepted: {:?}", receipt.outcome()))?;
+        }
+        let harbor_events = wait_for_events(&runtime.store(), &harbor, 5).await?;
+        ensure(harbor_events.len() == 5 && harbor_events[3].event_type() == "bicycle-collection-requested" && harbor_events[4].event_type() == "bicycle-collection-cancelled", "the conflicting branch must get a hold and then release it without renting")?;
+        let payment = wait_for_events(&finance.store(), &payment_stream("payment-42")?, 3).await?;
+        ensure(payment.len() == 3 && payment[..2] == paid && payment[2].event_type() == "rental-payment-identity-conflict-recorded", "Finance must preserve the original processing and record the identity conflict once")?;
+        let requested = integration_from::<CollectionPaymentRequested>(&connection, &configs, &harbor_events[3]).await?;
+        ensure_operation(&finance.store(), FINANCE_CONTEXT, &[&payment[2]], Some((requested.message_id(), "record-rental-payment-request"))).await?;
+        let conflict = integration_from::<CollectionPaymentDecided>(&connection, &configs, &payment[2]).await?;
+        ensure(conflict.payload() == &json!({"payment_id":"payment-42", "fleet_id":"harbor-fleet", "reservation_id":"harbor-booking", "bicycle_id":"harbor-42", "outcome":"declined"}), "Finance must decline the conflicting identity without releasing the original booking")?;
+        ensure_operation(&runtime.store(), RENTAL_CONTEXT, &[&harbor_events[4]], Some((conflict.message_id(), "resolve-bicycle-collection"))).await?;
+        let rehydrated = rostfrei::CommandExecutor::new(runtime.store()).rehydrate::<RentalFleetAggregate>(&harbor).await?;
+        ensure(rehydrated.state().bicycles()[0].status() == bike_rental::rental_fleet::BicycleStatus::Available && rehydrated.state().reservations()[0].collection().is_none(), "the other branch's rejected attempt must free its bike but preserve its reservation")?;
+        ensure(runtime.store().load(&demo_stream()).await? == final_fleet && provider.calls.load(Ordering::SeqCst) == 1, "payment ID reuse changed the original rental or called the provider again")?;
         Ok(())
     }.await;
     provider.release.close();
-    runtime.stop_workers().await;
-    let cleaned = cleanup(&connection, [&config]).await;
-    let drained = connection.drain().await;
+    let cleaned = stop_contexts(&connection, &configs, app).await;
     result?;
-    cleaned?;
-    drained?;
-    Ok(())
+    cleaned
 }
 
 #[tokio::test]
 async fn declined_payment_releases_the_bicycle_and_keeps_the_booking_for_a_new_attempt()
 -> TestResult {
-    let scope = unique_scope()?;
-    let config = BikeRentalNatsConfig::new_test_with_resource_limits(
-        &scope,
-        BikeRentalNatsResourceLimits::from_env()?,
-    )?
-    .with_fresh_outcomes()?;
-    let connection = connect(&NatsConnectionConfig::new(&scope, required_nats_url()?)).await?;
-    let runtime =
-        BikeRentalNatsRuntime::provision_config(connection.clone(), config.clone()).await?;
+    let (connection, configs, app) = start_contexts(
+        Arc::new(SandboxPaymentProvider),
+        bike_rental::demo::booked_city_bike_fixture()?,
+    )
+    .await?;
     let result: TestResult = async {
-        runtime
-            .apply_fixture(&bike_rental::demo::booked_city_bike_fixture()?)
-            .await?;
-        runtime.start_workers().await?;
+        let runtime = context_runtime(&app, RENTAL_CONTEXT)?;
+        let finance = context_runtime(&app, FINANCE_CONTEXT)?;
         let declined = runtime
             .transport()
             .invoke(
@@ -450,17 +645,41 @@ async fn declined_payment_releases_the_bicycle_and_keeps_the_booking_for_a_new_a
             matches!(declined.outcome(), CommandOutcome::Accepted),
             "declining attempt was not requested",
         )?;
-        let denied = wait_for_payment(&runtime.store(), "declined-payment").await?;
+        let denied = wait_for_payment(&finance.store(), "declined-payment").await?;
         let denied_payload: Value = serde_json::from_slice(denied[1].payload())?;
         ensure(
             denied[1].event_type() == "rental-payment-declined"
                 && denied_payload.get("outcome").is_none(),
             "sandbox decline was not recorded",
         )?;
-        let events = runtime.store().load(&demo_stream()).await?;
+        let events = wait_for_events(&runtime.store(), &demo_stream(), 5).await?;
         ensure(
             events.len() == 5 && events[4].event_type() == "bicycle-collection-cancelled",
             "declined payment must release the hold without renting",
+        )?;
+        ensure_owned_effect(&denied[1], "finance/rental-payment")?;
+        ensure_owned_effect(&events[4], "rental/rental-fleet")?;
+        ensure_one_operation(&finance.store(), FINANCE_CONTEXT, &[&denied[1]]).await?;
+        let decided =
+            integration_from::<CollectionPaymentDecided>(&connection, &configs, &denied[1]).await?;
+        ensure(
+            decided.payload()["outcome"] == "declined"
+                && decided.payload()["payment_id"] == "declined-payment",
+            "decline receipt must identify its failed payment",
+        )?;
+        ensure_operation(
+            &runtime.store(),
+            RENTAL_CONTEXT,
+            &[&events[4]],
+            Some((decided.message_id(), "resolve-bicycle-collection")),
+        )
+        .await?;
+        ensure(
+            denied[1].operation_id() != events[4].operation_id()
+                && denied[1].correlation_id().is_some()
+                && denied[1].correlation_id() == events[4].correlation_id()
+                && events[4].causation_id().is_some(),
+            "the Finance decline must cause a separate Rental release in the same conversation",
         )?;
         let fleet = rostfrei::CommandExecutor::new(runtime.store())
             .rehydrate::<RentalFleetAggregate>(&demo_stream())
@@ -489,9 +708,15 @@ async fn declined_payment_releases_the_bicycle_and_keeps_the_booking_for_a_new_a
             matches!(next.outcome(), CommandOutcome::Accepted),
             "a new payment attempt must remain possible",
         )?;
-        let paid = wait_for_payment(&runtime.store(), "approved-payment").await?;
-        let final_events = runtime.store().load(&demo_stream()).await?;
-        let replay = runtime
+        let paid = wait_for_payment(&finance.store(), "approved-payment").await?;
+        let final_events = wait_for_events(&runtime.store(), &demo_stream(), 8).await?;
+        ensure(
+            final_events.len() == 8
+                && final_events[6].event_type() == "bicycle-rented"
+                && final_events[7].event_type() == "reserved-bicycle-collected",
+            "approval on the new attempt must start one rental",
+        )?;
+        let replay = finance
             .transport()
             .invoke(
                 invocation(
@@ -499,34 +724,44 @@ async fn declined_payment_releases_the_bicycle_and_keeps_the_booking_for_a_new_a
                     "decline-flow",
                     "collect-rental-payment",
                     1,
-                    json!({"payment_id": "declined-payment"}),
+                    json!({"payment_id":"declined-payment"}),
                 )?,
                 Arc::new(RecordingObserver::default()),
             )
             .await?;
         ensure(
             matches!(replay.outcome(), CommandOutcome::Accepted),
-            "old completed attempt must replay",
+            "old decline must replay without a new charge",
         )?;
+        replay_integration::<RentalPaymentChargeReady>(
+            &connection,
+            &configs,
+            &app,
+            FINANCE_CONTEXT,
+        )
+        .await?;
+        replay_integration::<CollectionPaymentDecided>(&connection, &configs, &app, RENTAL_CONTEXT)
+            .await?;
         ensure(
             runtime.store().load(&demo_stream()).await? == final_events
-                && runtime
+                && finance
                     .store()
                     .load(&payment_stream("approved-payment")?)
                     .await?
-                    == paid,
+                    == paid
+                && finance
+                    .store()
+                    .load(&payment_stream("declined-payment")?)
+                    .await?
+                    == denied,
             "old decline must not release a later successful rental",
         )?;
         Ok(())
     }
     .await;
-    runtime.stop_workers().await;
-    let cleaned = cleanup(&connection, [&config]).await;
-    let drained = connection.drain().await;
+    let cleaned = stop_contexts(&connection, &configs, app).await;
     result?;
-    cleaned?;
-    drained?;
-    Ok(())
+    cleaned
 }
 
 impl IntegrationCommandMapper<BicycleRentalStarted> for ReturnBicycleAfterRental {
@@ -568,6 +803,14 @@ async fn reservation_quotes_remain_fixed_after_tariff_changes() -> TestResult {
         let changed = runtime.transport().invoke(invocation("new-tariff", "quote-flow", "configure-rental-tariff", 1,
             json!({"category": "city", "terms": {"currency": "EUR", "hourly_rate_minor": 1000, "daily_cap_minor": 5000, "security_deposit_minor": 20000}}))?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(changed.outcome(), CommandOutcome::Accepted), "tariff update was not accepted")?;
+        let tariff_stream = rostfrei::StreamId::new(
+            rostfrei::StreamAggregateType::new(RentalTariffAggregate::aggregate_type().into_owned())?,
+            rostfrei::StreamAggregateId::new("city")?,
+        );
+        let tariff = runtime.store().load(&tariff_stream).await?;
+        ensure(tariff.len() == 2 && tariff[1].event_type() == "rental-tariff-configured", "tariff change must persist as a separate Rental aggregate effect")?;
+        ensure_owned_effect(&tariff[1], "rental/rental-tariff")?;
+        ensure_owned_effect(original_event, "rental/rental-fleet")?;
         let replay = runtime.transport().invoke(invocation("same-booking-new-request", "quote-flow", "reserve-bicycle-category", 1, booking)?, Arc::new(RecordingObserver::default())).await?;
         ensure(matches!(replay.outcome(), CommandOutcome::Accepted), "a tariff update must not turn the same booking into a conflict")?;
         ensure(runtime.store().load(&demo_stream()).await? == original, "same booking must preserve the original recorded quote")?;
@@ -675,17 +918,20 @@ async fn reservations_hold_only_serviceable_category_capacity_and_replay_without
 #[tokio::test]
 async fn damaged_return_blocks_hire_and_opens_one_repair_job() -> TestResult {
     let scope = unique_scope()?;
-    let config = BikeRentalNatsConfig::new_test_with_resource_limits(
+    let configs = tracer::configurations(
         &scope,
+        rostfrei::TrafficScope::Test,
         BikeRentalNatsResourceLimits::from_env()?,
     )?
     .with_fresh_outcomes()?;
     let connection = connect(&NatsConnectionConfig::new(&scope, required_nats_url()?)).await?;
-    let runtime =
-        BikeRentalNatsRuntime::provision_config(connection.clone(), config.clone()).await?;
+    let app = support::application_with_direct_command(&configs, connection.clone())?
+        .with_initial_fixture(rented_demo_fixture()?)
+        .provision_and_start()
+        .await?;
     let result: TestResult = async {
-        runtime.apply_fixture(&rented_demo_fixture()?).await?;
-        runtime.start_workers().await?;
+        let runtime = context_runtime(&app, RENTAL_CONTEXT)?;
+        let workshop = context_runtime(&app, WORKSHOP_CONTEXT)?;
         let payload = json!({
             "fleet_id": "city-fleet",
             "bicycle_id": "bike-42",
@@ -723,23 +969,20 @@ async fn damaged_return_blocks_hire_and_opens_one_repair_job() -> TestResult {
             "return and maintenance condition must be committed atomically",
         )?;
         let repair_stream = rostfrei::StreamId::new(
-            rostfrei::StreamAggregateType::new("bike-rental/repair-job")?,
+            rostfrei::StreamAggregateType::new("workshop/repair-job")?,
             rostfrei::StreamAggregateId::new(damage.event_id().as_str())?,
         );
-        let repair_history = tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                let history = runtime.store().load(&repair_stream).await?;
-                if !history.is_empty() {
-                    return TestResult::Ok(history);
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await??;
+        let repair_history = wait_for_events(&workshop.store(), &repair_stream, 1).await?;
+        ensure(workshop.store().authority() != runtime.store().authority()
+            && workshop.store().load(&demo_stream()).await?.is_empty()
+            && runtime.store().load(&repair_stream).await?.is_empty(), "Workshop repair and Rental damage must stay in separate stores")?;
         ensure(
             repair_history.len() == 1 && repair_history[0].event_type() == "repair-job-opened",
             "workshop must persist exactly one repair job",
         )?;
+        ensure_owned_effect(&repair_history[0], "workshop/repair-job")?;
+        ensure_owned_effect(damage, "rental/rental-fleet")?;
+        ensure_one_operation(&runtime.store(), RENTAL_CONTEXT, &[&history[3], damage]).await?;
         let repair: Value = serde_json::from_slice(repair_history[0].payload())?;
         ensure(
             repair["fleet_id"] == "city-fleet"
@@ -751,13 +994,7 @@ async fn damaged_return_blocks_hire_and_opens_one_repair_job() -> TestResult {
             repair_history[0].correlation_id() == damage.correlation_id(),
             "workshop handoff must preserve the return correlation",
         )?;
-        let notification = connection
-            .jetstream()
-            .get_stream(config.messaging().topology().integration_event_stream().as_str())
-            .await?
-            .get_raw_message(1)
-            .await?;
-        let notification: IntegrationEventEnvelope<Value> = serde_json::from_slice(&notification.payload)?;
+        let notification = integration_from::<BicycleMaintenanceRequested>(&connection, &configs, damage).await?;
         ensure(
             notification.causation_id().map(CausationId::as_str) == Some(damage.event_id().as_str())
                 && notification.payload()["source_event_id"] == damage.event_id().as_str()
@@ -765,6 +1002,15 @@ async fn damaged_return_blocks_hire_and_opens_one_repair_job() -> TestResult {
                 && notification.payload()["damage_report"] == "Rear brake does not engage",
             "workshop notification must carry the recorded damage and its explicit cause",
         )?;
+        ensure_operation(
+            &workshop.store(),
+            WORKSHOP_CONTEXT,
+            &[&repair_history[0]],
+            Some((notification.message_id(), "open-repair-job")),
+        )
+        .await?;
+        replay_integration::<BicycleMaintenanceRequested>(&connection, &configs, &app, WORKSHOP_CONTEXT).await?;
+        ensure(workshop.store().load(&repair_stream).await? == repair_history, "return retry and notification redelivery must not duplicate the repair job")?;
         let receipt = runtime
             .transport()
             .invoke(
@@ -789,13 +1035,9 @@ async fn damaged_return_blocks_hire_and_opens_one_repair_job() -> TestResult {
         Ok(())
     }
     .await;
-    runtime.stop_workers().await;
-    let cleaned = cleanup(&connection, [&config]).await;
-    let drained = connection.drain().await;
+    let cleaned = stop_contexts(&connection, &configs, app).await;
     result?;
-    cleaned?;
-    drained?;
-    Ok(())
+    cleaned
 }
 
 #[tokio::test]
@@ -849,8 +1091,9 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
     let nats_url = required_nats_url()?;
     let scope = unique_scope()?;
     let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
-    let test_config = BikeRentalNatsConfig::new_test_with_resource_limits(&scope, resource_limits)?
-        .with_fresh_completed_outcome_epoch("isolated-runtime-fixture")?;
+    let test_configs =
+        tracer::configurations(&scope, rostfrei::TrafficScope::Test, resource_limits)?
+            .with_fresh_completed_outcome_epoch("isolated-runtime-fixture")?;
     let connection = connect(
         &NatsConnectionConfig::new(format!("{scope}-behavioral-integration"), nats_url)
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
@@ -858,48 +1101,27 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
     .await?;
 
     let result: TestResult = async {
-        let test_runtime = Arc::new(
-            BikeRentalNatsRuntime::provision_config(connection.clone(), test_config.clone())
-                .await?,
-        );
-        let test_store = Arc::new(test_runtime.store());
-        let history: Arc<dyn EventHistory> = test_store.clone();
-        let test_reset: Arc<dyn TestScenarioReset> = test_runtime.clone();
         let test_repository: Arc<dyn TestRepository> = Arc::new(FilesystemTestRepository::load(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer"),
         )?);
-        let mut builder = support::tracer::builder(history)?
-            .with_test_event_store(test_store)
-            .with_test_transport(test_runtime.transport())
-            .with_test_scenario_reset(test_reset)
+        let app_config = TracerConfig::new(tokio::net::TcpListener::bind("127.0.0.1:0").await?, HttpConfig::new(API_TOKEN)?)
+            .with_test_repository(test_repository)
+            .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
+        let host = support::application_with_direct_command(&test_configs, connection.clone())?
+            .with_tracer(Some(app_config))
             .with_default_test_fixture(demo_fixture()?)
             .with_test_fixture(no_rental_fleets_fixture()?)
             .with_test_fixture(rented_demo_fixture()?)
             .with_test_fixture(reservable_branch_fixture()?)
             .with_test_fixture(bike_rental::demo::booked_city_bike_fixture()?)
-            .with_test_fixture(bike_rental::demo::pending_city_collection_fixture()?)
+            .with_test_fixture(bike_rental::demo::requested_rental_payment_fixture()?)
             .with_test_fixture(bike_rental::demo::returned_city_bike_fixture()?)
-            .with_test_repository(test_repository)
-            .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
-        builder.register_json::<RentBicycle, _>(RentBicycleHandler)?;
-        builder.register_json::<ReturnBicycle, _>(ReturnBicycleHandler)?;
-        builder.register_json::<RegisterBicycle, _>(RegisterBicycleHandler)?;
-        builder.register_json::<TransferBicycle, _>(TransferBicycleHandler)?;
-        builder.register_json::<ReserveBicycleCategory, _>(ReserveBicycleCategoryHandler)?;
-        builder.register_json::<ConfigureRentalTariff, _>(ConfigureRentalTariffHandler)?;
-        builder.register_json::<bike_rental::rental_fleet::CollectReservedBicycle, _>(bike_rental::rental_fleet::CollectReservedBicycleHandler)?;
-        builder.register_json::<bike_rental::rental_payment::CollectRentalPayment, _>(bike_rental::rental_payment::CollectRentalPaymentHandler { provider: Arc::new(SandboxPaymentProvider) })?;
-        builder.register_json::<bike_rental::rental_payment::RefundEligibleRentalDeposit, _>(bike_rental::rental_payment::RefundEligibleRentalDepositHandler { provider: Arc::new(SandboxPaymentProvider) })?;
-        builder.register_json::<bike_rental::repair_job::OpenRepairJob, _>(
-            bike_rental::repair_job::OpenRepairJobHandler,
-        )?;
-        let tracer = builder.build()?;
-        let correlation_worker = test_runtime
-            .start_correlation_observer(tracer.correlation_observer(OperationMode::Test))
-            .await?;
-        let app = http::router(tracer, HttpConfig::new(API_TOKEN)?);
+            .provision_and_start().await?;
 
         let run_result: TestResult = async {
+            let test_runtime = context_runtime(&host, RENTAL_CONTEXT)?;
+            let test_config = test_configs.rental();
+            let app = http::router(host.tracer().ok_or("host omitted Tracer")?.clone(), HttpConfig::new(API_TOKEN)?);
             let definition_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer");
             let response = app
                 .clone()
@@ -963,13 +1185,13 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
 
             let operation_id = required_json_str(&report, "/operationId")?;
             let correlation_id = required_json_str(&report, "/correlationId")?;
-            let command_context = "bike-rental";
+            let command_context = RENTAL_CONTEXT;
             let aggregate_type = RentalFleetAggregate::aggregate_type().into_owned();
             let command_payload = json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42"});
             let expected_command_message_id = command_message_id(
                 &test_runtime
                     .config()
-                    .context().command_address(RentBicycle::LOCAL_ID)?,
+                    .context.command_address(RentBicycle::LOCAL_ID)?,
                 &MessagingOperationId::new(operation_id)?,
                 command_execution_fingerprint(
                     command_context,
@@ -1083,15 +1305,15 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                 "durable command response is absent or linked to the wrong command",
             )?;
 
-            wait_for_history_len(&test_runtime, 3).await?;
-            let history = test_runtime.store().load(&demo_stream()).await?;
+            let history = wait_for_events(&test_runtime.store(), &demo_stream(), 3).await?;
+            ensure(history.len() == 3, "rental history contained extra effects")?;
             for (index, bicycle_id, condition, correlation_id) in [
-                (0, "bike-42", "serviceable", "fixture:demo-fleet:2:bike-42"),
+                (0, "bike-42", "serviceable", "fixture:demo-fleet:3:bike-42"),
                 (
                     1,
                     "bike-99",
                     "maintenance-required",
-                    "fixture:demo-fleet:2:bike-99",
+                    "fixture:demo-fleet:3:bike-99",
                 ),
             ] {
                 let fixture_event = history
@@ -1152,7 +1374,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
 
             let exact_integration_message_id = wait_for_integration_chain(
                 &connection,
-                &test_runtime,
+                test_config,
                 persisted_event,
                 expected_command_message_id.as_str(),
                 1,
@@ -1172,7 +1394,9 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                         })),
                 "observed integration event is not the exact published event",
             )?;
-            wait_for_command_stream_empty(&connection, &test_runtime).await?;
+            wait_for_command_stream_empty(&connection, test_config, [RENTAL_CONTEXT, FINANCE_CONTEXT, WORKSHOP_CONTEXT]
+                .into_iter().map(|context| context_runtime(&host, context)).collect::<TestResult<Vec<_>>>()?
+                .into_iter().flat_map(|runtime| runtime.config().commands.iter()).collect()).await?;
 
             let comparison_matches = report["comparison"]["matches"]
                 .as_array()
@@ -1294,7 +1518,7 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
                 if id == "return-rented-bicycle" {
                     assert_fixture_replay_did_not_publish_integration_event(
                         &connection,
-                        &test_runtime,
+                        test_config,
                     )
                     .await?;
                 }
@@ -1303,13 +1527,13 @@ async fn behavioral_definitions_pass_through_http_and_the_isolated_nats_runtime(
         }
         .await;
 
-        test_runtime.stop_workers().await;
-        correlation_worker.abort();
-        let _ = correlation_worker.await;
-        run_result
+        let stopped = host.shutdown().await;
+        run_result?;
+        stopped?;
+        Ok(())
     }
     .await;
-    let cleanup_result = cleanup(&connection, [&test_config]).await;
+    let cleanup_result = cleanup_contexts(&connection, &test_configs).await;
     let drain_result = connection.drain().await;
 
     result?;
@@ -1420,7 +1644,7 @@ async fn integration_event_mapping_dispatches_a_command_through_nats() -> TestRe
             reaction_config.durable_name().as_str(),
         )
         .await?;
-        wait_for_command_stream_empty(&connection, &runtime).await?;
+        wait_for_single_context_commands(&connection, &runtime).await?;
 
         let history = runtime.store().load(&demo_stream()).await?;
         ensure(
@@ -1694,7 +1918,7 @@ async fn run_isolation_test(
     )?;
     wait_for_integration_chain(
         connection,
-        test_runtime,
+        test_runtime.config(),
         &test_history[2],
         test_receipt.command_message_id(),
         1,
@@ -1790,7 +2014,7 @@ async fn run_isolation_test(
     let reset_test_history = test_runtime.store().load(&demo_stream()).await?;
     wait_for_integration_chain(
         connection,
-        test_runtime,
+        test_runtime.config(),
         &reset_test_history[2],
         reset_test_receipt.command_message_id(),
         1,
@@ -1818,7 +2042,7 @@ async fn run_isolation_test(
     let production_history = production_runtime.store().load(&demo_stream()).await?;
     wait_for_integration_chain(
         connection,
-        production_runtime,
+        production_runtime.config(),
         &production_history[3],
         production_rent_receipt.command_message_id(),
         1,
@@ -1833,8 +2057,8 @@ async fn run_isolation_test(
             && production_runtime.store().load(&demo_stream()).await?.len() == 4,
         "production command seeding did not replay across extended business history",
     )?;
-    wait_for_command_stream_empty(connection, test_runtime).await?;
-    wait_for_command_stream_empty(connection, production_runtime).await
+    wait_for_single_context_commands(connection, test_runtime).await?;
+    wait_for_single_context_commands(connection, production_runtime).await
 }
 
 fn invocation(
@@ -1844,7 +2068,10 @@ fn invocation(
     schema_version: u32,
     payload: Value,
 ) -> TestResult<CommandInvocation> {
-    let context = "bike-rental";
+    let context = match command {
+        "collect-rental-payment" | "refund-eligible-rental-deposit" => FINANCE_CONTEXT,
+        _ => RENTAL_CONTEXT,
+    };
     let fingerprint = command_execution_fingerprint(context, command, schema_version, &payload);
     Ok(CommandInvocation::new(
         OperationId::new(operation_id)?,
@@ -1891,13 +2118,13 @@ async fn wait_for_consumer_acknowledgement(
 
 async fn wait_for_integration_chain(
     connection: &NatsConnection,
-    runtime: &BikeRentalNatsRuntime,
+    config: &BikeRentalNatsConfig,
     source_event: &RecordedEvent,
     command_message_id: &str,
     expected_messages: u64,
 ) -> TestResult<String> {
     let deadline = Instant::now() + Duration::from_secs(10);
-    let route = runtime.config().integration_event_route();
+    let route = config.integration_event_route();
     let expected_message_id = integration_message_id(
         route.address(),
         SchemaVersion::new(1)?,
@@ -1915,8 +2142,7 @@ async fn wait_for_integration_chain(
         let mut integration_stream = connection
             .jetstream()
             .get_stream(
-                runtime
-                    .config()
+                config
                     .messaging()
                     .topology()
                     .integration_event_stream()
@@ -1929,8 +2155,7 @@ async fn wait_for_integration_chain(
                 .await?;
             let integration_info = consumer_info(
                 connection,
-                runtime
-                    .config()
+                config
                     .messaging()
                     .topology()
                     .integration_event_stream()
@@ -1940,12 +2165,8 @@ async fn wait_for_integration_chain(
             .await?;
             let domain_info = consumer_info(
                 connection,
-                runtime.config().event_store().stream_name(),
-                runtime
-                    .config()
-                    .domain_event_consumer()
-                    .durable_name()
-                    .as_str(),
+                config.event_store().stream_name(),
+                config.domain_event_consumer().durable_name().as_str(),
             )
             .await?;
             let envelope: IntegrationEventEnvelope<BicycleRentalStarted> =
@@ -2067,29 +2288,25 @@ async fn consumer_info(
 
 async fn wait_for_command_stream_empty(
     connection: &NatsConnection,
-    runtime: &BikeRentalNatsRuntime,
+    config: &BikeRentalNatsConfig,
+    routes: Vec<&ConsumerConfig<CommandAddress>>,
 ) -> TestResult {
     let deadline = Instant::now() + Duration::from_secs(10);
-    let stream_name = runtime
-        .config()
-        .messaging()
-        .topology()
-        .command_stream()
-        .as_str();
+    let stream_name = config.messaging().topology().command_stream().as_str();
     loop {
         let mut command_stream = connection.jetstream().get_stream(stream_name).await?;
         let stream_info = command_stream.info().await?;
         if stream_info.state.messages == 0 {
             ensure(
-                runtime.config().messaging().commands().retention() == StreamRetention::WorkQueue,
+                config.messaging().commands().retention() == StreamRetention::WorkQueue,
                 "command stream is not configured as a WorkQueue",
             )?;
             ensure(
-                stream_info.state.consumer_count == runtime.runtime_config().commands.len(),
+                stream_info.state.consumer_count == routes.len(),
                 "command WorkQueue has an unexpected passive consumer",
             )?;
             let mut worker_acknowledged = false;
-            for route in &runtime.runtime_config().commands {
+            for route in &routes {
                 let info =
                     consumer_info(connection, stream_name, route.durable_name().as_str()).await?;
                 ensure(
@@ -2111,28 +2328,35 @@ async fn wait_for_command_stream_empty(
     }
 }
 
-async fn assert_fixture_replay_did_not_publish_integration_event(
+async fn wait_for_single_context_commands(
     connection: &NatsConnection,
     runtime: &BikeRentalNatsRuntime,
 ) -> TestResult {
+    wait_for_command_stream_empty(
+        connection,
+        runtime.config(),
+        runtime.runtime_config().commands.iter().collect(),
+    )
+    .await
+}
+
+async fn assert_fixture_replay_did_not_publish_integration_event(
+    connection: &NatsConnection,
+    config: &BikeRentalNatsConfig,
+) -> TestResult {
     let deadline = Instant::now() + Duration::from_secs(10);
-    let topology = runtime.config().messaging().topology();
+    let topology = config.messaging().topology();
     loop {
         let domain_info = consumer_info(
             connection,
-            runtime.config().event_store().stream_name(),
-            runtime
-                .config()
-                .domain_event_consumer()
-                .durable_name()
-                .as_str(),
+            config.event_store().stream_name(),
+            config.domain_event_consumer().durable_name().as_str(),
         )
         .await?;
         let integration_info = consumer_info(
             connection,
             topology.integration_event_stream().as_str(),
-            runtime
-                .config()
+            config
                 .integration_event_route()
                 .consumer()
                 .durable_name()
@@ -2185,6 +2409,27 @@ async fn cleanup<'a>(
         }
     }
     first_error.map_or_else(|| Ok(()), |error| Err(io::Error::other(error).into()))
+}
+
+async fn cleanup_contexts(
+    connection: &NatsConnection,
+    configs: &tracer::ContextConfigurations,
+) -> TestResult {
+    let mut result = cleanup(connection, [configs.rental()]).await;
+    for (config, _) in configs
+        .contexts()
+        .filter(|(config, _)| config.context.name().as_str() != RENTAL_CONTEXT)
+    {
+        if let Err(error) = connection
+            .jetstream()
+            .delete_stream(config.event_store.stream_name())
+            .await
+            && result.is_ok()
+        {
+            result = Err(error.into());
+        }
+    }
+    result
 }
 
 fn unique_scope() -> TestResult<String> {

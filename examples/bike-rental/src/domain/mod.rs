@@ -1,9 +1,11 @@
-mod bike_rental;
+mod finance;
 mod model;
+mod rental;
 #[cfg(test)]
 mod tests;
+mod workshop;
 
-pub use bike_rental::{
-    BikeRental, bicycle_transfer, rental_fleet, rental_payment, rental_tariff, repair_job,
-};
+pub use finance::{Finance, rental_payment};
 pub use model::domain_model;
+pub use rental::{Rental, bicycle_transfer, rental_fleet, rental_tariff};
+pub use workshop::{Workshop, repair_job};

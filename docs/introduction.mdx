@@ -2,9 +2,9 @@
 
 rostfrei is a Rust framework for event-sourced applications. Business rules stay in ordinary Rust; the framework connects them to durable command execution, messaging, read models, and runtime inspection.
 
-Applications depend on `rostfrei` and enable the adapters they need. The bike-rental example combines NATS storage and messaging, HTTP routes, and Tracer with its domain code.
+Applications depend on `rostfrei` and enable the adapters they need. The bike-rental example combines NATS storage and messaging, HTTP routes, and Tracer with three bounded contexts: Rental owns the fleet and tariffs, Finance owns payments, and Workshop owns repair jobs.
 
-**New here? [Explore with your agent](getting-started.mdx).** Copy a prompt to prepare an isolated demo and inspect a successful rental and a rejection through real Tracer evidence.
+**New here? [Explore with your agent](getting-started.mdx).** Copy a prompt to prepare an isolated demo and inspect a successful bicycle registration and a rejection through real Tracer evidence.
 
 ## How the pieces fit
 
@@ -29,9 +29,9 @@ Declarations and implementations have predictable locations in the source tree. 
 
 Imagine a customer renting a bicycle:
 
-1. A **command**, `ReserveBicycleCategory`, asks the Bike Rental bounded context to confirm category capacity and a price for the customer's dates.
+1. A **command**, `ReserveBicycleCategory`, asks the Rental bounded context to confirm category capacity and a price for the customer's dates.
 2. At collection, `CollectReservedBicycle` selects a physical bicycle. An unavailable bicycle produces a **rejection** and no new domain events.
-3. Collection requests payment. Approval through `CollectRentalPayment` commits the **domain events** `RentalPaymentApproved`, `BicycleRented` and `ReservedBicycleCollected` atomically. Replaying history reconstructs each aggregate's state.
+3. Collection requests payment. Finance records `RentalPaymentApproved` and publishes the outcome. Rental receives it and commits its own **domain events**, `BicycleRented` and `ReservedBicycleCollected`. Each context reconstructs its state by replaying its own history.
 4. After the commit, application code maps the private fact to a separately versioned **integration event**, `BicycleRentalStarted`, for public communication.
 
 A query reads state without changing it. A domain policy evaluates facts without changing state or recording events.

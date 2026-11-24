@@ -1,6 +1,7 @@
 use std::{error::Error, io};
 
 use bike_rental::{
+    RENTAL_CONTEXT,
     demo::{demo_stream, seed_demo},
     rental_fleet::{BicycleCondition, BicycleStatus, RentalFleetAggregate},
 };
@@ -22,7 +23,7 @@ type TestResult = Result<(), Box<dyn Error + Send + Sync>>;
 )]
 async fn normal_demo_startup_persists_command_receipts_and_retries_without_writes() -> TestResult {
     let application = ApplicationName::new(format!("demo-seeding-{}", Uuid::now_v7()))?;
-    let context = application.bounded_context("bike-rental")?;
+    let context = application.bounded_context(RENTAL_CONTEXT)?;
     let config = NatsEventStoreConfig::for_bounded_context(&context)?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?
         .with_fresh_split_outcome_epoch("demo-seeding")?;
@@ -112,7 +113,7 @@ async fn normal_demo_startup_persists_command_receipts_and_retries_without_write
         for event in &retried {
             let original_payload: serde_json::Value = serde_json::from_slice(event.payload())?;
             let original_fingerprint = rostfrei::ContentFingerprint::digest(serde_json::to_vec(&(
-                "bike-rental", "register-bicycle", 2, original_payload,
+                RENTAL_CONTEXT, "register-bicycle", 2, original_payload,
             ))?);
             ensure(event.operation_fingerprint() == original_fingerprint,
                 "seed fingerprints must remain compatible with payloads predating optional category")?;

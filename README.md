@@ -85,7 +85,7 @@ after commit. The example also transfers bicycles between two fleets atomically.
 Copy this prompt into a coding agent with terminal access:
 
 ```text
-Help me explore rostfrei through its bike-rental example. Use https://github.com/elbLabs/rostfrei and read docs/agent-tutorial.md from the checkout before setup. Check my environment, prepare an isolated local demo, and guide me through a successful rental and a rejection using real Tracer evidence. Explain one step at a time and let me choose what to inspect next. Use text by default; use a richer display only when its adapter is explicitly available.
+Help me explore rostfrei through its bike-rental example. Use https://github.com/elbLabs/rostfrei and read docs/agent-tutorial.md from the checkout before setup. Check my environment, prepare an isolated local demo, and guide me through a successful bicycle registration and a duplicate-registration rejection using real Tracer evidence. Explain one step at a time and let me choose what to inspect next. Use text by default; use a richer display only when its adapter is explicitly available.
 ```
 
 The [tutorial](docs/agent-tutorial.md) uses Git, Rust, and NATS, usually through

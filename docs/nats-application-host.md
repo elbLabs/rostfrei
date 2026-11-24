@@ -31,6 +31,14 @@ configuration. Payloads are redacted unless a policy is explicitly supplied.
 Catalog v1 advertises fixture v1 and behavioral-definition v2 discovery links.
 Repository validation, execution and evidence use the existing Tracer engines.
 
+The catalog combines registrations from the configured Test contexts. Commands
+route to the exact context; aggregate reads and fixture writes route to the
+runtime that registered the exact aggregate type. Installing an application-wide
+codec registry does not expose aggregates from unhosted contexts. A command
+schema advertises production dispatch only if an attached Normal runtime
+registers it. A fixture can span contexts, but replay is not atomic across their
+event stores.
+
 ### Continuous external-flow observation
 
 Use the same feed API as `TracerBuilder` on the host's `TracerConfig`:
@@ -47,9 +55,10 @@ let tracer = TracerConfig::new(listener, http)
 ```
 
 Feeds are opt-in; configuring a scope again replaces its previous feed. The host
-checks each feed's application against its runtime. Production observation requires
-the explicitly attached Normal runtime. HTTP discovery and access retain the
-existing control (Test) and read-only inspection (Production) capabilities.
+checks each feed's application against its runtimes. One feed serves all attached
+contexts in its scope. Production observation requires an attached Normal runtime.
+HTTP discovery and access retain the existing control (Test) and read-only
+inspection (Production) capabilities.
 
 The framework registers a source named for each runtime's bounded context,
 establishes both broker subscriptions before reporting Live, forwards interruption
@@ -61,7 +70,8 @@ Test unavailable until recovery. Applications supply feeds, not observer handler
 or duplicate binding registrations. The compatibility `start_correlation_observer`
 entry point uses the same source handling; its returned task is caller-supervised.
 Attaching or replacing observation preserves running application workers and their
-in-flight deliveries. Reset and shutdown still stop the owned observer and workers.
+in-flight deliveries. Reset stops Test observers and workers; shutdown stops all
+owned observers and workers.
 
 See [continuous observation](continuous-observation.md) for retention, payload
 policy, HTTP/SSE and Studio semantics. These observers capture externally initiated
@@ -69,10 +79,10 @@ domain/integration events as well as evidence for Tracer-created operations.
 
 ### Retained correlation inspection
 
-Attaching a Normal runtime with `TracerConfig::with_dispatch_runtime` automatically
-registers its domain store and the application's shared Normal integration stream
-for on-demand correlation reads. There is no projector flag or background index.
-Add other contexts with their existing `NatsEventStoreConfig`:
+Each Normal runtime attached with `TracerConfig::with_dispatch_runtime` automatically
+registers its domain store for on-demand correlation reads. The contexts share the
+application's Normal integration stream. There is no projector flag or background
+index. Add read-only contexts with their existing `NatsEventStoreConfig`:
 
 ```rust,ignore
 // billing_events describes the already-provisioned Normal billing event store.
@@ -100,7 +110,7 @@ history handle uses `NatsEventStore::connect_history`, validating and pinning th
 journal's historical authority without opening live result state. Missing or
 expired result details do not erase retained events; replacing the journal
 invalidates the attached history handle. The shared integration topology uses
-the attached Normal runtime's configuration,
+the attached Normal runtime configuration,
 or the host application's Normal defaults for inspection-only registration.
 Source credentials need the [retained reader's permissions](continuous-observation.md#retained-correlation-inspection).
 
@@ -155,17 +165,31 @@ Typed version-aware decoding is tracked in [#111](https://github.com/elbLabs/ros
 
 ## Bike rental: one entry point, one flag
 
-With JetStream NATS 2.12.1 or newer available:
+With JetStream NATS 2.12.1 or newer available, choose a fresh
+`ROSTFREI_APPLICATION` namespace and keep it for subsequent starts:
 
 ```sh
-cargo run --locked -p bike-rental
-cargo run --locked -p bike-rental -- --tracer
+cargo run --locked -p bike-rental --bin bike-rental-api
+cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer
 ```
 
-Both starts use `tracer::bindings()` and run Normal command consumers, preserving
-the released durable generation `2`. Changing a command payload schema does not
-change its subscription. Both modes seed Normal state through idempotent
-`RegisterBicycle` commands. Named fixtures are reserved for isolated Test state.
+Both modes run Normal runtimes for Rental (`rental`), Finance (`finance`), and
+Workshop (`workshop`) and seed Normal Rental state through idempotent
+`RegisterBicycle` commands. Command durables retain subscription generation `2`,
+independent of payload schemas. Each context has its own bindings, workers, and
+journal/result pair. The contexts share one set of command, command-response,
+integration-event, and quarantine streams per application and traffic scope.
+Cross-context work goes through integration events and commands, not a shared
+transaction or a read of another context's private journal.
+
+`--tracer` adds a separate Test runtime for each context. One logical Tracer
+runtime and catalog route commands and fixtures to the owning contexts. To
+compose a host this way, register additional Test configs and bindings with
+`NatsApplicationBuilder::with_context(config, bindings)` and call
+`TracerConfig::with_dispatch_runtime` once per Normal context. A Tracer reset
+rebuilds the whole Test scenario from registered fixtures, including its shared
+Test streams and each context's journal/result pair. It leaves Normal workers
+and data untouched.
 
 Set `ROSTFREI_NATS_URL`. For Tracer also set `ROSTFREI_API_TOKEN` and the separately
 configured `ROSTFREI_DISPATCH_TOKEN`; optional `ROSTFREI_INSPECTION_TOKEN` enables
@@ -173,13 +197,22 @@ production inspection. `ROSTFREI_API_ADDR` defaults to `127.0.0.1:1309`.
 With `--tracer`, bike-rental configures both Test and Production observation feeds;
 Production Observe requires the inspection token.
 Existing `ROSTFREI_NATS_*_MAX_BYTES` limits remain supported. With Tracer disabled,
-HTTP and correlation-observer workers are absent and HTTP tokens are unnecessary.
+Test runtimes, HTTP and correlation-observer workers are absent and HTTP tokens
+are unnecessary.
+
+The old single-context deployment is not migrated in place. Use a fresh
+application namespace even if the old example already used label-free storage;
+changing only the outcome epoch is not a migration. Leave the old streams and
+durables intact: the new host does not adopt their history, and existing retries
+remain tied to the old authority. See the [example setup](../examples/bike-rental/README.md#run-locally).
 
 ## Lifecycle and ownership
 
-Writable startup requires explicit fresh split authority selection through
-`with_fresh_outcomes()`, without an epoch label. Bike rental selects this layout
-for both Test and Normal configurations by default. Its optional
+Writable startup requires explicit split authority selection for each context.
+Unsplit runtime plans are rejected before provisioning or resetting streams.
+To provision label-free storage for a group, select
+`NatsRuntimeConfig::with_fresh_outcomes()` on each configuration you supply.
+Bike rental selects it for both Test and Normal by default. Its optional
 `ROSTFREI_COMPLETED_OUTCOME_EPOCH` setting reopens existing named-epoch stores.
 Use an owned disposable application/broker for qualification. Existing legacy
 authorities remain read-only unless the operator performs an explicit fenced
@@ -240,23 +273,26 @@ uses it automatically. History reads do not themselves verify authority health.
 - `provision_and_start` with a default Test fixture explicitly resets that Test
   scenario before readiness. Preparation verifies all consumers and subscribes
   observers before spawning the owned group. Failed preparation starts no group.
+  If attaching dispatch observers fails, a later caller-owned restart uses the
+  observer settings the dispatch runtimes had before the failed startup.
 - `NatsApplication` continuously supervises its workers and HTTP server. An exit
   stops the owned group; `run_until` and `shutdown` surface the underlying failure.
   Shutdown ends streaming observation responses, awaits HTTP cleanup and stops
   workers. Dropping the host requests the same cleanup. The supplied managed NATS
   connection is caller-owned; the host does not drain other users' connections.
 - A reset takes an exclusive process-local submission gate, waits for active
-  transported commands, stops the group, deletes only configured Test streams,
-  recreates both journal and outcome-state streams, reconnects and rebuilds the
-  processor, service, transports and observers, registers fixture event identities
-  **before** replay, then restarts. Domain history and outcomes reset together. Any failure keeps
-  publication unavailable; `start_workers` cannot bypass a failed reset.
+  transported commands, stops the Test group, deletes only configured Test streams,
+  recreates the shared messaging streams and each Test context's journal and
+  outcome-state streams, and rebuilds the processors, services, transports and
+  observers. It registers fixture event identities **before** replay, then
+  restarts the group. Any failure keeps Test publication unavailable;
+  `start_workers` cannot bypass a failed reset.
 - Framework observers validate event identity, correlation and causation against
   delivery headers and envelopes. Integration events use the registered typed
   codecs, including provenance-derived identity checks. Evidence uses actual
   committed events; retired simulation requests return 404 without publication.
-- Production Dispatch uses an explicitly supplied Normal `NatsRuntime` through
-  `TracerConfig::with_dispatch_runtime`; the host supervises that runtime too.
+- Production Dispatch uses explicitly supplied Normal `NatsRuntime`s through
+  `TracerConfig::with_dispatch_runtime`; the host supervises those runtimes too.
   Retained inspection also accepts read-only `with_production_event_store`
   registrations without Dispatch. Test reset cannot select Normal resources.
 - Shutdown retains broker data. Reset is the explicit destructive operation.
@@ -286,9 +322,9 @@ owned runtimes. Reset retains its exclusive submission gate and Test-only scope.
 
 ## Isolation
 
-One host owns the Test messaging namespace for its application and one bounded
-context's event store. Use a dedicated broker or a unique `ApplicationName` for
-each independent development host/process. External publishers must not submit
+One host owns the Test messaging namespace for its application and the configured
+Test contexts' event stores. Use a dedicated broker or a unique `ApplicationName`
+for each independent development host/process. External publishers must not submit
 into that owned Test namespace during reset. The gate coordinates host
 submissions, not independent processes or arbitrary broker publishers.
 

@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
   "id": "demo-fleet",
-  "revision": "2",
+  "revision": "3",
   "messages": [
     {
       "kind": "domain-event",
       "messageId": "demo-bike-42-added",
-      "correlationId": "fixture:demo-fleet:2:bike-42",
+      "correlationId": "fixture:demo-fleet:3:bike-42",
       "name": "bicycle-added",
       "schemaVersion": 1,
       "aggregate": {
-        "type": "bike-rental/rental-fleet",
+        "type": "rental/rental-fleet",
         "id": "city-fleet"
       },
       "streamVersion": 1,
@@ -23,11 +23,11 @@
     {
       "kind": "domain-event",
       "messageId": "demo-bike-99-added",
-      "correlationId": "fixture:demo-fleet:2:bike-99",
+      "correlationId": "fixture:demo-fleet:3:bike-99",
       "name": "bicycle-added",
       "schemaVersion": 1,
       "aggregate": {
-        "type": "bike-rental/rental-fleet",
+        "type": "rental/rental-fleet",
         "id": "city-fleet"
       },
       "streamVersion": 2,

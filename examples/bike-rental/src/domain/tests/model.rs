@@ -6,13 +6,58 @@ fn composed_domain_model_builds() {
 }
 
 #[test]
+fn projects_exact_bounded_contexts_and_aggregate_ownership() {
+    let model =
+        crate::domain::model::domain_model().expect("bike rental domain model should build");
+    let mut contexts: Vec<_> = model["boundedContexts"]
+        .as_array()
+        .expect("bounded contexts should be an array")
+        .iter()
+        .map(|context| {
+            context["id"]
+                .as_str()
+                .expect("context ID should be a string")
+        })
+        .collect();
+    contexts.sort_unstable();
+
+    let mut aggregate_ids: Vec<_> = model["aggregates"]
+        .as_array()
+        .expect("aggregates should be an array")
+        .iter()
+        .map(|aggregate| {
+            let id = &aggregate["id"];
+            (
+                id["context"].as_str().expect("aggregate context ID"),
+                id["local"].as_str().expect("aggregate local ID"),
+            )
+        })
+        .collect();
+    aggregate_ids.sort_unstable();
+
+    assert_eq!(
+        (contexts.as_slice(), aggregate_ids.as_slice()),
+        (
+            &["finance", "rental", "workshop"][..],
+            &[
+                ("finance", "rental-payment"),
+                ("rental", "rental-fleet"),
+                ("rental", "rental-tariff"),
+                ("workshop", "repair-job"),
+            ][..],
+        ),
+        "compiled bounded context IDs and aggregate ownership",
+    );
+}
+
+#[test]
 fn projects_registered_services_and_omits_unattached_capabilities() {
     let model = crate::domain::model::domain_model().expect("comparison domain model should build");
     assert_eq!(model["actions"], json!([]));
     assert_eq!(
         model["domainServices"],
         json!([{
-            "id": { "context": "bike-rental", "local": "bicycle-transfer" },
+            "id": { "context": "rental", "local": "bicycle-transfer" },
             "label": "Bicycle transfer"
         }])
     );

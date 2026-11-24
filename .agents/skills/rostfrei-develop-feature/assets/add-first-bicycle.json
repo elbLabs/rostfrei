@@ -11,7 +11,7 @@
         {
           "kind": "command",
           "key": "add",
-          "context": "bike-rental",
+          "context": "rental",
           "name": "register-bicycle",
           "schemaVersion": 2,
           "payload": {

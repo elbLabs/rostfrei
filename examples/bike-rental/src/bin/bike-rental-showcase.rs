@@ -1,14 +1,14 @@
 use std::{env, error::Error, fs, io, path::Path, sync::Arc, time::Duration};
 
 use bike_rental::{
-    BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
+    BikeRentalNatsResourceLimits, FINANCE_CONTEXT, RENTAL_CONTEXT, WORKSHOP_CONTEXT,
     demo::{demo_stream, reservable_branch_fixture},
     tracer,
 };
 use rostfrei::nats::{NatsConnection, NatsConnectionConfig, ServerVersion, connect};
 use rostfrei::tracer::{
     CommandRequest, ExposeTracePayloadsForLocalDevelopment, NatsApplication, NatsRuntime,
-    OperationMode, OperationResult, OperationSnapshot, Tracer,
+    OperationResult, OperationSnapshot, Tracer, TracerConfig, http::HttpConfig,
 };
 use rostfrei::{Aggregate as _, RecordedEvent, StreamAggregateId, StreamAggregateType, StreamId};
 use serde_json::{Value, json};
@@ -30,12 +30,10 @@ async fn main() -> DemoResult {
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
     )
     .await?;
-    let bindings = Arc::new(tracer::bindings()?);
-    let config = BikeRentalNatsConfig::for_bindings(
+    let config = tracer::configurations(
         &application,
         rostfrei::TrafficScope::Test,
         BikeRentalNatsResourceLimits::from_env()?,
-        &bindings,
     )?
     .with_fresh_outcomes()?;
     println!("Rostfrei: reservation, payment, rental and workshop");
@@ -43,9 +41,15 @@ async fn main() -> DemoResult {
     println!(
         "Given: city-fleet has one serviceable city bike, a €5/hour tariff capped at €25/day, and a €100 deposit.\n"
     );
-    let started = NatsApplication::builder(config.context().clone(), connection.clone(), bindings)?
-        .with_runtime_config(config.host_config().clone())
+    let tracer_config = TracerConfig::new(
+        tokio::net::TcpListener::bind("127.0.0.1:0").await?,
+        HttpConfig::new(Uuid::now_v7().simple().to_string())?,
+    )
+    .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
+    let started = config
+        .application_builder(connection.clone())?
         .with_default_test_fixture(reservable_branch_fixture()?)
+        .with_tracer(Some(tracer_config))
         .provision_and_start()
         .await;
     let result = match started {
@@ -67,18 +71,17 @@ async fn main() -> DemoResult {
 }
 
 async fn demonstrate(host: &NatsApplication, output: &Path) -> DemoResult {
-    let runtime = host.runtime();
-    let tracer = runtime
-        .tracer_builder()
-        .with_test_transport(runtime.transport())
-        .with_test_scenario_reset(runtime.clone())
-        .with_default_test_fixture(reservable_branch_fixture()?)
-        .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment))
-        .build()?;
-    runtime
-        .attach_observer(tracer.correlation_observer(OperationMode::Test))
-        .await?;
-    reserve_and_collect(runtime, &tracer, output).await?;
+    let rental = host
+        .runtime_for(RENTAL_CONTEXT)
+        .ok_or("missing Rental runtime")?;
+    let workshop = host
+        .runtime_for(WORKSHOP_CONTEXT)
+        .ok_or("missing Workshop runtime")?;
+    let finance = host
+        .runtime_for(FINANCE_CONTEXT)
+        .ok_or("missing Finance runtime")?;
+    let tracer = host.tracer().ok_or("missing Tracer")?;
+    reserve_and_collect(rental, finance, tracer, output).await?;
     let request = || CommandRequest {
         schema_version: 2,
         payload: json!({
@@ -90,31 +93,31 @@ async fn demonstrate(host: &NatsApplication, output: &Path) -> DemoResult {
     };
     let submitted = tracer
         .submit_test(
-            "bike-rental",
+            RENTAL_CONTEXT,
             "return-bicycle",
             request(),
             Some("damaged-return"),
         )
         .await?;
-    let returned = completed(&tracer, &submitted.operation_id).await?;
+    let returned = completed(tracer, &submitted.operation_id).await?;
     ensure(
         matches!(returned.result, Some(OperationResult::Accepted { .. })),
         "return was not accepted",
     )?;
     println!("4. Return accepted: \"{DAMAGE_REPORT}\".");
 
-    let history = runtime.store().load(&demo_stream()).await?;
+    let history = rental.store().load(&demo_stream()).await?;
     let damage = history
         .iter()
         .find(|event| event.event_type() == "bicycle-damage-reported")
         .ok_or("return did not persist the damage report")?;
-    let job_stream = observe_repair(runtime, damage, output).await?;
+    let job_stream = observe_repair(workshop, damage, output).await?;
     println!("5. Workshop automatically recorded a repair job with the same report.");
-    save_capture(&tracer, &returned, output, "return.json").await?;
+    save_capture(tracer, &returned, output, "return.json").await?;
 
     let replay = tracer
         .submit_test(
-            "bike-rental",
+            RENTAL_CONTEXT,
             "return-bicycle",
             request(),
             Some("damaged-return"),
@@ -125,28 +128,28 @@ async fn demonstrate(host: &NatsApplication, output: &Path) -> DemoResult {
         "retry created a new operation",
     )?;
     ensure(
-        runtime.store().load(&demo_stream()).await?.len() == history.len(),
+        rental.store().load(&demo_stream()).await?.len() == history.len(),
         "retry changed fleet history",
     )?;
     ensure(
-        runtime.store().load(&job_stream).await?.len() == 1,
+        workshop.store().load(&job_stream).await?.len() == 1,
         "retry created another repair job",
     )?;
     println!("6. Repeat the request: same operation, still one repair job.");
 
     let submitted = tracer
         .submit_test(
-            "bike-rental",
+            RENTAL_CONTEXT,
             "reserve-bicycle-category",
             CommandRequest {
                 schema_version: 1,
                 payload: json!({"fleet_id":"city-fleet", "reservation_id":"booking-no-serviceable-bike", "customer_id":"customer-next", "category":"city", "period":{"starts_at":"2026-12-02T09:00:00Z", "ends_at":"2026-12-02T17:00:00Z"}}),
             },
-            Some("hire-damaged-bike"),
+            Some("book-with-no-serviceable-bike"),
         )
         .await?;
-    let refused = completed(&tracer, &submitted.operation_id).await?;
-    save_capture(&tracer, &refused, output, "blocked-rental.json").await?;
+    let refused = completed(tracer, &submitted.operation_id).await?;
+    save_capture(tracer, &refused, output, "blocked-rental.json").await?;
     ensure(
         matches!(&refused.result, Some(OperationResult::Rejected { rejection, .. }) if rejection.get("code").and_then(Value::as_str) == Some("RESERVATION_REJECTED")),
         "bicycles awaiting repair must not support a new booking",
@@ -154,13 +157,18 @@ async fn demonstrate(host: &NatsApplication, output: &Path) -> DemoResult {
     println!(
         "7. Try to book again: RESERVATION_REJECTED. Bicycles awaiting repair are not bookable capacity."
     );
-    rebalance(host, &tracer, output).await?;
-    demonstrate_refund(runtime, &tracer, output).await?;
+    rebalance(rental, tracer, output).await?;
+    demonstrate_refund(rental, finance, tracer, output).await?;
     Ok(())
 }
 
-async fn reserve_and_collect(runtime: &NatsRuntime, tracer: &Tracer, output: &Path) -> DemoResult {
-    let submitted = tracer.submit_test("bike-rental", "reserve-bicycle-category", CommandRequest {
+async fn reserve_and_collect(
+    rental: &NatsRuntime,
+    finance: &NatsRuntime,
+    tracer: &Tracer,
+    output: &Path,
+) -> DemoResult {
+    let submitted = tracer.submit_test(RENTAL_CONTEXT, "reserve-bicycle-category", CommandRequest {
         schema_version: 1,
         payload: json!({"fleet_id": "city-fleet", "reservation_id": "booking-42", "customer_id": "customer-alex", "category": "city",
             "period": {"starts_at": "2026-12-01T09:00:00Z", "ends_at": "2026-12-01T17:00:00Z"}}),
@@ -174,7 +182,7 @@ async fn reserve_and_collect(runtime: &NatsRuntime, tracer: &Tracer, output: &Pa
     println!(
         "1. Alex reserves a city bike for 09:00–17:00: €25 rent plus a €100 refundable deposit, due at collection."
     );
-    let submitted = tracer.submit_test("bike-rental", "collect-reserved-bicycle", CommandRequest {
+    let submitted = tracer.submit_test(RENTAL_CONTEXT, "collect-reserved-bicycle", CommandRequest {
         schema_version: 1,
         payload: json!({"fleet_id": "city-fleet", "reservation_id": "booking-42", "bicycle_id": "bike-42", "payment_id": "payment-42", "payment_method": "sandbox-approved"}),
     }, Some("collect-city-bike")).await?;
@@ -184,7 +192,7 @@ async fn reserve_and_collect(runtime: &NatsRuntime, tracer: &Tracer, output: &Pa
         "collection was not requested",
     )?;
     println!("2. Staff selects bike-42: the bike is held while the sandbox processes €125.");
-    let payment = payment_history(runtime, "payment-42", 2).await?;
+    let payment = payment_history(finance, "payment-42", 2).await?;
     let decision = payment.last().ok_or("payment decision missing")?;
     let payload: Value = serde_json::from_slice(decision.payload())?;
     ensure(
@@ -195,28 +203,21 @@ async fn reserve_and_collect(runtime: &NatsRuntime, tracer: &Tracer, output: &Pa
                 ),
         "finance did not retain the approved rent and deposit",
     )?;
-    let fleet = runtime.store().load(&demo_stream()).await?;
-    ensure(
-        fleet.iter().any(|event| {
-            event.event_type() == "bicycle-rented"
-                && event.operation_id() == decision.operation_id()
-        }),
-        "payment and rental must commit together",
-    )?;
+    wait_for_rental(rental, "bike-42").await?;
     save(
         output,
         "payment.json",
-        &json!({"aggregate": {"type": "bike-rental/rental-payment", "id": "payment-42"}, "eventId": decision.event_id().as_str(), "payload": payload}),
+        &json!({"aggregate": {"type": bike_rental::rental_payment::RentalPaymentAggregate::aggregate_type(), "id": "payment-42"}, "eventId": decision.event_id().as_str(), "payload": payload}),
     )?;
     save_capture(tracer, &collection, output, "collection.json").await?;
     println!(
-        "3. Sandbox payment approved: finance records rent and deposit separately, and the rental starts in the same commit."
+        "3. Sandbox payment approved: Finance records rent and deposit, then Rental starts the hire in response."
     );
     Ok(())
 }
 
-async fn rebalance(host: &NatsApplication, tracer: &Tracer, output: &Path) -> DemoResult {
-    let added = tracer.submit_test("bike-rental", "register-bicycle", CommandRequest {
+async fn rebalance(rental: &NatsRuntime, tracer: &Tracer, output: &Path) -> DemoResult {
+    let added = tracer.submit_test(RENTAL_CONTEXT, "register-bicycle", CommandRequest {
         schema_version: 2,
         payload: json!({"fleet_id": "harbor-fleet", "bicycle_id": "bike-77", "condition": "serviceable", "category": "city"}),
     }, Some("register-harbor-spare")).await?;
@@ -226,7 +227,7 @@ async fn rebalance(host: &NatsApplication, tracer: &Tracer, output: &Path) -> De
         "harbor spare was not registered",
     )?;
     let submitted = tracer.submit_test(
-        "bike-rental",
+        RENTAL_CONTEXT,
         "transfer-bicycle",
         CommandRequest {
             schema_version: 2,
@@ -240,7 +241,7 @@ async fn rebalance(host: &NatsApplication, tracer: &Tracer, output: &Path) -> De
         matches!(transferred.result, Some(OperationResult::Accepted { .. })),
         "spare transfer was not accepted",
     )?;
-    let store = host.runtime().store();
+    let store = rental.store();
     let harbor = store
         .load(&bike_rental::rental_fleet::stream_id("harbor-fleet")?)
         .await?;
@@ -260,8 +261,13 @@ async fn rebalance(host: &NatsApplication, tracer: &Tracer, output: &Path) -> De
     Ok(())
 }
 
-async fn demonstrate_refund(runtime: &NatsRuntime, tracer: &Tracer, output: &Path) -> DemoResult {
-    let booked = tracer.submit_test("bike-rental", "reserve-bicycle-category", CommandRequest {
+async fn demonstrate_refund(
+    rental: &NatsRuntime,
+    finance: &NatsRuntime,
+    tracer: &Tracer,
+    output: &Path,
+) -> DemoResult {
+    let booked = tracer.submit_test(RENTAL_CONTEXT, "reserve-bicycle-category", CommandRequest {
         schema_version: 1,
         payload: json!({"fleet_id":"city-fleet", "reservation_id":"booking-77", "customer_id":"customer-sam", "category":"city",
             "period":{"starts_at":"2026-12-02T09:00:00Z", "ends_at":"2026-12-02T17:00:00Z"}}),
@@ -273,7 +279,7 @@ async fn demonstrate_refund(runtime: &NatsRuntime, tracer: &Tracer, output: &Pat
         ),
         "second reservation failed",
     )?;
-    let collected = tracer.submit_test("bike-rental", "collect-reserved-bicycle", CommandRequest {
+    let collected = tracer.submit_test(RENTAL_CONTEXT, "collect-reserved-bicycle", CommandRequest {
         schema_version: 1,
         payload: json!({"fleet_id":"city-fleet", "reservation_id":"booking-77", "bicycle_id":"bike-77", "payment_id":"payment-77", "payment_method":"sandbox-approved"}),
     }, Some("collect-spare")).await?;
@@ -284,11 +290,11 @@ async fn demonstrate_refund(runtime: &NatsRuntime, tracer: &Tracer, output: &Pat
         ),
         "second collection failed",
     )?;
-    payment_history(runtime, "payment-77", 2).await?;
+    wait_for_rental(rental, "bike-77").await?;
     println!(
         "9. Sam books and collects bike-77 for the following day, paying €25 rent and a €100 deposit."
     );
-    let returned = tracer.submit_test("bike-rental", "return-bicycle", CommandRequest {
+    let returned = tracer.submit_test(RENTAL_CONTEXT, "return-bicycle", CommandRequest {
         schema_version: 2,
         payload: json!({"fleet_id":"city-fleet", "bicycle_id":"bike-77", "returned_at":"2026-12-02T17:00:00Z"}),
     }, Some("satisfactory-return")).await?;
@@ -297,7 +303,7 @@ async fn demonstrate_refund(runtime: &NatsRuntime, tracer: &Tracer, output: &Pat
         matches!(returned.result, Some(OperationResult::Accepted { .. })),
         "satisfactory return failed",
     )?;
-    let history = payment_history(runtime, "payment-77", 3).await?;
+    let history = payment_history(finance, "payment-77", 4).await?;
     let refund = history.last().ok_or("refund missing")?;
     let payload: Value = serde_json::from_slice(refund.payload())?;
     ensure(
@@ -316,9 +322,10 @@ async fn demonstrate_refund(runtime: &NatsRuntime, tracer: &Tracer, output: &Pat
     println!(
         "10. Sam returns on time with no damage: the sandbox automatically refunds €100; the €25 rental charge stays paid."
     );
+    payment_history(finance, "payment-42", 3).await?;
     let settled = tracer
         .submit_test(
-            "bike-rental",
+            FINANCE_CONTEXT,
             "refund-eligible-rental-deposit",
             CommandRequest {
                 schema_version: 1,
@@ -334,7 +341,7 @@ async fn demonstrate_refund(runtime: &NatsRuntime, tracer: &Tracer, output: &Pat
         ),
         "damaged-return refund eligibility check failed",
     )?;
-    let held = payment_history(runtime, "payment-42", 2).await?;
+    let held = payment_history(finance, "payment-42", 3).await?;
     ensure(
         held.iter()
             .all(|event| event.event_type() != "security-deposit-refunded"),
@@ -346,13 +353,34 @@ async fn demonstrate_refund(runtime: &NatsRuntime, tracer: &Tracer, output: &Pat
     Ok(())
 }
 
+async fn wait_for_rental(runtime: &NatsRuntime, bicycle_id: &str) -> DemoResult {
+    let store = runtime.store();
+    let stream = demo_stream();
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            for event in store.load(&stream).await? {
+                if event.event_type() == "bicycle-rented" {
+                    let payload: Value = serde_json::from_slice(event.payload())?;
+                    if payload.get("bicycle_id").and_then(Value::as_str) == Some(bicycle_id) {
+                        return Ok(());
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await?
+}
+
 async fn payment_history(
     runtime: &NatsRuntime,
     payment_id: &str,
     count: usize,
 ) -> DemoResult<Vec<RecordedEvent>> {
     let stream = StreamId::new(
-        StreamAggregateType::new("bike-rental/rental-payment")?,
+        StreamAggregateType::new(
+            bike_rental::rental_payment::RentalPaymentAggregate::aggregate_type(),
+        )?,
         StreamAggregateId::new(payment_id)?,
     );
     tokio::time::timeout(Duration::from_secs(15), async {
@@ -464,17 +492,25 @@ fn ensure(condition: bool, message: &str) -> DemoResult {
     }
 }
 
-async fn cleanup(connection: &NatsConnection, config: &BikeRentalNatsConfig) -> DemoResult {
-    let topology = config.messaging().topology();
+async fn cleanup(
+    connection: &NatsConnection,
+    config: &tracer::ContextConfigurations,
+) -> DemoResult {
+    let topology = config.rental().messaging().topology();
     let mut failure = None;
     for stream in [
         topology.command_stream().as_str(),
         topology.command_response_stream().as_str(),
         topology.integration_event_stream().as_str(),
         topology.quarantine_stream().as_str(),
-        config.event_store().stream_name(),
-        config.event_store().outcome_state_stream_name(),
-    ] {
+    ]
+    .into_iter()
+    .chain(config.contexts().flat_map(|(context, _)| {
+        [
+            context.event_store.stream_name(),
+            context.event_store.outcome_state_stream_name(),
+        ]
+    })) {
         if let Err(error) = connection.delete_stream_if_exists(stream).await {
             failure.get_or_insert(error);
         }

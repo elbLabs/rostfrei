@@ -45,7 +45,7 @@ function directory(
 const rentalStatus = directory(
   "rental-status",
   "rental_status",
-  "src/domain/bike_rental/rental_fleet/bicycle/rental_status",
+  "src/domain/rental/rental_fleet/bicycle/rental_status",
   {
     role: "Lifecycle",
     summary: "Declares Bicycle states and legal transitions.",
@@ -57,7 +57,7 @@ const rentalStatus = directory(
     file(
       "lifecycle",
       "lifecycle.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs",
+      "src/domain/rental/rental_fleet/bicycle/rental_status/lifecycle.rs",
       {
         role: "Lifecycle declaration",
         summary:
@@ -70,7 +70,7 @@ const rentalStatus = directory(
     file(
       "transition",
       "transition.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/rental_status/transition.rs",
+      "src/domain/rental/rental_fleet/bicycle/rental_status/transition.rs",
       {
         role: "State transition declaration",
         summary:
@@ -90,7 +90,7 @@ const rentalStatus = directory(
 const bicycleCondition = directory(
   "bicycle-condition",
   "condition",
-  "src/domain/bike_rental/rental_fleet/bicycle/condition",
+  "src/domain/rental/rental_fleet/bicycle/condition",
   {
     role: "Simple Value Object",
     summary:
@@ -103,7 +103,7 @@ const bicycleCondition = directory(
     file(
       "condition-value",
       "value.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/condition/value.rs",
+      "src/domain/rental/rental_fleet/bicycle/condition/value.rs",
       {
         role: "Value Object declaration",
         summary: "Defines BicycleCondition and its stable semantic metadata.",
@@ -122,7 +122,7 @@ const bicycleCondition = directory(
 const normalizeRegistrationNumber = directory(
   "normalize-registration-number",
   "normalize",
-  "src/domain/bike_rental/rental_fleet/bicycle/registration_number/normalize",
+  "src/domain/rental/rental_fleet/bicycle/registration_number/normalize",
   {
     role: "Value Object action",
     summary: "Normalizes one Registration Number through an ordinary trait.",
@@ -134,7 +134,7 @@ const normalizeRegistrationNumber = directory(
     file(
       "registration-action",
       "action.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/normalize/action.rs",
+      "src/domain/rental/rental_fleet/bicycle/registration_number/normalize/action.rs",
       {
         role: "Value Object action contract",
         summary: "Declares NormalizeRegistrationNumber and its semantic ID.",
@@ -149,7 +149,7 @@ const normalizeRegistrationNumber = directory(
     file(
       "registration-action-execute",
       "execute.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/normalize/execute.rs",
+      "src/domain/rental/rental_fleet/bicycle/registration_number/normalize/execute.rs",
       {
         role: "Value Object action implementation",
         summary: "Implements normalization directly for RegistrationNumber.",
@@ -168,7 +168,7 @@ const normalizeRegistrationNumber = directory(
 const registrationNumberValidity = directory(
   "registration-number-validity",
   "validity",
-  "src/domain/bike_rental/rental_fleet/bicycle/registration_number/validity",
+  "src/domain/rental/rental_fleet/bicycle/registration_number/validity",
   {
     role: "Value Object invariant",
     summary: "Names and evaluates the Registration Number validity rule.",
@@ -180,7 +180,7 @@ const registrationNumberValidity = directory(
     file(
       "registration-invariant",
       "contract.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/validity/contract.rs",
+      "src/domain/rental/rental_fleet/bicycle/registration_number/validity/contract.rs",
       {
         role: "Value Object invariant contract",
         summary: "Declares RegistrationNumberValidity and its semantic ID.",
@@ -195,7 +195,7 @@ const registrationNumberValidity = directory(
     file(
       "registration-invariant-evaluate",
       "evaluate.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/validity/evaluate.rs",
+      "src/domain/rental/rental_fleet/bicycle/registration_number/validity/evaluate.rs",
       {
         role: "Value Object invariant implementation",
         summary: "Evaluates validity directly on RegistrationNumber.",
@@ -214,7 +214,7 @@ const registrationNumberValidity = directory(
 const chooseRegistrationNumberFormat = directory(
   "choose-registration-number-format",
   "choose_format",
-  "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format",
+  "src/domain/rental/rental_fleet/bicycle/registration_number/choose_format",
   {
     role: "Value Object policy",
     summary: "Chooses one closed Registration Number format outcome.",
@@ -226,7 +226,7 @@ const chooseRegistrationNumberFormat = directory(
     file(
       "registration-policy",
       "policy.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format/policy.rs",
+      "src/domain/rental/rental_fleet/bicycle/registration_number/choose_format/policy.rs",
       {
         role: "Value Object policy contract",
         summary:
@@ -242,7 +242,7 @@ const chooseRegistrationNumberFormat = directory(
     file(
       "registration-outcome",
       "outcome.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format/outcome.rs",
+      "src/domain/rental/rental_fleet/bicycle/registration_number/choose_format/outcome.rs",
       {
         role: "Policy outcome",
         summary: "Defines compact and segmented Registration Number formats.",
@@ -253,7 +253,7 @@ const chooseRegistrationNumberFormat = directory(
     file(
       "registration-policy-evaluate",
       "evaluate.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/choose_format/evaluate.rs",
+      "src/domain/rental/rental_fleet/bicycle/registration_number/choose_format/evaluate.rs",
       {
         role: "Value Object policy implementation",
         summary: "Evaluates the format directly for RegistrationNumber.",
@@ -272,7 +272,7 @@ const chooseRegistrationNumberFormat = directory(
 const registrationNumber = directory(
   "registration-number",
   "registration_number",
-  "src/domain/bike_rental/rental_fleet/bicycle/registration_number",
+  "src/domain/rental/rental_fleet/bicycle/registration_number",
   {
     role: "Behaviorful Value Object",
     summary:
@@ -291,7 +291,7 @@ const registrationNumber = directory(
     file(
       "registration-value",
       "value.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/registration_number/value.rs",
+      "src/domain/rental/rental_fleet/bicycle/registration_number/value.rs",
       {
         role: "Value Object declaration",
         summary: "Defines the opaque RegistrationNumber value and accessors.",
@@ -313,7 +313,7 @@ const registrationNumber = directory(
 const eligibilityPolicy = directory(
   "eligibility-policy",
   "assess_rental_eligibility",
-  "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility",
+  "src/domain/rental/rental_fleet/bicycle/assess_rental_eligibility",
   {
     role: "Entity policy capability",
     summary:
@@ -326,7 +326,7 @@ const eligibilityPolicy = directory(
     file(
       "policy",
       "policy.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/policy.rs",
+      "src/domain/rental/rental_fleet/bicycle/assess_rental_eligibility/policy.rs",
       {
         role: "Policy contract",
         summary: "Declares the rental-eligibility policy on Bicycle.",
@@ -342,7 +342,7 @@ const eligibilityPolicy = directory(
     file(
       "outcome",
       "outcome.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/outcome.rs",
+      "src/domain/rental/rental_fleet/bicycle/assess_rental_eligibility/outcome.rs",
       {
         role: "Policy outcome",
         summary: "Declares the possible rental-eligibility outcomes.",
@@ -357,7 +357,7 @@ const eligibilityPolicy = directory(
     file(
       "evaluate",
       "evaluate.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/evaluate.rs",
+      "src/domain/rental/rental_fleet/bicycle/assess_rental_eligibility/evaluate.rs",
       {
         role: "Entity policy implementation",
         summary:
@@ -378,7 +378,7 @@ const eligibilityPolicy = directory(
 const bicycle = directory(
   "bicycle",
   "bicycle",
-  "src/domain/bike_rental/rental_fleet/bicycle",
+  "src/domain/rental/rental_fleet/bicycle",
   {
     role: "Nested Entity",
     summary:
@@ -395,7 +395,7 @@ const bicycle = directory(
     file(
       "entity",
       "entity.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/entity.rs",
+      "src/domain/rental/rental_fleet/bicycle/entity.rs",
       {
         role: "Entity declaration",
         summary:
@@ -411,7 +411,7 @@ const bicycle = directory(
     file(
       "entity-identity",
       "identity.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle/identity.rs",
+      "src/domain/rental/rental_fleet/bicycle/identity.rs",
       {
         role: "Domain identity",
         summary: "Defines the opaque BicycleId marker type.",
@@ -433,7 +433,7 @@ const bicycle = directory(
 const rentBicycle = directory(
   "rent-bicycle",
   "rent_bicycle",
-  "src/domain/bike_rental/rental_fleet/rent_bicycle",
+  "src/domain/rental/rental_fleet/rent_bicycle",
   {
     role: "Aggregate action capability",
     summary:
@@ -450,7 +450,7 @@ const rentBicycle = directory(
     file(
       "aggregate-action",
       "action.rs",
-      "src/domain/bike_rental/rental_fleet/rent_bicycle/action.rs",
+      "src/domain/rental/rental_fleet/rent_bicycle/action.rs",
       {
         role: "Action contract",
         summary: "Declares the single Rent Bicycle behavior trait.",
@@ -466,7 +466,7 @@ const rentBicycle = directory(
     file(
       "aggregate-execute",
       "execute.rs",
-      "src/domain/bike_rental/rental_fleet/rent_bicycle/execute.rs",
+      "src/domain/rental/rental_fleet/rent_bicycle/execute.rs",
       {
         role: "Aggregate action implementation",
         summary: "Evaluates state and raises the corresponding domain event.",
@@ -482,7 +482,7 @@ const rentBicycle = directory(
     file(
       "command",
       "command.rs",
-      "src/domain/bike_rental/rental_fleet/rent_bicycle/command.rs",
+      "src/domain/rental/rental_fleet/rent_bicycle/command.rs",
       {
         role: "Command",
         summary: "Declares a Bike Rental command with fleet and bicycle IDs.",
@@ -494,7 +494,7 @@ const rentBicycle = directory(
     file(
       "handler",
       "handler.rs",
-      "src/domain/bike_rental/rental_fleet/rent_bicycle/handler.rs",
+      "src/domain/rental/rental_fleet/rent_bicycle/handler.rs",
       {
         role: "Command handler",
         summary: "Loads the fleet and calls its rental action.",
@@ -506,7 +506,7 @@ const rentBicycle = directory(
     file(
       "event",
       "event.rs",
-      "src/domain/bike_rental/rental_fleet/rent_bicycle/event.rs",
+      "src/domain/rental/rental_fleet/rent_bicycle/event.rs",
       {
         role: "Domain event",
         summary: "Captures the persisted Bicycle Rented fact.",
@@ -522,7 +522,7 @@ const rentBicycle = directory(
     file(
       "apply",
       "apply.rs",
-      "src/domain/bike_rental/rental_fleet/rent_bicycle/apply.rs",
+      "src/domain/rental/rental_fleet/rent_bicycle/apply.rs",
       {
         role: "Event application",
         summary: "Applies BicycleRented to aggregate state.",
@@ -534,7 +534,7 @@ const rentBicycle = directory(
     file(
       "rejection",
       "rejection.rs",
-      "src/domain/bike_rental/rental_fleet/rent_bicycle/rejection.rs",
+      "src/domain/rental/rental_fleet/rent_bicycle/rejection.rs",
       {
         role: "Domain rejection",
         summary:
@@ -553,7 +553,7 @@ const rentBicycle = directory(
 const availabilityQuery = directory(
   "availability-query",
   "bicycle_availability",
-  "src/domain/bike_rental/rental_fleet/bicycle_availability",
+  "src/domain/rental/rental_fleet/bicycle_availability",
   {
     role: "Query capability",
     summary: "Pairs one read contract with its returned view type.",
@@ -565,7 +565,7 @@ const availabilityQuery = directory(
     file(
       "query",
       "query.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle_availability/query.rs",
+      "src/domain/rental/rental_fleet/bicycle_availability/query.rs",
       {
         role: "Query contract",
         summary: "An ordinary trait carrying the stable query ID and label.",
@@ -581,7 +581,7 @@ const availabilityQuery = directory(
     file(
       "query-execute",
       "execute.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle_availability/execute.rs",
+      "src/domain/rental/rental_fleet/bicycle_availability/execute.rs",
       {
         role: "Query implementation",
         summary: "Implements BicycleAvailabilityQuery for the aggregate root.",
@@ -597,7 +597,7 @@ const availabilityQuery = directory(
     file(
       "query-output",
       "output.rs",
-      "src/domain/bike_rental/rental_fleet/bicycle_availability/output.rs",
+      "src/domain/rental/rental_fleet/bicycle_availability/output.rs",
       {
         role: "Query view",
         summary: "Defines the ordinary Rust view returned by the Query.",
@@ -612,7 +612,7 @@ const availabilityQuery = directory(
 const fleetInvariant = directory(
   "fleet-invariant",
   "fleet_consistency",
-  "src/domain/bike_rental/rental_fleet/fleet_consistency",
+  "src/domain/rental/rental_fleet/fleet_consistency",
   {
     role: "Invariant capability",
     summary: "Names and evaluates one rule that must hold for Rental Fleet.",
@@ -624,7 +624,7 @@ const fleetInvariant = directory(
     file(
       "invariant",
       "contract.rs",
-      "src/domain/bike_rental/rental_fleet/fleet_consistency/contract.rs",
+      "src/domain/rental/rental_fleet/fleet_consistency/contract.rs",
       {
         role: "Invariant contract",
         summary: "Declares the Fleet Consistency trait and semantic metadata.",
@@ -640,7 +640,7 @@ const fleetInvariant = directory(
     file(
       "invariant-evaluate",
       "evaluate.rs",
-      "src/domain/bike_rental/rental_fleet/fleet_consistency/evaluate.rs",
+      "src/domain/rental/rental_fleet/fleet_consistency/evaluate.rs",
       {
         role: "Invariant evaluation",
         summary: "Returns an InvariantViolation when fleet consistency fails.",
@@ -659,7 +659,7 @@ const fleetInvariant = directory(
 const rentalFleet = directory(
   "rental-fleet",
   "rental_fleet",
-  "src/domain/bike_rental/rental_fleet",
+  "src/domain/rental/rental_fleet",
   {
     role: "Aggregate boundary",
     summary:
@@ -676,7 +676,7 @@ const rentalFleet = directory(
     file(
       "aggregate",
       "aggregate.rs",
-      "src/domain/bike_rental/rental_fleet/aggregate.rs",
+      "src/domain/rental/rental_fleet/aggregate.rs",
       {
         role: "Aggregate declaration",
         summary: "Pairs minimal metadata with AggregateDefinition.",
@@ -691,7 +691,7 @@ const rentalFleet = directory(
     file(
       "event-set",
       "event_set.rs",
-      "src/domain/bike_rental/rental_fleet/event_set.rs",
+      "src/domain/rental/rental_fleet/event_set.rs",
       {
         role: "Closed event set",
         summary: "Lists the event types that belong to Rental Fleet.",
@@ -700,7 +700,7 @@ const rentalFleet = directory(
           "Only registered event types can be recorded, decoded, and replayed.",
       }
     ),
-    file("root", "root.rs", "src/domain/bike_rental/rental_fleet/root.rs", {
+    file("root", "root.rs", "src/domain/rental/rental_fleet/root.rs", {
       role: "Aggregate root Entity",
       summary: "Defines Rental Fleet state reconstructed from domain events.",
       allowed: [
@@ -713,7 +713,7 @@ const rentalFleet = directory(
     file(
       "aggregate-identity",
       "identity.rs",
-      "src/domain/bike_rental/rental_fleet/identity.rs",
+      "src/domain/rental/rental_fleet/identity.rs",
       {
         role: "Aggregate identity type",
         summary: "Defines the opaque FleetId used by the root Entity.",
@@ -728,7 +728,7 @@ const rentalFleet = directory(
     file(
       "initialize",
       "initialize.rs",
-      "src/domain/bike_rental/rental_fleet/initialize.rs",
+      "src/domain/rental/rental_fleet/initialize.rs",
       {
         role: "Aggregate initialization",
         summary: "Builds the Rental Fleet root for an empty event stream.",
@@ -740,7 +740,7 @@ const rentalFleet = directory(
     file(
       "stream",
       "stream.rs",
-      "src/domain/bike_rental/rental_fleet/stream.rs",
+      "src/domain/rental/rental_fleet/stream.rs",
       {
         role: "Stream identity boundary",
         summary:
@@ -760,7 +760,7 @@ const rentalFleet = directory(
 const transferBicycle = directory(
   "transfer-bicycle",
   "transfer",
-  "src/domain/bike_rental/bicycle_transfer/transfer",
+  "src/domain/rental/bicycle_transfer/transfer",
   {
     role: "Domain service action",
     summary:
@@ -773,7 +773,7 @@ const transferBicycle = directory(
     file(
       "transfer-bicycle-action",
       "action.rs",
-      "src/domain/bike_rental/bicycle_transfer/transfer/action.rs",
+      "src/domain/rental/bicycle_transfer/transfer/action.rs",
       {
         role: "Domain service action contract",
         summary: "Declares BicycleTransferAction and its semantic ID.",
@@ -789,7 +789,7 @@ const transferBicycle = directory(
     file(
       "transfer-bicycle-execute",
       "execute.rs",
-      "src/domain/bike_rental/bicycle_transfer/transfer/execute.rs",
+      "src/domain/rental/bicycle_transfer/transfer/execute.rs",
       {
         role: "Domain service action implementation",
         summary: "Implements validation and transfer for BicycleTransfer.",
@@ -808,7 +808,7 @@ const transferBicycle = directory(
 const bicycleTransfer = directory(
   "bicycle-transfer",
   "bicycle_transfer",
-  "src/domain/bike_rental/bicycle_transfer",
+  "src/domain/rental/bicycle_transfer",
   {
     role: "Domain service",
     summary: "Coordinates a bicycle transfer between two fleet aggregates.",
@@ -826,7 +826,7 @@ const bicycleTransfer = directory(
     file(
       "service",
       "service.rs",
-      "src/domain/bike_rental/bicycle_transfer/service.rs",
+      "src/domain/rental/bicycle_transfer/service.rs",
       {
         role: "Domain service declaration",
         summary:
@@ -843,14 +843,14 @@ const bicycleTransfer = directory(
   ]
 )
 
-const bikeRental = directory(
-  "bike-rental",
-  "bike_rental",
-  "src/domain/bike_rental",
+const rental = directory(
+  "rental",
+  "rental",
+  "src/domain/rental",
   {
     role: "Bounded context",
     summary:
-      "Owns one language boundary and its Aggregate and Domain Service modules.",
+      "Owns the fleet, rental tariffs, and bicycle transfers.",
     allowed: [
       "context.rs",
       "Aggregate directories",
@@ -861,9 +861,9 @@ const bikeRental = directory(
       "Context boundaries remain visible in paths and generated aggregate identities.",
   },
   [
-    file("context", "context.rs", "src/domain/bike_rental/context.rs", {
+    file("rental-context", "context.rs", "src/domain/rental/context.rs", {
       role: "Bounded-context declaration",
-      summary: "Declares the stable Bike Rental ID and label.",
+      summary: "Declares the stable Rental ID and label.",
       allowed: ["One BoundedContext declaration", "Imports"],
       guarantee: "The bounded context has one semantic source of truth.",
     }),
@@ -900,7 +900,7 @@ export const STRUCTURE: StructureNode[] = [
         guarantee:
           "The compiled model remains explicit and free of runtime-only relationships.",
       }),
-      bikeRental,
+      rental,
     ]
   ),
 ]
@@ -908,7 +908,7 @@ export const STRUCTURE: StructureNode[] = [
 export const DEFAULT_SELECTED_ID = "aggregate-action"
 export const DEFAULT_EXPANDED_IDS = [
   "domain",
-  "bike-rental",
+  "rental",
   "rental-fleet",
   "rent-bicycle",
 ]

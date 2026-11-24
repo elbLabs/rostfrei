@@ -10,7 +10,10 @@ use async_trait::async_trait;
 mod support;
 rostfrei::install_macro_support!();
 use axum::{body::Body, http::Request};
-use bike_rental::demo::{demo_fixture, demo_stream, seed_demo};
+use bike_rental::{
+    RENTAL_CONTEXT,
+    demo::{demo_fixture, demo_stream, seed_demo},
+};
 use http_body_util::BodyExt as _;
 use rostfrei::nats::{NatsConnectionConfig, connect};
 use rostfrei::tracer::{
@@ -42,12 +45,12 @@ async fn rent(runtime: &NatsRuntime, correlation: &str) -> TestResult {
                 OperationId::new(correlation)?,
                 correlation,
                 command_execution_fingerprint(
-                    "bike-rental",
+                    RENTAL_CONTEXT,
                     "rent-bicycle",
                     support::RentBicycle::SCHEMA_VERSION,
                     &payload,
                 ),
-                "bike-rental",
+                RENTAL_CONTEXT,
                 "rent-bicycle",
                 support::RentBicycle::SCHEMA_VERSION,
                 payload,
@@ -111,7 +114,7 @@ async fn shared_host_observes_external_flows_and_owns_scope_readiness_across_res
     let normal = Arc::new(
         NatsRuntime::provision(
             connection.clone(),
-            NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?
+            NatsRuntimeConfig::new(application.bounded_context(RENTAL_CONTEXT)?, &bindings, 1)?
                 .with_fresh_completed_outcome_epoch("observation")?,
             bindings.clone(),
         )
@@ -129,7 +132,7 @@ async fn shared_host_observes_external_flows_and_owns_scope_readiness_across_res
     .with_continuous_observation(test_feed.clone())
     .with_continuous_observation(production_feed.clone());
     let host = NatsApplication::builder(
-        application.test_bounded_context("bike-rental")?,
+        application.test_bounded_context(RENTAL_CONTEXT)?,
         connection.clone(),
         bindings,
     )?
@@ -138,6 +141,9 @@ async fn shared_host_observes_external_flows_and_owns_scope_readiness_across_res
     .with_tracer(Some(config))
     .provision_and_start()
     .await?;
+    let rental = host
+        .runtime_for(RENTAL_CONTEXT)
+        .ok_or("missing Rental runtime")?;
     assert_eq!(
         test_feed.snapshot().status,
         ObservationStatus::Live,
@@ -169,12 +175,12 @@ async fn shared_host_observes_external_flows_and_owns_scope_readiness_across_res
         assert_eq!(get(&app, href, token).await?["status"], "live");
     }
     // Publish through application transports, without registering Tracer operations.
-    rent(host.runtime(), "external-test").await?;
+    rent(rental, "external-test").await?;
     rent(&normal, "external-production").await?;
     let test_flow = flow(&test_feed, "external-test").await?;
     let production_flow = flow(&production_feed, "external-production").await?;
     for (runtime, observed, token) in [
-        (host.runtime(), &test_flow, "control"),
+        (rental, &test_flow, "control"),
         (&normal, &production_flow, "inspection"),
     ] {
         assert!(
@@ -212,7 +218,7 @@ async fn shared_host_observes_external_flows_and_owns_scope_readiness_across_res
     assert_eq!(production_feed.snapshot().generation, production_generation);
     assert!(production_feed.flow(&production_flow.summary.id).is_ok());
     assert_eq!(normal.store().load(&demo_stream()).await?.len(), 3);
-    rent(host.runtime(), "external-after-reset").await?;
+    rent(rental, "external-after-reset").await?;
     flow(&test_feed, "external-after-reset").await?;
     host.shutdown().await?;
     assert!(
@@ -228,7 +234,7 @@ async fn shared_host_observes_external_flows_and_owns_scope_readiness_across_res
         ObservationStatus::Unavailable
     );
     // Source guards were released even though runtime, Tracer and feed handles survive.
-    let replacement = test_feed.source("bike-rental")?;
+    let replacement = test_feed.source(RENTAL_CONTEXT)?;
     replacement.ready();
     assert_eq!(test_feed.snapshot().status, ObservationStatus::Live);
     drop(replacement);
@@ -249,7 +255,7 @@ async fn runtime_observation_reports_interruption_and_failed_reset_then_recovers
     let application = ApplicationName::new(format!("observation-health-{suffix}"))?;
     let bindings = Arc::new(tracer::bindings()?);
     let config = NatsRuntimeConfig::new(
-        application.test_bounded_context("bike-rental")?,
+        application.test_bounded_context(RENTAL_CONTEXT)?,
         &bindings,
         1,
     )?
@@ -391,7 +397,7 @@ async fn observation_worker_failure_is_supervised_and_closes_runtime_admission()
     let application = ApplicationName::new(format!("observation-supervision-{suffix}"))?;
     let bindings = Arc::new(tracer::bindings()?);
     let config = NatsRuntimeConfig::new(
-        application.test_bounded_context("bike-rental")?,
+        application.test_bounded_context(RENTAL_CONTEXT)?,
         &bindings,
         1,
     )?
@@ -432,6 +438,96 @@ async fn observation_worker_failure_is_supervised_and_closes_runtime_admission()
 }
 
 #[tokio::test]
+async fn failed_host_start_restores_caller_dispatch_observer_on_restart() -> TestResult {
+    let connection = connect(&NatsConnectionConfig::new(
+        "dispatch-observer-rollback",
+        rostfrei::testing::integration::nats_url()?,
+    ))
+    .await?;
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let application = ApplicationName::new(format!("dispatch-observer-rollback-{suffix}"))?;
+    let bindings = Arc::new(tracer::bindings()?);
+    let rental = Arc::new(
+        NatsRuntime::provision(
+            connection.clone(),
+            NatsRuntimeConfig::new(application.bounded_context(RENTAL_CONTEXT)?, &bindings, 1)?
+                .with_fresh_outcomes()?,
+            bindings.clone(),
+        )
+        .await?,
+    );
+    let prior_feed = ObservationFeed::new(application.clone(), ObservationScope::Production);
+    let prior_tracer = rental
+        .tracer_builder()
+        .with_continuous_observation(prior_feed.clone())
+        .build()?;
+    rental
+        .attach_observer(prior_tracer.correlation_observer(OperationMode::Dispatch))
+        .await?;
+    assert_eq!(prior_feed.snapshot().status, ObservationStatus::Live);
+
+    let second_bindings = Arc::new(bike_rental::tracer::workshop_bindings()?);
+    let second_config = NatsRuntimeConfig::new(
+        application.bounded_context(bike_rental::WORKSHOP_CONTEXT)?,
+        &second_bindings,
+        1,
+    )?
+    .with_fresh_outcomes()?;
+    let second = Arc::new(
+        NatsRuntime::provision(connection.clone(), second_config.clone(), second_bindings).await?,
+    );
+    let stream = connection
+        .jetstream()
+        .get_stream(second_config.messaging.topology().command_stream().as_str())
+        .await?;
+    let durable = second_config.commands[0].durable_name().as_str();
+    stream.delete_consumer(durable).await?;
+
+    let failed_feed = ObservationFeed::new(application.clone(), ObservationScope::Production);
+    let config = TracerConfig::new(
+        tokio::net::TcpListener::bind("127.0.0.1:0").await?,
+        HttpConfig::new("control")?,
+    )
+    .with_dispatch_runtime(rental.clone())
+    .with_dispatch_runtime(second.clone())
+    .with_continuous_observation(failed_feed.clone());
+    let result = NatsApplication::builder(
+        application.test_bounded_context(RENTAL_CONTEXT)?,
+        connection.clone(),
+        bindings,
+    )?
+    .with_fresh_outcomes()?
+    .with_default_test_fixture(demo_fixture()?)
+    .with_tracer(Some(config))
+    .provision_and_start()
+    .await;
+    assert!(
+        matches!(result, Err(rostfrei::tracer::NatsHostError::Consumer(_))),
+        "second dispatch worker is missing its durable"
+    );
+    assert_eq!(
+        failed_feed.snapshot().status,
+        ObservationStatus::Unavailable
+    );
+
+    rental.start_workers().await?;
+    assert_eq!(prior_feed.snapshot().status, ObservationStatus::Live);
+    second_config.provision(&connection).await?;
+    second.start_workers().await?;
+    assert!(!second.has_correlation_observer().await);
+    assert_eq!(
+        failed_feed.snapshot().status,
+        ObservationStatus::Unavailable
+    );
+    rental.stop_workers().await;
+    second.stop_workers().await;
+    connection.drain().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn host_rejects_observation_without_a_matching_application_runtime() -> TestResult {
     let connection = connect(&NatsConnectionConfig::new(
         "observation-config",
@@ -442,15 +538,21 @@ async fn host_rejects_observation_without_a_matching_application_runtime() -> Te
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos();
     let application = ApplicationName::new(format!("observation-config-{suffix}"))?;
-    let context = application.test_bounded_context("bike-rental")?;
+    let context = application.test_bounded_context(RENTAL_CONTEXT)?;
     let bindings = Arc::new(tracer::bindings()?);
     let resources = NatsRuntimeConfig::new(context.clone(), &bindings, 1)?;
-    for feed in [
-        ObservationFeed::new(
-            ApplicationName::new("wrong-application")?,
-            ObservationScope::Test,
+    for (feed, expected_error) in [
+        (
+            ObservationFeed::new(
+                ApplicationName::new("wrong-application")?,
+                ObservationScope::Test,
+            ),
+            "observation feed must belong to its runtime's application",
         ),
-        ObservationFeed::new(application, ObservationScope::Production),
+        (
+            ObservationFeed::new(application, ObservationScope::Production),
+            "production observation requires a Normal dispatch runtime",
+        ),
     ] {
         let config = TracerConfig::new(
             tokio::net::TcpListener::bind("127.0.0.1:0").await?,
@@ -459,13 +561,14 @@ async fn host_rejects_observation_without_a_matching_application_runtime() -> Te
         .with_continuous_observation(feed);
         let result =
             NatsApplication::builder(context.clone(), connection.clone(), bindings.clone())?
+                .with_fresh_outcomes()?
                 .with_default_test_fixture(demo_fixture()?)
                 .with_tracer(Some(config))
                 .provision_and_start()
                 .await;
         assert!(matches!(
             result,
-            Err(rostfrei::tracer::NatsHostError::Configuration(_))
+            Err(rostfrei::tracer::NatsHostError::Configuration(message)) if message == expected_error
         ));
         assert!(
             connection

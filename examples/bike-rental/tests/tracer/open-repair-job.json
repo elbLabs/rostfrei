@@ -15,7 +15,7 @@
             "kind": "command",
             "key": "open-job",
             "name": "open-repair-job",
-            "context": "bike-rental",
+            "context": "workshop",
             "schemaVersion": 1,
             "payload": {
               "repair_job_id": "brake-service-42",

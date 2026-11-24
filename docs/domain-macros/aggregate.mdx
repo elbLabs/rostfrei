@@ -10,7 +10,7 @@ Adds an ID and label to an aggregate marker. Implement `AggregateDefinition` to 
 pub struct RentalFleetAggregate;
 
 impl AggregateDefinition for RentalFleetAggregate {
-    type Context = BikeRental;
+    type Context = Rental;
     type Root = RentalFleet;
     type Event = RentalFleetEvent;
 }

@@ -485,9 +485,10 @@ impl Capabilities {
             None,
             None,
         )?;
+        let fleet_type = format!("{}/rental-fleet", text(&root["context"])?);
         let aggregate = array(&context["aggregates"])?
             .iter()
-            .find(|a| a["aggregateType"] == "bike-rental/rental-fleet")
+            .find(|a| a["aggregateType"] == fleet_type)
             .context("rental fleet aggregate")?;
         let before = self.get(text(&aggregate["testInstancesHref"])?, "test")?;
         let observation = self.snapshot("test")?;

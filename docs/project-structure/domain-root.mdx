@@ -8,16 +8,17 @@ The domain root is the single entry point for the compiled model. It keeps the m
 
 Path: `src/domain`
 
+The `bike-rental` application composes three bounded contexts. `rental` owns the
+fleet and tariffs, `finance` owns payments, and `workshop` owns repair jobs.
+Tests under `src/domain/tests` mirror those context directories.
+
 <ProjectStructureExample name="domain-root">
 
 ```rust
 domain_model! {
-    contexts: [BikeRental],
-    aggregates: [RentalFleetAggregate],
-    entities: [RentalFleet, Bicycle],
-    value_objects: [BicycleCondition, RegistrationNumber],
-    services: [BicycleTransfer],
-    errors: [BicycleUnavailable],
+    contexts: [Rental, Finance, Workshop],
+    aggregates: [RentalFleetAggregate, RentalTariffAggregate, RentalPaymentAggregate, RepairJobAggregate],
+    // The full inventory also declares entities, value objects, services, and errors.
 }
 ```
 

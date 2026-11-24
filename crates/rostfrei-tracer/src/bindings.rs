@@ -244,6 +244,11 @@ impl ApplicationBindings {
         &self.metadata.registry
     }
 
+    #[cfg(feature = "nats-host")]
+    pub(crate) const fn domain_model(&self) -> Option<&serde_json::Value> {
+        self.domain_model.as_ref()
+    }
+
     pub fn register_integration_event<A, D, M>(&mut self, mapper: M) -> &mut Self
     where
         A: Aggregate + Send + Sync + 'static,

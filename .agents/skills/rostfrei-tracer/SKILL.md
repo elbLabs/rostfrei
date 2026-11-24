@@ -408,7 +408,7 @@ Use fixed style classes to distinguish message kinds:
 
 ```mermaid
 flowchart TD
-  n0["Command: collect-rental-payment v1"]
+  n0["Command: resolve-bicycle-collection v1"]
   n1["Domain event: bicycle-rented v1"]
   n2["Integration event: bicycle-rental-started v1"]
   n0 --> n1

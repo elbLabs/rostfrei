@@ -8,7 +8,10 @@ use std::{error::Error, sync::Arc, time::Duration};
 use async_trait::async_trait;
 mod support;
 rostfrei::install_macro_support!();
-use bike_rental::demo::{demo_fixture, demo_stream};
+use bike_rental::{
+    RENTAL_CONTEXT,
+    demo::{demo_fixture, demo_stream},
+};
 use rostfrei::nats::{NatsConnectionConfig, connect};
 use rostfrei::tracer::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandTransportObserver,
@@ -36,7 +39,7 @@ async fn independent_provisioning_prepares_the_complete_mapping_pipeline()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos();
     let context = ApplicationName::new(format!("split-provisioning-{suffix}"))?
-        .test_bounded_context("bike-rental")?;
+        .test_bounded_context(RENTAL_CONTEXT)?;
     let bindings = Arc::new(tracer::bindings()?);
     let config = NatsRuntimeConfig::new(context.clone(), &bindings, 1)?
         .with_fresh_completed_outcome_epoch("split-provisioning")?;
@@ -47,21 +50,23 @@ async fn independent_provisioning_prepares_the_complete_mapping_pipeline()
         .with_initial_fixture(demo_fixture()?)
         .connect_and_start()
         .await?;
+    let rental = host
+        .runtime_for(RENTAL_CONTEXT)
+        .ok_or("missing Rental runtime")?;
     let payload = json!({"fleet_id":"city-fleet", "bicycle_id":"bike-42"});
-    let receipt = host
-        .runtime()
+    let receipt = rental
         .transport()
         .invoke(
             CommandInvocation::new(
                 OperationId::new("split-rent")?,
                 "split-rent",
                 command_execution_fingerprint(
-                    "bike-rental",
+                    RENTAL_CONTEXT,
                     RentBicycle::LOCAL_ID,
                     RentBicycle::SCHEMA_VERSION,
                     &payload,
                 ),
-                "bike-rental",
+                RENTAL_CONTEXT,
                 RentBicycle::LOCAL_ID,
                 RentBicycle::SCHEMA_VERSION,
                 payload,
@@ -70,15 +75,10 @@ async fn independent_provisioning_prepares_the_complete_mapping_pipeline()
         )
         .await?;
     assert!(matches!(receipt.outcome(), CommandOutcome::Accepted));
+    let stream_name = config.messaging.topology().integration_event_stream();
     let mut stream = connection
         .jetstream()
-        .get_stream(
-            config
-                .messaging
-                .topology()
-                .integration_event_stream()
-                .as_str(),
-        )
+        .get_stream(stream_name.as_str())
         .await?;
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -89,7 +89,7 @@ async fn independent_provisioning_prepares_the_complete_mapping_pipeline()
         }
     })
     .await??;
-    let history = host.runtime().store().load(&demo_stream()).await?;
+    let history = rental.store().load(&demo_stream()).await?;
     let rented = history.last().ok_or("missing persisted rental")?;
     let event = stream
         .get_raw_message(stream.cached_info().state.last_sequence)

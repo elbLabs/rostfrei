@@ -6,7 +6,9 @@ use async_nats::{
 };
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use rostfrei_messaging_core::{ApplicationName, CorrelationId, MessageId, TrafficScope};
+use rostfrei_messaging_core::{
+    ApplicationName, BoundedContextName, CorrelationId, MessageId, TrafficScope,
+};
 use tokio::time::MissedTickBehavior;
 
 use crate::{error::NatsError, publish::CORRELATION_ID_HEADER};
@@ -69,6 +71,7 @@ pub struct NatsCorrelationObserver {
     application: ApplicationName,
     traffic_scope: TrafficScope,
     domain_event_subject_filter: String,
+    integration_producer: Option<BoundedContextName>,
     stream_names: Option<CorrelationStreamNames>,
 }
 
@@ -103,6 +106,7 @@ impl NatsCorrelationObserver {
             application,
             traffic_scope,
             domain_event_subject_filter: domain_event_subject_filter.into(),
+            integration_producer: None,
             stream_names: None,
         }
     }
@@ -117,6 +121,14 @@ impl NatsCorrelationObserver {
             domain_events: domain_event_stream.into(),
             integration_events: integration_event_stream.into(),
         });
+        self
+    }
+
+    /// Observe integration events from this producer only, instead of all
+    /// producers in the application's traffic scope. Domain selection is unchanged.
+    #[must_use]
+    pub fn with_integration_producer(mut self, producer: BoundedContextName) -> Self {
+        self.integration_producer = Some(producer);
         self
     }
 
@@ -135,6 +147,19 @@ impl NatsCorrelationObserver {
             &self.application,
             self.traffic_scope,
             CorrelatedMessageFamily::IntegrationEvent,
+        );
+        let integration_subject_filter = self.integration_producer.as_ref().map_or_else(
+            || integration_filter.clone(),
+            |producer| {
+                format!(
+                    "{}.integration.{}.>",
+                    crate::messaging_config::traffic_subject_prefix(
+                        self.application.as_str(),
+                        self.traffic_scope,
+                    ),
+                    producer.as_str(),
+                )
+            },
         );
         let stream_names = if let Some(stream_names) = &self.stream_names {
             stream_names.clone()
@@ -161,8 +186,8 @@ impl NatsCorrelationObserver {
         let integration_events = ObservedStream::subscribe(
             &context,
             stream_names.integration_events,
-            integration_filter.clone(),
             integration_filter,
+            integration_subject_filter,
             DeliverPolicy::New,
         )
         .await?;
@@ -222,7 +247,7 @@ impl NatsCorrelationSubscription {
                         handler.availability(false).await;
                         continue;
                     };
-                    if family_matches(&self.application, self.traffic_scope, message.subject.as_str(), CorrelatedMessageFamily::IntegrationEvent)
+                    if matches_prefix_filter(message.subject.as_str(), &self.integration_events.subject_filter)
                         && let Some(message) = correlated_message(&message.message, CorrelatedMessageFamily::IntegrationEvent)
                         && self.integration_events.delivery_is_current(&self.context, handler.as_ref()).await
                     {
@@ -342,19 +367,14 @@ fn family_matches(
     family: CorrelatedMessageFamily,
 ) -> bool {
     let filter = family_filter(application, traffic_scope, family);
+    matches_prefix_filter(subject, &filter)
+}
+
+fn matches_prefix_filter(subject: &str, filter: &str) -> bool {
     let Some(prefix) = filter.strip_suffix('>') else {
         return false;
     };
     subject
-        .strip_prefix(prefix)
-        .is_some_and(|remainder| !remainder.is_empty())
-}
-
-fn filter_matches_family(filter: &str, family_filter: &str) -> bool {
-    let Some(prefix) = family_filter.strip_suffix('>') else {
-        return false;
-    };
-    filter
         .strip_prefix(prefix)
         .is_some_and(|remainder| !remainder.is_empty())
 }
@@ -395,7 +415,7 @@ fn stream_subjects_match_family(subjects: &[String], family_filter: &str) -> boo
     !subjects.is_empty()
         && subjects
             .iter()
-            .all(|subject| filter_matches_family(subject, family_filter))
+            .all(|subject| matches_prefix_filter(subject, family_filter))
 }
 
 fn correlated_message(
@@ -498,7 +518,7 @@ mod tests {
             &["bike-rental.domain.bike-rental.aggregate.*".to_owned()],
             &filter,
         ));
-        assert!(filter_matches_family(
+        assert!(matches_prefix_filter(
             "bike-rental.test.domain.bike-rental.aggregate.*.*",
             &filter,
         ));
@@ -531,11 +551,11 @@ mod tests {
             "bike-rental.test.domain.bike-rental.transaction.*",
             &filter,
         ));
-        assert!(!filter_matches_family(
+        assert!(!matches_prefix_filter(
             "bike-rental.domain.bike-rental.aggregate.*",
             &filter,
         ));
-        assert!(!filter_matches_family(
+        assert!(!matches_prefix_filter(
             "bike-rental.test.integration.>",
             &filter,
         ));
@@ -550,6 +570,103 @@ mod integration_tests {
         time::{SystemTime, UNIX_EPOCH},
     };
     use tokio::sync::mpsc;
+
+    struct DeliveryHandler(mpsc::UnboundedSender<String>);
+
+    #[async_trait]
+    impl CorrelatedMessageHandler for DeliveryHandler {
+        async fn handle(&self, message: CorrelatedMessage) {
+            let _ = self.0.send(message.subject().to_owned());
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::panic_in_result_fn)]
+    async fn producer_subscriptions_partition_shared_integration_deliveries()
+    -> Result<(), Box<dyn Error + Send + Sync>> {
+        let suffix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let application = ApplicationName::new(format!("observe-producers-{suffix}"))?;
+        let connection = crate::connect(&crate::NatsConnectionConfig::new(
+            "observer-fixture",
+            rostfrei_testing::integration::nats_url()?,
+        ))
+        .await?;
+        let context = connection.jetstream();
+        let scope = TrafficScope::Test;
+        let domain_name = format!("OBSERVE_DOMAIN_{suffix}");
+        let integration_name = format!("OBSERVE_INTEGRATION_{suffix}");
+        let domain_subject = format!("{}.test.domain.orders.aggregate.*.*", application.as_str());
+        let integration_prefix = format!("{}.test.integration", application.as_str());
+        for (name, subject) in [
+            (&domain_name, domain_subject.clone()),
+            (&integration_name, format!("{integration_prefix}.>")),
+        ] {
+            context
+                .create_stream(jetstream::stream::Config {
+                    name: name.clone(),
+                    subjects: vec![subject],
+                    storage: jetstream::stream::StorageType::Memory,
+                    max_bytes: 1024 * 1024,
+                    ..Default::default()
+                })
+                .await?;
+        }
+        let result = async {
+            let mut observers = Vec::new();
+            let mut workers = tokio::task::JoinSet::new();
+            for name in ["orders", "orders-history"] {
+                let subscription = NatsCorrelationObserver::new_in_scope(
+                    connection.client().clone(),
+                    application.clone(),
+                    scope,
+                    domain_subject.clone(),
+                )
+                .with_streams(domain_name.clone(), integration_name.clone())
+                .with_integration_producer(BoundedContextName::new(name)?)
+                .subscribe()
+                .await?;
+                let (sender, receiver) = mpsc::unbounded_channel();
+                observers.push((name, receiver));
+                workers.spawn(subscription.run(Arc::new(DeliveryHandler(sender))));
+            }
+
+            // A delivery on each route precedes its peer's final delivery; seeing both
+            // of our own in order proves peer traffic never reached the handler.
+            for event in ["published", "finished"] {
+                for producer in ["orders", "orders-history"] {
+                    let mut headers = HeaderMap::new();
+                    headers.insert(CORRELATION_ID_HEADER, "observe-flow");
+                    context
+                        .publish_with_headers(
+                            format!("{integration_prefix}.{producer}.{event}.cid.cause"),
+                            headers,
+                            "{}".into(),
+                        )
+                        .await?
+                        .await?;
+                }
+            }
+            for (producer, mut receiver) in observers {
+                for event in ["published", "finished"] {
+                    let actual =
+                        tokio::time::timeout(Duration::from_secs(5), receiver.recv()).await?;
+                    assert_eq!(
+                        actual,
+                        Some(format!("{integration_prefix}.{producer}.{event}.cid.cause"))
+                    );
+                }
+            }
+            workers.shutdown().await;
+            Ok::<_, Box<dyn Error + Send + Sync>>(())
+        }
+        .await;
+        let domain_cleanup = context.delete_stream(&domain_name).await;
+        let integration_cleanup = context.delete_stream(&integration_name).await;
+        result?;
+        domain_cleanup?;
+        integration_cleanup?;
+        Ok(())
+    }
 
     struct AvailabilityHandler(mpsc::UnboundedSender<bool>);
 

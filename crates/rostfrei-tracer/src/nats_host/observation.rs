@@ -1,20 +1,69 @@
+use std::sync::Arc;
+
 use crate::{
-    CorrelationError, CorrelationObserver, DomainEventObservation, IntegrationEventObservation,
-    ObservationSource,
+    ApplicationBindings, CorrelationError, CorrelationObserver, DomainEventObservation,
+    IntegrationEventObservation, ObservationSource,
 };
 use async_trait::async_trait;
 use rostfrei_messaging_core::IntegrationEventEnvelope;
 use rostfrei_nats::{
     CorrelatedMessage, CorrelatedMessageFamily, CorrelatedMessageHandler, IntegrationEventSubject,
-    NatsEventStore,
+    NatsCorrelationObserver, NatsCorrelationSubscription, NatsEventStore,
 };
 use serde_json::Value;
 
+use super::{NatsHostError, NatsRuntime};
+
+pub(super) async fn prepare(
+    runtime: &NatsRuntime,
+    observer: CorrelationObserver,
+    producer_only: bool,
+) -> Result<(NatsCorrelationSubscription, Arc<TracerCorrelationHandler>), NatsHostError> {
+    let config = &runtime.config;
+    // Capture this runtime's current backend, including after Test reset.
+    let store = runtime.store();
+    let source = observer.observation_source(config.context.name().as_str())?;
+    let nats = NatsCorrelationObserver::new_in_scope(
+        runtime.connection.client().clone(),
+        config.context.application().clone(),
+        config.context.traffic_scope(),
+        store.config().subject_filter(),
+    )
+    .with_streams(
+        store.config().stream_name(),
+        config
+            .messaging
+            .topology()
+            .integration_event_stream()
+            .as_str(),
+    );
+    let nats = if producer_only {
+        nats.with_integration_producer(config.context.name().clone())
+    } else {
+        nats
+    };
+    let subscription = nats.subscribe().await?;
+    // Both subscriptions are established before callers can publish. The handler
+    // owns the guard through failures, cancellation and shutdown.
+    if let Some(source) = &source {
+        source.ready();
+    }
+    Ok((
+        subscription,
+        Arc::new(TracerCorrelationHandler {
+            observer,
+            store,
+            bindings: runtime.bindings.clone(),
+            source,
+        }),
+    ))
+}
+
 pub(super) struct TracerCorrelationHandler {
-    pub observer: CorrelationObserver,
-    pub store: NatsEventStore,
-    pub bindings: std::sync::Arc<crate::ApplicationBindings>,
-    pub source: Option<ObservationSource>,
+    observer: CorrelationObserver,
+    store: NatsEventStore,
+    bindings: Arc<ApplicationBindings>,
+    source: Option<ObservationSource>,
 }
 
 #[async_trait]
@@ -107,7 +156,7 @@ fn domain_observation(
 }
 
 fn integration_observation(
-    bindings: &crate::ApplicationBindings,
+    bindings: &ApplicationBindings,
     consumer_context: &str,
     message: &CorrelatedMessage,
 ) -> Result<IntegrationEventObservation, String> {

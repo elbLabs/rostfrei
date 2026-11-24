@@ -21,7 +21,7 @@
               "bicycle_id": "bike-42"
             },
             "outcome": "accepted",
-            "context": "bike-rental"
+            "context": "rental"
           },
           {
             "kind": "domain-event",

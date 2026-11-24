@@ -38,8 +38,10 @@ try {
   assert.equal(await page.$('.connection-notice'), null, await page.$eval('body', body => body.innerText))
   await page.waitForSelector('.test-row', { timeout: 15000 })
   const names = await page.$$eval('.test-row', rows => rows.map(row => row.textContent.trim()))
-   assert.equal(names.length, 7)
-  for (const name of names) {
+  assert.equal(names.length, 7)
+  const selected = process.env.ROSTFREI_BIKE_HOST_STUDIO_SCENARIO_NAME
+  if (selected !== undefined) assert.ok(names.includes(selected), `Missing Studio scenario: ${selected}`)
+  for (const name of selected === undefined ? names : [selected]) {
     if (await page.$('[aria-controls="studio-navigation"][aria-expanded="false"]')) {
       await page.click('[aria-controls="studio-navigation"]')
       await settlePage(page)
@@ -71,11 +73,12 @@ try {
    await page.click('[data-workspace-tab="commands"]')
    await page.click('[aria-controls="studio-command-panel"]')
    const commands = await page.$$eval('[aria-label="Command and schema"] option', options => options.map(option => option.value))
-   assert.ok(!commands.some(value => value.includes('/rent-bicycle@')), 'direct hire must not be offered')
-   assert.ok(commands.includes('bike-rental/collect-reserved-bicycle@1'))
-   assert.ok(commands.includes('bike-rental/collect-rental-payment@1'))
-   assert.ok(commands.includes('bike-rental/refund-eligible-rental-deposit@1'))
-   await page.select('[aria-label="Command and schema"]', 'bike-rental/return-bicycle@2')
+   assert.ok(!commands.some(value => /\/(rent-bicycle|process-rental-payment|settle-rental-deposit)@/.test(value)), 'obsolete commands must not be offered')
+   assert.ok(commands.includes('rental/collect-reserved-bicycle@1'))
+   assert.ok(commands.includes('finance/collect-rental-payment@1'))
+   assert.ok(commands.includes('finance/refund-eligible-rental-deposit@1'))
+   assert.ok(commands.includes('workshop/open-repair-job@1'))
+   await page.select('[aria-label="Command and schema"]', 'rental/return-bicycle@2')
    for (const [field, value] of [['fleet_id', 'city-fleet'], ['bicycle_id', 'bike-42']]) {
      const selector = `[data-payload-field="${field}"] input`
      await page.waitForSelector(`${selector}:not(:disabled)`)

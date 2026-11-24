@@ -10,8 +10,12 @@ use async_trait::async_trait;
 use axum::{body::Body, http::Request};
 mod support;
 rostfrei::install_macro_support!();
-use bike_rental::demo::demo_fixture;
+use bike_rental::{
+    BikeRentalNatsResourceLimits, FINANCE_CONTEXT, RENTAL_CONTEXT, WORKSHOP_CONTEXT,
+    demo::demo_fixture,
+};
 use http_body_util::BodyExt as _;
+use rostfrei::messaging::TrafficScope;
 use rostfrei::nats::{NatsConnection, NatsConnectionConfig, NatsEventStoreConfig, connect};
 use rostfrei::tracer::{
     ApplicationBindings, CommandInvocation, CommandOutcome, CommandPublication,
@@ -25,7 +29,8 @@ use support::tracer;
 use tower::ServiceExt as _;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
-const FLEET: &str = "/aggregates/bike-rental%2Frental-fleet";
+const FLEET: &str = "/aggregates/rental%2Frental-fleet";
+const REPAIR: &str = "/aggregates/workshop%2Frepair-job";
 
 struct Observer;
 
@@ -41,8 +46,8 @@ async fn command(runtime: &NatsRuntime, operation: &str, name: &str, payload: Va
             CommandInvocation::new(
                 OperationId::new(operation)?,
                 operation,
-                command_execution_fingerprint("bike-rental", name, 2, &payload),
-                "bike-rental",
+                command_execution_fingerprint(RENTAL_CONTEXT, name, 2, &payload),
+                RENTAL_CONTEXT,
                 name,
                 2,
                 payload,
@@ -104,7 +109,7 @@ async fn start_inspection_host(
     config: TracerConfig,
 ) -> TestResult<NatsApplication> {
     Ok(NatsApplication::builder(
-        application.test_bounded_context("bike-rental")?,
+        application.test_bounded_context(RENTAL_CONTEXT)?,
         connection.clone(),
         bindings,
     )?
@@ -129,7 +134,7 @@ fn assert_source_cutoffs(body: &Value, normal: &NatsRuntime) -> TestResult {
         .iter()
         .find(|source| source["kind"] == "domain")
         .ok_or("missing domain cutoff")?;
-    assert_eq!(domain["context"], "bike-rental");
+    assert_eq!(domain["context"], RENTAL_CONTEXT);
     assert_eq!(domain["stream"], normal.config().event_store.stream_name());
     assert!(sources.iter().any(|source| source["kind"] == "integration"));
     for source in sources {
@@ -143,12 +148,12 @@ fn assert_source_cutoffs(body: &Value, normal: &NatsRuntime) -> TestResult {
 
 #[tokio::test]
 async fn dispatch_runtime_automatically_registers_retained_inspection_sources() -> TestResult {
-    inspect_runtime_source(false).await
+    Box::pin(inspect_runtime_source(false)).await
 }
 
 #[tokio::test]
 async fn inspection_only_host_deduplicates_explicit_sources_without_dispatch() -> TestResult {
-    inspect_runtime_source(true).await
+    Box::pin(inspect_runtime_source(true)).await
 }
 
 #[tokio::test]
@@ -163,8 +168,9 @@ async fn normal_hosts_reject_fixture_injection_before_writing() -> TestResult {
         .as_nanos();
     let application = ApplicationName::new(format!("normal-fixture-rejection-{suffix}"))?;
     let bindings = Arc::new(tracer::bindings()?);
-    let config = NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?
-        .with_fresh_completed_outcome_epoch("normal-fixture-rejection")?;
+    let config =
+        NatsRuntimeConfig::new(application.bounded_context(RENTAL_CONTEXT)?, &bindings, 1)?
+            .with_fresh_completed_outcome_epoch("normal-fixture-rejection")?;
     let runtime =
         NatsRuntime::provision(connection.clone(), config.clone(), bindings.clone()).await?;
     let rejected = runtime.apply_fixture(&demo_fixture()?).await;
@@ -179,7 +185,7 @@ async fn normal_hosts_reject_fixture_injection_before_writing() -> TestResult {
             .is_empty()
     );
     let rejected = NatsApplication::builder(
-        application.bounded_context("bike-rental")?,
+        application.bounded_context(RENTAL_CONTEXT)?,
         connection.clone(),
         bindings,
     )?
@@ -216,7 +222,7 @@ async fn inspection_host_survives_missing_outcome_state_but_rejects_replaced_jou
     let bindings = Arc::new(tracer::bindings()?);
     let runtime = NatsRuntime::provision(
         connection.clone(),
-        NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?
+        NatsRuntimeConfig::new(application.bounded_context(RENTAL_CONTEXT)?, &bindings, 1)?
             .with_fresh_completed_outcome_epoch("journal-history-host")?,
         bindings.clone(),
     )
@@ -318,7 +324,7 @@ async fn aggregate_correlation_selection_intersects_history_and_preserves_retain
     let bindings = Arc::new(tracer::bindings()?);
     let normal = NatsRuntime::provision(
         connection.clone(),
-        NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?
+        NatsRuntimeConfig::new(application.bounded_context(RENTAL_CONTEXT)?, &bindings, 1)?
             .with_fresh_completed_outcome_epoch("selected-correlations")?,
         bindings.clone(),
     )
@@ -374,7 +380,7 @@ async fn aggregate_correlation_selection_intersects_history_and_preserves_retain
 
     let (status, original) = get(
         &app,
-        &format!("{FLEET}/city-fleet/correlations?include=context:bike-rental"),
+        &format!("{FLEET}/city-fleet/correlations?include=context:rental"),
         "inspection",
     )
     .await?;
@@ -405,7 +411,7 @@ async fn aggregate_correlation_selection_intersects_history_and_preserves_retain
     let path = format!("{FLEET}/city-fleet/correlations?{selection}");
     let (status, selected) = get(
         &app,
-        &format!("{path}&include=context:bike-rental"),
+        &format!("{path}&include=context:rental"),
         "inspection",
     )
     .await?;
@@ -433,7 +439,7 @@ async fn aggregate_correlation_selection_intersects_history_and_preserves_retain
 
     let (status, harbor) = get(
         &app,
-        &format!("{FLEET}/harbor-fleet/correlations?include=context:bike-rental"),
+        &format!("{FLEET}/harbor-fleet/correlations?include=context:rental"),
         "inspection",
     )
     .await?;
@@ -452,10 +458,10 @@ async fn aggregate_correlation_selection_intersects_history_and_preserves_retain
         .ok_or("missing included source event")?;
     assert_eq!(source["payload"]["bicycle_id"], "bike-7");
 
-    let payload_match = "match=bike-rental/bicycle-transferred-in.bicycle_id=bike-7";
+    let payload_match = "match=rental/bicycle-transferred-in.bicycle_id=bike-7";
     let (status, matched) = get(
         &app,
-        &format!("{path}&include=context:bike-rental&{payload_match}"),
+        &format!("{path}&include=context:rental&{payload_match}"),
         "inspection",
     )
     .await?;
@@ -499,12 +505,12 @@ async fn production_inspection_rejects_wrong_scope_application_and_conflicting_s
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos();
     let app = ApplicationName::new(format!("subject-scope-{suffix}"))?;
-    let normal = NatsEventStoreConfig::for_bounded_context(&app.bounded_context("bike-rental")?)?;
+    let normal = NatsEventStoreConfig::for_bounded_context(&app.bounded_context(RENTAL_CONTEXT)?)?;
     let wrong_scope =
-        NatsEventStoreConfig::for_bounded_context(&app.test_bounded_context("bike-rental")?)?;
+        NatsEventStoreConfig::for_bounded_context(&app.test_bounded_context(RENTAL_CONTEXT)?)?;
     let other_app = ApplicationName::new(format!("other-subject-scope-{suffix}"))?;
     let wrong_app =
-        NatsEventStoreConfig::for_bounded_context(&other_app.bounded_context("bike-rental")?)?;
+        NatsEventStoreConfig::for_bounded_context(&other_app.bounded_context(RENTAL_CONTEXT)?)?;
     let conflicting = normal
         .clone()
         .with_fresh_split_outcome_epoch("another-source")?;
@@ -524,16 +530,28 @@ async fn production_inspection_rejects_wrong_scope_application_and_conflicting_s
             config = config.with_production_event_store(source);
         }
         let result = NatsApplication::builder(
-            app.test_bounded_context("bike-rental")?,
+            app.test_bounded_context(RENTAL_CONTEXT)?,
             connection.clone(),
             Arc::new(tracer::bindings()?),
         )?
+        .with_fresh_completed_outcome_epoch("subject-scope")?
+        .with_default_test_fixture(demo_fixture()?)
         .with_tracer(Some(config))
         .provision_and_start()
         .await;
-        assert!(
-            matches!(result, Err(NatsHostError::Configuration(message)) if message.contains(expected))
-        );
+        match result {
+            Err(NatsHostError::Configuration(message)) => {
+                assert!(
+                    message.contains(expected),
+                    "expected {expected:?}, got {message:?}"
+                );
+            }
+            Err(error) => panic!("expected a configuration error containing {expected:?}: {error}"),
+            Ok(host) => {
+                host.shutdown().await?;
+                panic!("expected a configuration error containing {expected:?}, but started");
+            }
+        }
     }
     connection.drain().await?;
     Ok(())
@@ -549,16 +567,28 @@ async fn inspect_runtime_source(inspection_only: bool) -> TestResult {
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos();
     let application = ApplicationName::new(format!("subject-correlations-{suffix}"))?;
-    let bindings = Arc::new(tracer::bindings()?);
-    let normal = Arc::new(
-        NatsRuntime::provision(
-            connection.clone(),
-            NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?
-                .with_fresh_completed_outcome_epoch("subject-correlations")?,
-            bindings.clone(),
-        )
-        .await?,
-    );
+    let limits = BikeRentalNatsResourceLimits::from_env()?;
+    let normal_configs =
+        bike_rental::tracer::configurations(application.as_str(), TrafficScope::Normal, limits)?
+            .with_fresh_completed_outcome_epoch("subject-correlations")?;
+    let test_configs =
+        bike_rental::tracer::configurations(application.as_str(), TrafficScope::Test, limits)?
+            .with_fresh_completed_outcome_epoch("subject-correlations")?;
+    let mut normal_runtimes = Vec::new();
+    for (config, bindings) in normal_configs.contexts() {
+        let (config, bindings) = if config.context.name().as_str() == RENTAL_CONTEXT {
+            support::rental_with_direct_command(config)?
+        } else {
+            (config.clone(), bindings.clone())
+        };
+        normal_runtimes.push(Arc::new(
+            Box::pin(NatsRuntime::provision(connection.clone(), config, bindings)).await?,
+        ));
+    }
+    let normal = normal_runtimes
+        .iter()
+        .find(|runtime| runtime.config().context.name().as_str() == RENTAL_CONTEXT)
+        .ok_or("missing Normal Rental runtime")?;
     let http = if inspection_only {
         HttpConfig::inspection_only("inspection")?
     } else {
@@ -566,19 +596,30 @@ async fn inspect_runtime_source(inspection_only: bool) -> TestResult {
             .with_dispatch_token("dispatch")?
             .with_inspection_token("inspection")?
     };
-    let config = TracerConfig::new(
+    let mut config = TracerConfig::new(
         tokio::net::TcpListener::bind("127.0.0.1:0").await?,
         http.clone(),
-    );
-    let config = if inspection_only {
-        normal.start_workers().await?;
-        config
-            .with_production_event_store(normal.config().event_store.clone())
-            .with_production_event_store(normal.config().event_store.clone())
-    } else {
-        config.with_dispatch_runtime(normal.clone())
-    };
-    let host = start_inspection_host(&application, &connection, bindings, config).await?;
+    )
+    .with_trace_payload_policy(Arc::new(
+        rostfrei::tracer::ExposeTracePayloadsForLocalDevelopment,
+    ));
+    for runtime in &normal_runtimes {
+        config = if inspection_only {
+            runtime.start_workers().await?;
+            config.with_production_event_store(runtime.config().event_store.clone())
+        } else {
+            config.with_dispatch_runtime(runtime.clone())
+        };
+    }
+    if inspection_only {
+        config = config.with_production_event_store(normal.config().event_store.clone());
+    }
+    let host = test_configs
+        .application_builder(connection.clone())?
+        .with_default_test_fixture(demo_fixture()?)
+        .with_tracer(Some(config))
+        .provision_and_start()
+        .await?;
     let app = http::router(host.tracer().ok_or("missing Tracer")?.clone(), http);
 
     let (status, catalog) = get(&app, "/catalog", "inspection").await?;
@@ -586,25 +627,25 @@ async fn inspect_runtime_source(inspection_only: bool) -> TestResult {
     assert_eq!(
         catalog.pointer("/correlations/anchors"),
         Some(&json!([{
-            "aggregateType": "bike-rental/rental-fleet",
+            "aggregateType": "rental/rental-fleet",
             "label": "Rental fleet",
             "correlationsHrefTemplate": format!("{FLEET}/{{aggregateId}}/correlations")
         }, {
-            "aggregateType": "bike-rental/repair-job",
+            "aggregateType": "workshop/repair-job",
             "label": "Repair job",
-            "correlationsHrefTemplate": "/aggregates/bike-rental%2Frepair-job/{aggregateId}/correlations"
+            "correlationsHrefTemplate": format!("{REPAIR}/{{aggregateId}}/correlations")
         }]))
     );
 
     command(
-        &normal,
+        normal,
         "seed-city-bike-42",
         "register-bicycle",
         json!({"fleet_id": "city-fleet", "bicycle_id": "bike-42", "condition": "serviceable"}),
     )
     .await?;
     command(
-        &normal,
+        normal,
         "external-rent",
         "rent-bicycle",
         json!({
@@ -612,6 +653,16 @@ async fn inspect_runtime_source(inspection_only: bool) -> TestResult {
         }),
     )
     .await?;
+    command(
+        normal,
+        "external-damaged-return",
+        "return-bicycle",
+        json!({
+            "fleet_id": "city-fleet", "bicycle_id": "bike-42", "damage_report": "rear brake"
+        }),
+    )
+    .await?;
+    let returned = published_chain(&app, "external-damaged-return", 4).await?;
     let rent = published_chain(&app, "external-rent", 2).await?;
     let refs = rent
         .get("refs")
@@ -637,7 +688,44 @@ async fn inspect_runtime_source(inspection_only: bool) -> TestResult {
             .is_some_and(|subject| subject.contains(".external-rent."))
     );
     assert!(rent.get("lag").is_none());
-    assert_source_cutoffs(&rent, &normal)?;
+    let sources = returned
+        .pointer("/snapshot/sources")
+        .and_then(Value::as_array)
+        .ok_or("missing source cutoffs")?;
+    assert_eq!(
+        sources.len(),
+        4,
+        "three journals and one shared integration stream"
+    );
+    assert_eq!(
+        sources
+            .iter()
+            .filter(|source| source["kind"] == "integration")
+            .count(),
+        1
+    );
+    for context in [FINANCE_CONTEXT, RENTAL_CONTEXT, WORKSHOP_CONTEXT] {
+        let expected = normal_configs
+            .runtime_config(context)
+            .ok_or("missing Normal config")?;
+        let source = sources
+            .iter()
+            .find(|source| source["kind"] == "domain" && source["context"] == context)
+            .ok_or("missing domain cutoff")?;
+        assert_eq!(source["stream"], expected.event_store.stream_name());
+    }
+    let repaired = returned
+        .get("refs")
+        .and_then(Value::as_array)
+        .ok_or("missing return chain")?
+        .iter()
+        .find(|reference| reference["event_type"] == "repair-job-opened")
+        .ok_or("missing Workshop repair")?;
+    assert_eq!(repaired["context"], WORKSHOP_CONTEXT);
+    assert_eq!(repaired["aggregate_type"], "workshop/repair-job");
+    let repair_id = repaired["aggregate_id"]
+        .as_str()
+        .ok_or("missing repair job ID")?;
     for token in ["control", "dispatch"] {
         assert_eq!(
             get(&app, &format!("{FLEET}/city-fleet/correlations"), token)
@@ -648,7 +736,9 @@ async fn inspect_runtime_source(inspection_only: bool) -> TestResult {
     }
 
     host.shutdown().await?;
-    normal.stop_workers().await;
+    for runtime in &normal_runtimes {
+        runtime.stop_workers().await;
+    }
     let (status, after_shutdown) =
         get(&app, "/correlations/external-rent/events", "inspection").await?;
     assert_eq!(
@@ -659,6 +749,40 @@ async fn inspect_runtime_source(inspection_only: bool) -> TestResult {
         after_shutdown, rent,
         "shutdown preserves evidence and source cutoffs"
     );
+    let selection = "correlation=external-damaged-return";
+    for (anchor, include) in [
+        (format!("{FLEET}/city-fleet"), WORKSHOP_CONTEXT),
+        (format!("{REPAIR}/{repair_id}"), RENTAL_CONTEXT),
+    ] {
+        let (status, retained) = get(
+            &app,
+            &format!("{anchor}/correlations?{selection}&include=context:{include}"),
+            "inspection",
+        )
+        .await?;
+        assert_eq!(status, 200, "{retained}");
+        assert_eq!(correlation_ids(&retained), ["external-damaged-return"]);
+        let refs = retained
+            .pointer("/correlations/0/refs")
+            .and_then(Value::as_array)
+            .ok_or("missing retained chain")?;
+        assert!(refs.iter().any(|event| {
+            event["context"] == RENTAL_CONTEXT
+                && event["event_type"] == "bicycle-damage-reported"
+                && event
+                    .pointer("/payload/damage_report")
+                    .and_then(Value::as_str)
+                    == Some("rear brake")
+        }));
+        assert!(refs.iter().any(|event| {
+            event["context"] == WORKSHOP_CONTEXT
+                && event["event_type"] == "repair-job-opened"
+                && event
+                    .pointer("/payload/damage_report")
+                    .and_then(Value::as_str)
+                    == Some("rear brake")
+        }));
+    }
     connection.drain().await?;
     Ok(())
 }

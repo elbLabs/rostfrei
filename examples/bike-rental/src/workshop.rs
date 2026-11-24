@@ -19,7 +19,7 @@ pub struct BicycleMaintenanceRequested {
 impl IntegrationEvent for BicycleMaintenanceRequested {
     const EVENT_NAME: &'static str = "bicycle-maintenance-requested";
     const SCHEMA_VERSION: u32 = 1;
-    const BOUNDED_CONTEXT: Option<&'static str> = Some(crate::BOUNDED_CONTEXT_NAME);
+    const BOUNDED_CONTEXT: Option<&'static str> = Some(crate::RENTAL_CONTEXT);
 }
 
 pub struct BicycleDamageIntegrationMapper;

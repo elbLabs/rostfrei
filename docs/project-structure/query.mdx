@@ -6,7 +6,7 @@ A query capability pairs a read contract with its ordinary output view. The trai
 - Keep view DTOs in `output.rs`.
 - Implement reads without mutating aggregate state.
 
-Path: `src/domain/bike_rental/rental_fleet/bicycle_availability`
+Path: `src/domain/rental/rental_fleet/bicycle_availability`
 
 <ProjectStructureExample name="query">
 
@@ -14,7 +14,7 @@ Path: `src/domain/bike_rental/rental_fleet/bicycle_availability`
 use rostfrei::domain_query;
 
 use super::BicycleAvailability;
-use crate::domain::bike_rental::rental_fleet::BicycleId;
+use crate::domain::rental::rental_fleet::BicycleId;
 
 #[domain_query(id = "bicycle-availability", label = "Bicycle availability")]
 pub trait BicycleAvailabilityQuery {

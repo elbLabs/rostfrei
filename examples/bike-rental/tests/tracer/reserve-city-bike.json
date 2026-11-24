@@ -11,7 +11,7 @@
         "kind": "command",
         "key": "reserve",
         "name": "reserve-bicycle-category",
-        "context": "bike-rental",
+        "context": "rental",
         "schemaVersion": 1,
         "payload": {
           "fleet_id": "city-fleet",

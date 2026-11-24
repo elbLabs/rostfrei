@@ -1,12 +1,12 @@
 # Explore rostfrei with an agent
 
-Ask a coding agent to prepare a local bike-rental demo, run a successful rental
+Ask a coding agent to prepare a local bike-rental demo, run a successful bicycle registration
 and a business rejection, then explain the real Tracer evidence one step at a
 time. The default experience is text in your agent conversation.
 
 Copy this prompt into an agent with terminal and file access:
 
-> Help me explore rostfrei through its bike-rental example. Use https://github.com/elbLabs/rostfrei and read docs/agent-tutorial.md from the checkout before setup. Check my environment, prepare an isolated local demo, and guide me through a successful rental and a rejection using real Tracer evidence. Explain one step at a time and let me choose what to inspect next. Use text by default; use a richer display only when its adapter is explicitly available.
+> Help me explore rostfrei through its bike-rental example. Use https://github.com/elbLabs/rostfrei and read docs/agent-tutorial.md from the checkout before setup. Check my environment, prepare an isolated local demo, and guide me through a successful bicycle registration and a duplicate-registration rejection using real Tracer evidence. Explain one step at a time and let me choose what to inspect next. Use text by default; use a richer display only when its adapter is explicitly available.
 
 This guide bootstraps the source-checkout experience. Select a checkout
 containing this guide; older installed kits do not gain references when online
@@ -94,8 +94,10 @@ For an already running broker, establish a unique application namespace owned
 by this demo before starting any workers. Never reuse the sample namespace from
 a previous tutorial or reset unknown shared resources.
 
-Set a fresh `ROSTFREI_APPLICATION`; the example selects the label-free journal/results
-pair. Leave `ROSTFREI_COMPLETED_OUTCOME_EPOCH` unset for this layout.
+Set a fresh `ROSTFREI_APPLICATION`; do not reuse a namespace from the earlier
+single-context example. This is a new deployment, not a migration of retained
+history or retries. Leave `ROSTFREI_COMPLETED_OUTCOME_EPOCH` unset to select the
+label-free journal/results layout.
 Keep the application fixed during
 this demo, including both behavior runs. The host provisions Normal and Test
 resources and resets Test on startup. Each behavior run resets the entire Test
@@ -145,6 +147,7 @@ JSON results. Follow the [guided tutorial reference](../.agents/skills/rostfrei-
 
 1. Read `add-first-bicycle`, `reject-duplicate-bicycle` and their registered
    `no-rental-fleets` and `demo-fleet` fixtures; explain Given/When/Then.
+   `register-bicycle` belongs to the `rental` context, not the application namespace.
 2. Run the successful registration of serviceable `bike-42`. Read its saved report,
    operation and finite MessageSeries, explain the observed result, and pause.
 3. Let the learner inspect that evidence. Verify it is saved before the next

@@ -40,6 +40,49 @@ pub mod tracer {
     }
 }
 
+/// Extend the Rental context only, preserving the application's isolated stores,
+/// resource limits and bindings for Finance and Workshop.
+pub fn rental_with_direct_command(
+    config: &NatsRuntimeConfig,
+) -> Result<
+    (
+        NatsRuntimeConfig,
+        Arc<rostfrei::tracer::ApplicationBindings>,
+    ),
+    BikeRentalNatsError,
+> {
+    let bindings = Arc::new(
+        tracer::bindings().map_err(|err| BikeRentalNatsError::Configuration(err.to_string()))?,
+    );
+    let mut runtime = config.clone();
+    let address = config
+        .context
+        .command_address(<RentBicycle as rostfrei::Command>::LOCAL_ID)?;
+    runtime.commands.extend(
+        NatsRuntimeConfig::new(config.context.clone(), &bindings, 2)?
+            .commands
+            .into_iter()
+            .filter(|route| route.address() == &address),
+    );
+    Ok((runtime, bindings))
+}
+
+pub fn application_with_direct_command(
+    configs: &bike_rental::tracer::ContextConfigurations,
+    connection: NatsConnection,
+) -> Result<rostfrei::tracer::NatsApplicationBuilder, BikeRentalNatsError> {
+    let (rental, bindings) = rental_with_direct_command(configs.rental().host_config())?;
+    let mut builder =
+        rostfrei::tracer::NatsApplication::builder(rental.context.clone(), connection, bindings)?
+            .with_runtime_config(rental);
+    for (config, bindings) in configs.contexts() {
+        if config.context.name().as_str() != bike_rental::RENTAL_CONTEXT {
+            builder = builder.with_context(config.clone(), bindings.clone());
+        }
+    }
+    Ok(builder)
+}
+
 pub struct BikeRentalNatsRuntime {
     config: BikeRentalNatsConfig,
     inner: Arc<NatsRuntime>,
@@ -50,9 +93,7 @@ impl BikeRentalNatsRuntime {
         connection: NatsConnection,
         config: BikeRentalNatsConfig,
     ) -> Result<Self, BikeRentalNatsError> {
-        let bindings = Arc::new(tracer::command_bindings()?);
-        let mut runtime = config.host_config().clone();
-        runtime.commands = NatsRuntimeConfig::new(config.context().clone(), &bindings, 2)?.commands;
+        let (runtime, bindings) = rental_with_direct_command(config.host_config())?;
         let inner =
             Arc::new(Box::pin(NatsRuntime::provision(connection, runtime, bindings)).await?);
         Ok(Self { config, inner })
