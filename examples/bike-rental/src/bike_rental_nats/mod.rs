@@ -1,24 +1,27 @@
 use crate::rental_fleet::{
     BicycleId, BicycleRented, CollectReservedBicycle, FleetId, RegisterBicycle,
-    ReserveBicycleCategory, ReturnBicycle, TransferBicycle,
+    ReserveBicycleCategory, ResolveBicycleCollection, ReturnBicycle, TransferBicycle,
 };
-use crate::rental_payment::{CollectRentalPayment, RefundEligibleRentalDeposit};
+use crate::rental_payment::{
+    AssessRentalReturn, CollectRentalPayment, RecordRentalPaymentRequest,
+    RefundEligibleRentalDeposit,
+};
 use crate::rental_tariff::ConfigureRentalTariff;
 use crate::repair_job::OpenRepairJob;
 use async_trait::async_trait;
 use rostfrei::fixtures::{Fixture, FixtureApplyReport};
 use rostfrei::messaging::{
-    ApplicationName, BoundedContext, CommandAddress, ConsumerConfig, ContractError,
-    DeliveryDisposition, IntegrationEventAddress, MessageDelivery, MessageHandler,
-    QuarantineReason, RetryDelay, TrafficScope,
+    ApplicationName, BoundedContext, CommandAddress, ConsumerConfig, DeliveryDisposition,
+    IntegrationEventAddress, MessageDelivery, MessageHandler, QuarantineReason, RetryDelay,
+    TrafficScope,
 };
 use rostfrei::nats::{
     ApplicationMessagingConfig, NatsConnection, NatsDomainEventConsumerConfig, NatsEventStore,
     NatsEventStoreConfig,
 };
 use rostfrei::tracer::{
-    CommandTransport, CorrelationObserver, NatsRuntime, NatsRuntimeConfig, TestScenarioReset,
-    TestScenarioResetError,
+    ApplicationBindings, CommandTransport, CorrelationObserver, NatsRuntime, NatsRuntimeConfig,
+    TestScenarioReset, TestScenarioResetError,
 };
 use rostfrei::{
     Command, CommittedDomainEvent, EncodedIntegrationMessage, IntegrationEvent,
@@ -27,7 +30,8 @@ use rostfrei::{
 use serde::{Deserialize, Serialize};
 use std::{env, sync::Arc, time::Duration};
 
-pub const BOUNDED_CONTEXT_NAME: &str = "bike-rental";
+/// Compatibility name for the Rental context (not the application name).
+pub const BOUNDED_CONTEXT_NAME: &str = crate::RENTAL_CONTEXT;
 pub const APPLICATION_NAME: &str = "bike-rental";
 pub const BICYCLE_RENTAL_STARTED_EVENT_NAME: &str = "bicycle-rental-started";
 const COMMAND_SUBSCRIPTION_GENERATION: u32 = 2;
@@ -119,8 +123,38 @@ pub enum BikeRentalCommand {
     CollectReservedBicycle,
     CollectRentalPayment,
     RefundEligibleRentalDeposit,
+    RecordRentalPaymentRequest,
+    ResolveBicycleCollection,
+    AssessRentalReturn,
 }
 impl BikeRentalCommand {
+    const RENTAL_COMMANDS: [Self; 7] = [
+        Self::ReturnBicycle,
+        Self::RegisterBicycle,
+        Self::TransferBicycle,
+        Self::ReserveBicycleCategory,
+        Self::ConfigureRentalTariff,
+        Self::CollectReservedBicycle,
+        Self::ResolveBicycleCollection,
+    ];
+
+    pub const fn context_name(self) -> &'static str {
+        match self {
+            Self::OpenRepairJob => crate::WORKSHOP_CONTEXT,
+            Self::CollectRentalPayment
+            | Self::RecordRentalPaymentRequest
+            | Self::RefundEligibleRentalDeposit
+            | Self::AssessRentalReturn => crate::FINANCE_CONTEXT,
+            Self::ReturnBicycle
+            | Self::RegisterBicycle
+            | Self::TransferBicycle
+            | Self::ReserveBicycleCategory
+            | Self::ConfigureRentalTariff
+            | Self::CollectReservedBicycle
+            | Self::ResolveBicycleCollection => crate::RENTAL_CONTEXT,
+        }
+    }
+
     pub const fn command_name(self) -> &'static str {
         match self {
             Self::ReturnBicycle => ReturnBicycle::LOCAL_ID,
@@ -132,6 +166,9 @@ impl BikeRentalCommand {
             Self::CollectReservedBicycle => CollectReservedBicycle::LOCAL_ID,
             Self::CollectRentalPayment => CollectRentalPayment::LOCAL_ID,
             Self::RefundEligibleRentalDeposit => RefundEligibleRentalDeposit::LOCAL_ID,
+            Self::RecordRentalPaymentRequest => RecordRentalPaymentRequest::LOCAL_ID,
+            Self::ResolveBicycleCollection => ResolveBicycleCollection::LOCAL_ID,
+            Self::AssessRentalReturn => AssessRentalReturn::LOCAL_ID,
         }
     }
     pub const fn schema_version(self) -> u32 {
@@ -145,6 +182,9 @@ impl BikeRentalCommand {
             Self::CollectReservedBicycle => CollectReservedBicycle::SCHEMA_VERSION,
             Self::CollectRentalPayment => CollectRentalPayment::SCHEMA_VERSION,
             Self::RefundEligibleRentalDeposit => RefundEligibleRentalDeposit::SCHEMA_VERSION,
+            Self::RecordRentalPaymentRequest => RecordRentalPaymentRequest::SCHEMA_VERSION,
+            Self::ResolveBicycleCollection => ResolveBicycleCollection::SCHEMA_VERSION,
+            Self::AssessRentalReturn => AssessRentalReturn::SCHEMA_VERSION,
         }
     }
 }
@@ -179,13 +219,16 @@ impl BikeRentalIntegrationEventRoute {
     }
 }
 
+/// Low-level configuration for one Rental runtime.
+///
 /// Released resource identities remain explicit policy, including the legacy
-/// command subscription generation 2 (independent of command schema versions).
+/// command subscription generation 2 (independent of command schema versions). Use
+/// [`crate::tracer::configurations`] to compose all three contexts.
 #[derive(Clone)]
 pub struct BikeRentalNatsConfig {
     runtime: NatsRuntimeConfig,
     resource_limits: BikeRentalNatsResourceLimits,
-    command_routes: [BikeRentalCommandRoute; 9],
+    command_routes: Vec<BikeRentalCommandRoute>,
     integration_event_route: BikeRentalIntegrationEventRoute,
 }
 impl BikeRentalNatsConfig {
@@ -237,19 +280,11 @@ impl BikeRentalNatsConfig {
         application: &str,
         scope: TrafficScope,
         limits: BikeRentalNatsResourceLimits,
-        bindings: &rostfrei::tracer::ApplicationBindings,
+        bindings: &ApplicationBindings,
     ) -> Result<Self, BikeRentalNatsError> {
-        let context = ApplicationName::new(application)?
-            .bounded_context_in_scope(scope, BOUNDED_CONTEXT_NAME)?;
         let mut runtime =
-            NatsRuntimeConfig::new(context.clone(), bindings, COMMAND_SUBSCRIPTION_GENERATION)?;
-        runtime.messaging = ApplicationMessagingConfig::new_in_scope(context.application(), scope)?
-            .with_max_bytes(limits.messaging_stream_max_bytes())?;
-        runtime.event_store = NatsEventStoreConfig::for_bounded_context(&context)?
-            .with_storage_limits(
-                limits.event_store_max_stream_bytes(),
-                limits.event_store_max_event_bytes(),
-            )?;
+            runtime_config(application, scope, BOUNDED_CONTEXT_NAME, limits, bindings)?;
+        let context = &runtime.context;
         runtime.domain_events = NatsDomainEventConsumerConfig::new(
             context.consumer_name("bicycle-rental-started-publisher", 1)?,
             context.durable_name("bicycle-rental-started-publisher", 1)?,
@@ -257,36 +292,25 @@ impl BikeRentalNatsConfig {
             Duration::from_secs(30),
             RetryDelay::new(Duration::from_secs(1))?,
         )?;
-        let command_routes = [
-            command_route::<ReturnBicycle>(&context, BikeRentalCommand::ReturnBicycle)?,
-            command_route::<RegisterBicycle>(&context, BikeRentalCommand::RegisterBicycle)?,
-            command_route::<TransferBicycle>(&context, BikeRentalCommand::TransferBicycle)?,
-            command_route::<OpenRepairJob>(&context, BikeRentalCommand::OpenRepairJob)?,
-            command_route::<ReserveBicycleCategory>(
-                &context,
-                BikeRentalCommand::ReserveBicycleCategory,
-            )?,
-            command_route::<ConfigureRentalTariff>(
-                &context,
-                BikeRentalCommand::ConfigureRentalTariff,
-            )?,
-            command_route::<CollectReservedBicycle>(
-                &context,
-                BikeRentalCommand::CollectReservedBicycle,
-            )?,
-            command_route::<CollectRentalPayment>(
-                &context,
-                BikeRentalCommand::CollectRentalPayment,
-            )?,
-            command_route::<RefundEligibleRentalDeposit>(
-                &context,
-                BikeRentalCommand::RefundEligibleRentalDeposit,
-            )?,
-        ];
+        let command_routes = BikeRentalCommand::RENTAL_COMMANDS
+            .into_iter()
+            .filter_map(|command| {
+                runtime
+                    .commands
+                    .iter()
+                    .find(|consumer| consumer.address().name() == command.command_name())
+                    .map(|consumer| BikeRentalCommandRoute {
+                        command,
+                        address: consumer.address().clone(),
+                        consumer: consumer.clone(),
+                    })
+            })
+            .collect();
         let address = context.integration_event_address(BICYCLE_RENTAL_STARTED_EVENT_NAME)?;
         let consumer = runtime
             .integrations
-            .first()
+            .iter()
+            .find(|consumer| consumer.address() == &address)
             .ok_or_else(|| {
                 BikeRentalNatsError::Configuration("missing rental integration consumer".into())
             })?
@@ -319,32 +343,20 @@ impl BikeRentalNatsConfig {
     pub const fn domain_event_consumer(&self) -> &NatsDomainEventConsumerConfig {
         &self.runtime.domain_events
     }
-    pub const fn command_routes(&self) -> &[BikeRentalCommandRoute; 9] {
-        &self.command_routes
+    pub const fn command_routes(&self) -> &[BikeRentalCommandRoute] {
+        self.command_routes.as_slice()
     }
-    pub const fn command_route(&self, command: BikeRentalCommand) -> &BikeRentalCommandRoute {
-        let [
-            returned,
-            added,
-            transferred,
-            repair,
-            reserved,
-            tariff,
-            collect,
-            process,
-            settle,
-        ] = &self.command_routes;
-        match command {
-            BikeRentalCommand::ReturnBicycle => returned,
-            BikeRentalCommand::RegisterBicycle => added,
-            BikeRentalCommand::TransferBicycle => transferred,
-            BikeRentalCommand::OpenRepairJob => repair,
-            BikeRentalCommand::ReserveBicycleCategory => reserved,
-            BikeRentalCommand::ConfigureRentalTariff => tariff,
-            BikeRentalCommand::CollectReservedBicycle => collect,
-            BikeRentalCommand::CollectRentalPayment => process,
-            BikeRentalCommand::RefundEligibleRentalDeposit => settle,
-        }
+    /// # Panics
+    /// Panics if `command` is not registered with this Rental runtime.
+    #[allow(
+        clippy::expect_used,
+        reason = "compatibility accessor for known Rental commands"
+    )]
+    pub fn command_route(&self, command: BikeRentalCommand) -> &BikeRentalCommandRoute {
+        self.command_routes
+            .iter()
+            .find(|route| route.command == command)
+            .expect("command must be registered with the Rental runtime")
     }
     pub const fn integration_event_route(&self) -> &BikeRentalIntegrationEventRoute {
         &self.integration_event_route
@@ -363,25 +375,25 @@ impl BikeRentalNatsConfig {
         .await?)
     }
 }
-fn command_route<C: Command>(
-    context: &BoundedContext,
-    command: BikeRentalCommand,
-) -> Result<BikeRentalCommandRoute, ContractError> {
-    let address = context.command_address(C::LOCAL_ID)?;
-    let consumer = ConsumerConfig::new(
-        context.consumer_name(C::LOCAL_ID, COMMAND_SUBSCRIPTION_GENERATION)?,
-        context.durable_name(C::LOCAL_ID, COMMAND_SUBSCRIPTION_GENERATION)?,
-        address.clone(),
-        Duration::from_secs(45),
-        Duration::from_secs(30),
-        1,
-        5,
-    )?;
-    Ok(BikeRentalCommandRoute {
-        command,
-        address,
-        consumer,
-    })
+pub fn runtime_config(
+    application: &str,
+    scope: TrafficScope,
+    context_name: &str,
+    limits: BikeRentalNatsResourceLimits,
+    bindings: &ApplicationBindings,
+) -> Result<NatsRuntimeConfig, BikeRentalNatsError> {
+    let context =
+        ApplicationName::new(application)?.bounded_context_in_scope(scope, context_name)?;
+    let mut runtime =
+        NatsRuntimeConfig::new(context.clone(), bindings, COMMAND_SUBSCRIPTION_GENERATION)?;
+    runtime.messaging = ApplicationMessagingConfig::new_in_scope(context.application(), scope)?
+        .with_max_bytes(limits.messaging_stream_max_bytes())?;
+    runtime.event_store = NatsEventStoreConfig::for_bounded_context(&context)?
+        .with_storage_limits(
+            limits.event_store_max_stream_bytes(),
+            limits.event_store_max_event_bytes(),
+        )?;
+    Ok(runtime)
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -405,6 +417,7 @@ impl BicycleRentalStarted {
 impl IntegrationEvent for BicycleRentalStarted {
     const EVENT_NAME: &'static str = BICYCLE_RENTAL_STARTED_EVENT_NAME;
     const SCHEMA_VERSION: u32 = 1;
+    const BOUNDED_CONTEXT: Option<&'static str> = Some(crate::RENTAL_CONTEXT);
 }
 pub struct BicycleRentedIntegrationMapper;
 impl IntegrationEventMapper<BicycleRented> for BicycleRentedIntegrationMapper {

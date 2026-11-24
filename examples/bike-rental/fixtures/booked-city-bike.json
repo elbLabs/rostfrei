@@ -1,22 +1,22 @@
 {
-  "schemaVersion": 1, "id": "booked-city-bike", "revision": "1",
+  "schemaVersion": 1, "id": "booked-city-bike", "revision": "2",
   "messages": [
     {
-      "kind": "domain-event", "messageId": "booked-bike-added", "correlationId": "fixture:booked-city-bike:1",
+      "kind": "domain-event", "messageId": "booked-bike-added", "correlationId": "fixture:booked-city-bike:2",
       "name": "bicycle-added", "schemaVersion": 1,
-      "aggregate": { "type": "bike-rental/rental-fleet", "id": "city-fleet" }, "streamVersion": 1,
+      "aggregate": { "type": "rental/rental-fleet", "id": "city-fleet" }, "streamVersion": 1,
       "payload": { "fleet_id": "city-fleet", "bicycle_id": "bike-42", "condition": "serviceable" }
     },
     {
-      "kind": "domain-event", "messageId": "booked-bike-categorized", "correlationId": "fixture:booked-city-bike:1",
+      "kind": "domain-event", "messageId": "booked-bike-categorized", "correlationId": "fixture:booked-city-bike:2",
       "name": "bicycle-categorized", "schemaVersion": 1,
-      "aggregate": { "type": "bike-rental/rental-fleet", "id": "city-fleet" }, "streamVersion": 2,
+      "aggregate": { "type": "rental/rental-fleet", "id": "city-fleet" }, "streamVersion": 2,
       "payload": { "fleet_id": "city-fleet", "bicycle_id": "bike-42", "category": "city" }
     },
     {
-      "kind": "domain-event", "messageId": "booked-bike-reserved", "correlationId": "fixture:booked-city-bike:1",
+      "kind": "domain-event", "messageId": "booked-bike-reserved", "correlationId": "fixture:booked-city-bike:2",
       "name": "bicycle-reservation-confirmed", "schemaVersion": 1,
-      "aggregate": { "type": "bike-rental/rental-fleet", "id": "city-fleet" }, "streamVersion": 3,
+      "aggregate": { "type": "rental/rental-fleet", "id": "city-fleet" }, "streamVersion": 3,
       "payload": { "fleet_id": "city-fleet", "reservation_id": "booking-42", "customer_id": "customer-alex", "category": "city",
         "period": { "starts_at": "2026-12-01T09:00:00Z", "ends_at": "2026-12-01T17:00:00Z" },
         "quote": { "currency": "EUR", "rental_charge_minor": 2500, "security_deposit_minor": 10000 } }

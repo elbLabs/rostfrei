@@ -276,6 +276,12 @@ pub trait CommandTransport: Send + Sync {
         usize::MAX
     }
 
+    /// Whether this transport is configured for these exact command coordinates.
+    /// This is capability discovery, not a readiness or authorization check.
+    fn supports_command(&self, _context: &str, _command: &str, _schema_version: u32) -> bool {
+        true
+    }
+
     async fn invoke(
         &self,
         invocation: CommandInvocation,

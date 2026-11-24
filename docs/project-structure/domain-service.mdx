@@ -10,21 +10,21 @@ A domain service owns stateless behavior involving domain objects supplied by it
 
 `BicycleTransfer` validates and changes two fleets. Its application handler loads both fleets and the runtime commits their events atomically. The service's `transfer/execute.rs` implements `BicycleTransferAction` directly for `BicycleTransfer`.
 
-Path: `src/domain/bike_rental/bicycle_transfer`
+Path: `src/domain/rental/bicycle_transfer`
 
 <ProjectStructureExample name="domain-service">
 
 ```rust
 use rostfrei::{DomainService, DomainServiceDefinition};
 
-use crate::domain::BikeRental;
+use crate::domain::Rental;
 
 #[derive(DomainService)]
 #[domain(id = "bicycle-transfer", label = "Bicycle transfer")]
 pub struct BicycleTransfer;
 
 impl DomainServiceDefinition for BicycleTransfer {
-    type Context = BikeRental;
+    type Context = Rental;
 }
 ```
 

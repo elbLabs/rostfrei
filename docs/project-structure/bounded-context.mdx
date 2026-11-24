@@ -6,7 +6,8 @@ A bounded context owns one language boundary and contains its aggregate and doma
 - Nest all aggregate and domain-service modules below the context directory.
 - Keep behavior out of the context marker and in focused child modules.
 
-Path: `src/domain/bike_rental/context.rs`
+Paths: `src/domain/rental/context.rs`, `src/domain/finance/context.rs`, and
+`src/domain/workshop/context.rs`.
 
 <ProjectStructureExample name="bounded-context">
 
@@ -14,8 +15,8 @@ Path: `src/domain/bike_rental/context.rs`
 use rostfrei::BoundedContext;
 
 #[derive(BoundedContext)]
-#[domain(id = "bike-rental", label = "Bike Rental")]
-pub struct BikeRental;
+#[domain(id = "rental", label = "Rental")]
+pub struct Rental;
 ```
 
 </ProjectStructureExample>

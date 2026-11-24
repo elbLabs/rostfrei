@@ -71,8 +71,8 @@ with synthetic responses; real command behavior is verified through Tracer.
 - `src/components/draggable-panel.tsx`: shared draggable Command and Test panel shell.
 - `src/lib/graph.ts`: message-to-graph conversion and layout.
 - `src/lib/api.ts`: Tracer HTTP client.
-- `scripts/fixtures.mjs`: test-only imports of the canonical bike-rental fixtures
-  and behavioral definitions. Runtime demo fallback is intentionally absent.
+- `scripts/fixtures.mjs`: test-only imports of bike-rental fixtures, behavioral
+  definitions, and historical saved captures. Runtime demo fallback is intentionally absent.
 - `src/index.css`: Studio layout and visual styling.
 
 Use the shared open grey/rust palette, Signika headings, system body typography,

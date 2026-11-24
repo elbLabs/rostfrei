@@ -29,6 +29,11 @@ are always replaced. Child processes have owned process groups; cancellation,
 timeouts and normal exit terminate descendants and clean up the owned broker.
 Secrets are redacted from both output streams, including fragmented output.
 
+To smoke-test one bike-rental journey without running the whole behavioral suite,
+set `ROSTFREI_BIKE_HOST_SCENARIO` to its definition ID (for example,
+`open-repair-job`). The acceptance command still checks full catalog discovery
+and Normal/Test isolation; `--studio` runs the selected journey in Chrome too.
+
 `cargo xtask contracts --nats-binary /path/to/nats-server --evidence-dir /path/to/evidence -- COMMAND`
 uses an authenticated native broker instead of Docker and retains its private
 configuration, storage, command log and monitoring snapshots. The repository's

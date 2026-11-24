@@ -26,7 +26,8 @@ Rostfrei's `NatsPublisher`, `NatsConsumerFactory`, and durable consumer. Its sma
 `notify-rental` handler simulates an external notification service for
 `city-fleet/bike-42`. The service outage and repair are simulated; all broker
 publications, redeliveries, quarantine records, and acknowledgements are real.
-This is a transport-level example with its own handler and payload contract.
+This is a transport-level example with its own handler and payload contract,
+not the command pipeline for the Rental, Finance, and Workshop contexts.
 
 1. **Retry exhaustion.** The notification service is unavailable. The handler
    returns `DeliveryDisposition::RetryAfter(250ms)`. Deliveries 1 and 2 are
@@ -74,10 +75,10 @@ cleanup commands for that run. No NATS CLI is needed for the walkthrough itself.
 `nats --server "$ROSTFREI_NATS_URL" stream get <printed-quarantine-stream> 1`
 to read the first record; sequences 2 and 3 contain the malformed-message cases.
 
-The quarantine subject is:
+The binary also prints the exact quarantine subject for this run. Its shape is:
 
 ```text
-<application>.test.quarantine.command.bike-rental.notify-rental
+<application>.test.quarantine.command.<demo-context>.notify-rental
 ```
 
 Each record includes the original message ID and address, base64-encoded payload,

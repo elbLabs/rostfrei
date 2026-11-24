@@ -4,9 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
 - `cargo rostfrei new` generates a registry-pinned 0.2.3 application with
   release-matched Agent Skills (`--no-skills` to skip) and a runnable rental
   command demonstrating durable replay on JetStream.
+- The NATS application host can supervise multiple bounded contexts under one
+  Tracer runtime and catalog. Each context owns its workers, journal and command
+  results; messaging streams are shared per application and traffic scope.
+  Tracer resets all configured Test contexts together without touching Normal.
+
+### Changed
+
+- Bike rental runs separate Rental, Finance and Workshop contexts, connected by
+  integration events. Deploy it in a fresh application namespace; the old
+  single-context histories, durables and outcomes are not adopted and should
+  be left intact.
 
 ## [0.2.3] - 2026-11-19
 

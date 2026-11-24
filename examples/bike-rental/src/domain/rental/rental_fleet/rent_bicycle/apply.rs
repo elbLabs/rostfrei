@@ -1,0 +1,16 @@
+use rostfrei::Apply;
+
+use super::BicycleRented;
+use crate::domain::rental::rental_fleet::RentalFleet;
+
+impl Apply<BicycleRented> for RentalFleet {
+    fn apply(&mut self, event: &BicycleRented) {
+        if let Some(bicycle) = self
+            .bicycles
+            .iter_mut()
+            .find(|bicycle| bicycle.bicycle_id() == &event.bicycle_id)
+        {
+            bicycle.apply_rented();
+        }
+    }
+}

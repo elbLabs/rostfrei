@@ -28,12 +28,12 @@ The brackets mean that the literal `.test` is optional. Normal traffic has no
 extra scope token. For example:
 
 ```text
-bike-rental.command.bike-rental.collect-rental-payment
+bike-rental.command.finance.collect-rental-payment
 ```
 
-The first `bike-rental` is the **application**; the second is the **bounded context**.
-The example happens to give both the same name. `command` identifies the message
-kind and `collect-rental-payment` names the use case.
+`bike-rental` is the **application** and `finance` is the **bounded context**.
+`command` identifies the message kind and `collect-rental-payment` names the use case.
+The same application also contains `rental` and `workshop` contexts.
 
 Application, context, and business-name tokens use lowercase ASCII letters,
 digits, and single hyphens. They are nonempty, cannot start or end with a hyphen,
@@ -54,7 +54,7 @@ application, scope and context:
 ```
 
 Each identity occupies one encoded token. Aggregate type is the **full** identifier:
-`bike-rental/rental-fleet` becomes `bike-rental%2Frental-fleet`; aggregate ID is a
+`rental/rental-fleet` becomes `rental%2Frental-fleet`; aggregate ID is a
 separate token, such as `city-fleet`. Integration correlation is required. Receipts
 without correlation or causation use `~` for the absent identity. Test fixtures
 use separate [fixture manifests](#filters-and-internal-storage-subjects).
@@ -89,13 +89,13 @@ an append-only journal plus a separate command-results stream, selected with
 
 | Kind | Purpose | Example subject suffix | Stream-filter suffixes | Stream-name suffix |
 | --- | --- | --- | --- | --- |
-| Command | Ask a bounded context to make a decision. | `command.bike-rental.collect-rental-payment` | `command.>` | `_COMMANDS` |
-| Command response | Retain the accepted or rejected outcome for one operation. | `command-response.bike-rental.<response-digest>` | `command-response.>` | `_COMMAND_RESPONSES` |
-| Private domain event | Append BicycleRented and permanent decision evidence to the journal. | `domain.bike-rental.aggregate.bike-rental%2Frental-fleet.city-fleet` | `domain.bike-rental.aggregate.*.*`, `domain.bike-rental.transaction.>`, `domain.bike-rental.fixture.*.receipt.*.*` | `__BIKE_RENTAL__JOURNAL` |
-| Command results | Retain active result details or terminal expiry; the journal owns the decision. | `domain.bike-rental.outcome.<candidate-digest>` | `domain.bike-rental.outcome.*` | `__BIKE_RENTAL__COMMAND_RESULTS` |
-| Integration event | Publish the public BicycleRentalStarted contract after commit. | `integration.bike-rental.bicycle-rental-started.<correlation>.<causation>` | `integration.>` | `_INTEGRATION_EVENTS` |
-| Query (illustrative) | Read state with Core NATS request/reply; the example does not mount a NATS responder. | `query.bike-rental.bicycle-availability` | None | None |
-| Quarantine | Retain a delivery needing inspection, preserving its source kind and business address. | `quarantine.command.bike-rental.collect-rental-payment` | `quarantine.>` | `_QUARANTINE` |
+| Command | Ask a bounded context to make a decision. | `command.rental.return-bicycle` | `command.>` | `_COMMANDS` |
+| Command response | Retain the accepted or rejected outcome for one operation. | `command-response.rental.<response-digest>` | `command-response.>` | `_COMMAND_RESPONSES` |
+| Private domain event | Append BicycleRented and permanent decision evidence to the journal. | `domain.rental.aggregate.rental%2Frental-fleet.city-fleet` | `domain.rental.aggregate.*.*`, `domain.rental.transaction.>`, `domain.rental.fixture.*.receipt.*.*` | `__RENTAL__JOURNAL` |
+| Command results | Retain active result details or terminal expiry; the journal owns the decision. | `domain.rental.outcome.<candidate-digest>` | `domain.rental.outcome.*` | `__RENTAL__COMMAND_RESULTS` |
+| Integration event | Publish the public BicycleRentalStarted contract after commit. | `integration.rental.bicycle-rental-started.<correlation>.<causation>` | `integration.>` | `_INTEGRATION_EVENTS` |
+| Query (illustrative) | Read state with Core NATS request/reply; the example does not mount a NATS responder. | `query.rental.bicycle-availability` | None | None |
+| Quarantine | Retain a delivery needing inspection, preserving its source kind and business address. | `quarantine.command.rental.return-bicycle` | `quarantine.>` | `_QUARANTINE` |
 
 </SubjectExplorer>
 
@@ -107,8 +107,8 @@ the journal/results pair per bounded context and scope. Human-readable
 application/context components use uppercase and underscores. Logical address tokens are lowercase kebab-case; encoded
 identity tokens preserve case.
 
-For example, the pair is `BIKE_RENTAL__BIKE_RENTAL__JOURNAL` and
-`BIKE_RENTAL__BIKE_RENTAL__COMMAND_RESULTS`.
+For `rental`, the pair is `BIKE_RENTAL__RENTAL__JOURNAL` and
+`BIKE_RENTAL__RENTAL__COMMAND_RESULTS`. Finance and Workshop have their own pairs.
 With a custom base name from `NatsEventStoreConfig::new`, the pair is
 `<base>__JOURNAL` and `<base>__COMMAND_RESULTS`.
 Both names must fit JetStream's 255-byte limit.
@@ -139,7 +139,7 @@ for cutoffs and incomplete evidence.
 ## Follow one rental
 
 Assume a confirmed booking is awaiting payment: collection has held `bike-42`
-in `city-fleet` and requested `payment-42` using `sandbox-approved`. Use a
+in `city-fleet`, and Finance has recorded the request for `payment-42` using `sandbox-approved`. Use a
 [fresh application namespace](#fresh-deployments) and the
 [reservation/collection journey](../../examples/bike-rental/README.md#collection-and-sandbox-payment).
 The payment worker submits `CollectRentalPayment`, schema version **1**;
@@ -151,7 +151,7 @@ addresses below use Normal scope.
 ID, `collect-rental-payment`:
 
 ```text
-bike-rental.command.bike-rental.collect-rental-payment
+bike-rental.command.finance.collect-rental-payment
 ```
 
 The business payload identifies the pending payment:
@@ -166,21 +166,21 @@ The bus supplies the surrounding message envelope and execution identities.
 The payment ID, correlation ID, and schema version are not additional
 command-subject tokens. The durable command stream captures the request.
 
-### 2. Load the fleet and decide
+### 2. Decide payment in Finance
 
-The NATS worker passes the command to the registered processor and
-`CollectRentalPaymentHandler`. Through `CommandExecution`, the handler loads
-the payment and its fleet, reconstructing their states from history. It checks
-the pending collection and obtains sandbox approval before starting the rental.
+The Finance worker loads its own payment request through `CommandExecution`
+and obtains the sandbox decision. Finance commits approval or decline and
+publishes the outcome as an integration event. It does not load the fleet.
 
 ### 3. Commit the private fact
 
-On approval, `BicycleRented` and `ReservedBicycleCollected` are appended through
-`NatsEventStore` at the expected fleet version, atomically with
-`RentalPaymentApproved` on the payment aggregate. The fleet's subject is:
+The outcome triggers a Rental command to resolve the matching collection. On
+approval, `BicycleRented` and `ReservedBicycleCollected` are appended through
+`NatsEventStore` at the expected fleet version. This is a separate operation from
+Finance's decision. The fleet's subject is:
 
 ```text
-bike-rental.domain.bike-rental.aggregate.bike-rental%2Frental-fleet.city-fleet
+bike-rental.domain.rental.aggregate.rental%2Frental-fleet.city-fleet
 ```
 
 The fleet is the aggregate; the bicycle is an entity inside it. All of that fleet's
@@ -190,19 +190,19 @@ ID supplies causation when none was explicitly supplied. The same atomic batch
 ends with its permanent receipt:
 
 ```text
-bike-rental.domain.bike-rental.transaction.<operation-digest>.receipt.<correlation>.<command-message-id>
+bike-rental.domain.rental.transaction.<operation-digest>.receipt.<correlation>.<command-message-id>
 ```
 
 ### 4. Return the outcome and publish the public fact
 
 Two separate paths follow the successful commit:
 
-**Back to the caller:** the worker publishes an accepted command response. Its
-exact address is derived from the command address, operation ID, and command
-message ID:
+**Back to the caller:** the worker publishes an accepted command response. For
+the Rental resolution command, the exact address is derived from the command
+address, operation ID, and command message ID:
 
 ```text
-bike-rental.command-response.bike-rental.<response-digest>
+bike-rental.command-response.rental.<response-digest>
 ```
 
 The retained response carries the business outcome, distinct from a broker's
@@ -215,12 +215,12 @@ integration event (schema version **1**) and publishes it through
 `IntegrationEventBus`:
 
 ```text
-bike-rental.integration.bike-rental.bicycle-rental-started.<correlation>.<domain-event-id>
+bike-rental.integration.rental.bicycle-rental-started.<correlation>.<domain-event-id>
 ```
 
 The integration event carries the same correlation; its causation is the source
-domain event ID. Its logical address remains
-`bike-rental.integration.bike-rental.bicycle-rental-started`. A separate durable
+domain event ID. Its logical address is
+`bike-rental.integration.rental.bicycle-rental-started`. A separate durable
 consumer filters that address with `.>` appended, validates exactly two control-ID
 tokens, and handles and logs the event. The wider worker filter also captures
 malformed suffixes for quarantine.
@@ -247,22 +247,22 @@ message has one concrete, validated subject.
 
 | Filter token | Meaning                                   | Normal-traffic example              |
 | ------------ | ----------------------------------------- | ----------------------------------- |
-| `*`          | Exactly one token                         | `bike-rental.command.bike-rental.*` |
+| `*`          | Exactly one token                         | `bike-rental.command.rental.*`      |
 | `>`          | One or more trailing tokens; must be last | `bike-rental.command.>`             |
 
 The split journal captures three filters:
 
 ```text
-bike-rental.domain.bike-rental.aggregate.*.*
-bike-rental.domain.bike-rental.transaction.>
-bike-rental.domain.bike-rental.fixture.*.receipt.*.*
+bike-rental.domain.rental.aggregate.*.*
+bike-rental.domain.rental.transaction.>
+bike-rental.domain.rental.fixture.*.receipt.*.*
 ```
 
 The second filter retains operation-scoped transaction receipts and read guards:
 
 ```text
-bike-rental.domain.bike-rental.transaction.<operation-digest>.receipt.<correlation-or-~>.<causation-or-~>
-bike-rental.domain.bike-rental.transaction.<operation-digest>.guard.<ordinal>
+bike-rental.domain.rental.transaction.<operation-digest>.receipt.<correlation-or-~>.<causation-or-~>
+bike-rental.domain.rental.transaction.<operation-digest>.guard.<ordinal>
 ```
 
 The fixture branch is reserved for Test setup; fixture publication and decoding
@@ -300,7 +300,7 @@ excludes guard records from winner and correlation selectors. See
 requirements and validation.
 
 The separate outcome-state stream captures
-`bike-rental.domain.bike-rental.outcome.*`. Preparing a result
+`bike-rental.domain.rental.outcome.*`. Preparing a result
 there is not a commit; the atomic journal decision selects the winner. See
 [native authority](../command-runtime.md#native-authority) for lifecycle guarantees.
 
@@ -308,8 +308,8 @@ there is not a commit; the atomic journal decision selects the winner. See
 
 Legacy **outcome authority** uses the original `DOMAIN_EVENTS` stream name, with no separate command-results
 stream. In a fresh namespace its aggregate filter is
-`bike-rental.domain.bike-rental.aggregate.*.*` and stream is
-`BIKE_RENTAL__BIKE_RENTAL_DOMAIN_EVENTS`. Its subjects overlap the label-free pair,
+`bike-rental.domain.rental.aggregate.*.*` and stream is
+`BIKE_RENTAL__RENTAL_DOMAIN_EVENTS`. Its subjects overlap the label-free pair,
 so the two layouts cannot share a namespace. Default legacy authority permits current-format history/known-outcome
 reads, but blocks new coordinated command execution.
 
@@ -322,6 +322,10 @@ stream and consumer configurations are rejected; older event subjects are not re
 Update publishers, NATS ACLs and external subscriptions to use the current filters.
 Changing an outcome epoch does not rewrite stored subjects or create a new shared
 integration stream.
+
+When running the three-context bike-rental example, choose a namespace that the
+earlier single-context demo did not use. The split changes context-qualified
+addresses and aggregate identities; fresh setup does not migrate old history or retries.
 
 From 0.2.2, `with_fresh_outcomes()` selects the label-free layout above. Stream
 creation identities and cross-bindings still fence stale handles; expiry remains
@@ -353,8 +357,8 @@ identity stays `bike-rental`, while subjects insert `.test` immediately after th
 application token:
 
 ```text
-Normal: bike-rental.command.bike-rental.return-bicycle
-Test:   bike-rental.test.command.bike-rental.return-bicycle
+Normal: bike-rental.command.rental.return-bicycle
+Test:   bike-rental.test.command.rental.return-bicycle
 ```
 
 Separate stream names use the unambiguous `__TEST` marker:
@@ -363,10 +367,10 @@ Separate stream names use the unambiguous `__TEST` marker:
 Normal commands: BIKE_RENTAL_COMMANDS
 Test commands:   BIKE_RENTAL__TEST_COMMANDS
 
-Normal journal: BIKE_RENTAL__BIKE_RENTAL__JOURNAL
-Normal results: BIKE_RENTAL__BIKE_RENTAL__COMMAND_RESULTS
-Test journal:   BIKE_RENTAL__TEST__BIKE_RENTAL__JOURNAL
-Test results:   BIKE_RENTAL__TEST__BIKE_RENTAL__COMMAND_RESULTS
+Normal rental journal: BIKE_RENTAL__RENTAL__JOURNAL
+Normal rental results: BIKE_RENTAL__RENTAL__COMMAND_RESULTS
+Test rental journal:   BIKE_RENTAL__TEST__RENTAL__JOURNAL
+Test rental results:   BIKE_RENTAL__TEST__RENTAL__COMMAND_RESULTS
 ```
 
 Normal is not a literal `.normal` or `.prod` token. Naming another application
@@ -375,7 +379,7 @@ the canonical application's Test scope.
 
 Scoped adapters validate both application and scope. The example's Test reset
 recreates only isolated Test resources, including both authority streams; Normal
-history persists. Each scope has its own cross-bound storage pair.
+history persists. Each context and scope has its own cross-bound storage pair.
 
 **A stream name does not namespace subjects.** Separate stream names alone cannot
 isolate traffic: their subject filters must also be disjoint. Read broad filters
@@ -399,8 +403,8 @@ use rostfrei::ApplicationName;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let application = ApplicationName::new("bike-rental")?;
-    let normal = application.bounded_context("bike-rental")?;
-    let test = application.test_bounded_context("bike-rental")?;
+    let normal = application.bounded_context("rental")?;
+    let test = application.test_bounded_context("rental")?;
 
     let command = normal.command_address("return-bicycle")?;
     let test_command = test.command_address("return-bicycle")?;
@@ -408,11 +412,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .integration_event_address("bicycle-rental-started")?;
 
     assert_eq!(command.as_str(),
-        "bike-rental.command.bike-rental.return-bicycle");
+        "bike-rental.command.rental.return-bicycle");
     assert_eq!(test_command.as_str(),
-        "bike-rental.test.command.bike-rental.return-bicycle");
+        "bike-rental.test.command.rental.return-bicycle");
     assert_eq!(public_event.as_str(),
-        "bike-rental.integration.bike-rental.bicycle-rental-started");
+        "bike-rental.integration.rental.bicycle-rental-started");
 
     Ok(())
 }
@@ -422,7 +426,7 @@ A durable consumer name is a separate identifier. The rental command's Normal
 durable is:
 
 ```text
-bike-rental--bike-rental--return-bicycle--v2
+bike-rental--rental--return-bicycle--v2
 ```
 
 Test inserts `--test` after the application. This legacy suffix is frozen
@@ -446,7 +450,7 @@ subscriptions instead of subscribing to the unsuffixed address.
 ## Source references
 
 - [Bike-rental NATS configuration and integration mapping](https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/src/bike_rental_nats/mod.rs)
-- [Normal/Test topology assertions](https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/src/bike_rental_nats/tests.rs)
+- [Normal/Test authority and reset assertions](https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/tests/shared_host_split_authority.rs)
 - [Typed context builders](https://github.com/elbLabs/rostfrei/blob/main/crates/rostfrei-messaging-core/src/scope.rs)
   and [address grammar](https://github.com/elbLabs/rostfrei/blob/main/crates/rostfrei-messaging-core/src/address.rs)
 - [Command response derivation](https://github.com/elbLabs/rostfrei/blob/main/crates/rostfrei-messaging-core/src/command_response.rs)

@@ -251,6 +251,39 @@ impl DomainRegistry {
         Self::default()
     }
 
+    /// Combine metadata from independently composed runtimes without registering
+    /// commands or constructing handlers again.
+    pub fn merge(&mut self, other: &Self) -> Result<(), RegistrationError> {
+        for (aggregate_type, registration) in &other.aggregates {
+            if let Some(existing) = self.aggregates.get(aggregate_type)
+                && existing.rust_aggregate_type != registration.rust_aggregate_type
+            {
+                return Err(RegistrationError::DuplicateAggregateType {
+                    aggregate_type: aggregate_type.clone(),
+                    existing_rust_aggregate_type: existing.rust_aggregate_type,
+                    attempted_rust_aggregate_type: registration.rust_aggregate_type,
+                });
+            }
+        }
+        for command in other.commands() {
+            self.validate_command(command)?;
+        }
+        for query in other.queries() {
+            self.validate_query(query)?;
+        }
+        self.aggregates.extend(other.aggregates.clone());
+        for command in other.commands() {
+            self.insert_command(command.clone());
+        }
+        for (context, queries) in &other.queries {
+            let target = self.queries.entry(context).or_default();
+            for (query, versions) in queries {
+                target.entry(query).or_default().extend(versions.clone());
+            }
+        }
+        Ok(())
+    }
+
     pub fn register_aggregate<A>(&mut self) -> Result<(), RegistrationError>
     where
         A: Aggregate,

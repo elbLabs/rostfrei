@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1, "id": "requested-rental-payment", "revision": "1",
+  "messages": [
+    { "kind": "domain-event", "messageId": "fixture-payment-42-requested", "correlationId": "fixture:requested-rental-payment:1", "name": "rental-payment-requested", "schemaVersion": 1,
+      "aggregate": { "type": "finance/rental-payment", "id": "payment-42" }, "streamVersion": 1,
+      "payload": { "payment_id": "payment-42", "details": { "fleet_id": "city-fleet", "reservation_id": "booking-42", "bicycle_id": "bike-42", "customer_id": "customer-alex",
+        "quote": { "currency": "EUR", "rental_charge_minor": 2500, "security_deposit_minor": 10000 }, "payment_method": "sandbox-approved" } } }
+  ]
+}

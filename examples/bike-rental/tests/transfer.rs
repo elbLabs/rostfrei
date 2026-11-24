@@ -2,6 +2,7 @@ use std::{error::Error, io, sync::Arc, time::Duration};
 
 use bike_rental::{
     BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime,
+    RENTAL_CONTEXT,
     demo::{apply_demo_fixture, demo_stream, seed_demo},
     rental_fleet::{
         self, AddCategorizedBicycleAction as _, BicycleCategory, BicycleCondition, BicycleId,
@@ -198,7 +199,7 @@ async fn executor_atomically_transfers_with_actual_nats_event_store() -> TestRes
     let nats_url = required_nats_url()?;
     let unique = Uuid::now_v7();
     let application = rostfrei::ApplicationName::new(format!("transfer-executor-{unique}"))?;
-    let context = application.test_bounded_context("bike-rental")?;
+    let context = application.test_bounded_context(RENTAL_CONTEXT)?;
     let config = NatsEventStoreConfig::for_bounded_context(&context)?
         .with_fresh_split_outcome_epoch("isolated-transfer-fixture")?;
     let connection = connect(
@@ -416,7 +417,7 @@ fn metadata(operation: &str) -> TestResult<CommandExecutionMetadata> {
         OperationId::new(operation)?,
         ContentFingerprint::digest(operation),
     )
-    .with_bounded_context(rostfrei::BoundedContextName::new("bike-rental")?))
+    .with_bounded_context(rostfrei::BoundedContextName::new(RENTAL_CONTEXT)?))
 }
 
 fn transfer_command(bicycle: &str) -> TestResult<TransferBicycle> {

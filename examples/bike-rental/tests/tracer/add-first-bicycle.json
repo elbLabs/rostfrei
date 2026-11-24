@@ -22,7 +22,7 @@
               "fleet_id": "city-fleet"
             },
             "outcome": "accepted",
-            "context": "bike-rental"
+            "context": "rental"
           },
           {
             "kind": "domain-event",

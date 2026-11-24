@@ -148,10 +148,22 @@ async function checkStructureFiles(browser) {
     const page = await context.newPage()
     await mockRepositoryMetadata(page)
     await page.setViewport({ width: 1440, height: 900 })
+    await page.goto(`${origin}${base}docs/project-structure/domain-root`, { waitUntil: "networkidle0" })
+    const domainRoot = '[data-project-structure-example="domain-root"]'
+    const model = await page.waitForSelector(`${domainRoot} pre code`)
+    assert.match(await model.evaluate((element) => element.textContent), /contexts:\s*\[Rental, Finance, Workshop\]/)
+    for (const contextId of ["rental", "finance", "workshop"]) {
+      const path = `examples/bike-rental/src/domain/${contextId}/context.rs`
+      await page.locator(`${domainRoot} button[data-source-path="${path}"]`).click()
+      const shown = await page.waitForSelector(`${domainRoot} [data-selected-source="${path}"] pre code`)
+      const expected = (await readFile(new URL(`../${path}`, import.meta.url), "utf8")).trimEnd()
+      assert.equal(await shown.evaluate((element) => element.textContent), expected)
+    }
+
     await page.goto(`${origin}${base}docs/project-structure/behaviorful-value-object`, { waitUntil: "networkidle0" })
     const example = '[data-project-structure-example="behaviorful-value-object"]'
     await page.waitForSelector(example)
-    const directory = "examples/bike-rental/src/domain/bike_rental/rental_fleet/bicycle/registration_number/"
+    const directory = "examples/bike-rental/src/domain/rental/rental_fleet/bicycle/registration_number/"
     const actualFiles = (await readdir(new URL(`../${directory}`, import.meta.url), { recursive: true }))
       .filter((path) => path.endsWith(".rs")).sort()
     const buttons = await page.$$(`${example} button[data-source-path]`)
@@ -332,10 +344,12 @@ try {
   assert.match(await documentation.$eval(explorer, (element) => element.textContent), /BIKE_RENTAL_COMMAND_RESPONSES/)
   await documentation.click(`${explorer} button:nth-child(2)`)
   assert.match(await documentation.$eval(explorer, (element) => element.textContent), /BIKE_RENTAL__TEST_COMMAND_RESPONSES/)
-  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /bike-rental\.test\.integration\.bike-rental\.bicycle-rental-started/)
-  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /bike-rental\.test\.domain\.bike-rental\.aggregate\.\*/)
+  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /bike-rental\.test\.command\.rental\.return-bicycle/)
+  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /bike-rental\.test\.integration\.rental\.bicycle-rental-started/)
+  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /bike-rental\.test\.domain\.rental\.aggregate\.rental%2Frental-fleet\.city-fleet/)
+  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /bike-rental\.test\.domain\.rental\.aggregate\.\*/)
   assert.doesNotMatch(await documentation.$eval(explorer, (element) => element.textContent), /epoch|\.split\./)
-  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /BIKE_RENTAL__TEST__BIKE_RENTAL__COMMAND_RESULTS/)
+  assert.match(await documentation.$eval(explorer, (element) => element.textContent), /BIKE_RENTAL__TEST__RENTAL__COMMAND_RESULTS/)
   await documentation.close()
   for (const theme of ["light", "dark"]) {
     const context = await browser.createBrowserContext()

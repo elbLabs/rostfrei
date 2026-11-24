@@ -8,7 +8,7 @@ use std::{error::Error, sync::Arc, time::Duration};
 use async_trait::async_trait;
 mod support;
 rostfrei::install_macro_support!();
-use bike_rental::{demo::demo_fixture, rental_fleet::RentalFleetAggregate};
+use bike_rental::{RENTAL_CONTEXT, demo::demo_fixture, rental_fleet::RentalFleetAggregate};
 use rostfrei::nats::{NatsConnection, NatsConnectionConfig, connect};
 use rostfrei::tracer::{
     ApplicationBindings, CommandInvocation, CommandOutcome, CommandPublication, CommandTransport,
@@ -50,12 +50,12 @@ fn invocation(id: &str) -> TestResult<CommandInvocation> {
         OperationId::new(id)?,
         id,
         command_execution_fingerprint(
-            "bike-rental",
+            RENTAL_CONTEXT,
             "rent-bicycle",
             RentBicycle::SCHEMA_VERSION,
             &payload,
         ),
-        "bike-rental",
+        RENTAL_CONTEXT,
         "rent-bicycle",
         RentBicycle::SCHEMA_VERSION,
         payload,
@@ -76,8 +76,8 @@ async fn setup() -> TestResult<(
     let suffix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos();
-    let context =
-        ApplicationName::new(format!("admission-{suffix}"))?.test_bounded_context("bike-rental")?;
+    let context = ApplicationName::new(format!("admission-{suffix}"))?
+        .test_bounded_context(RENTAL_CONTEXT)?;
     let pause = Arc::new((Notify::new(), Notify::new()));
     let mut bindings = ApplicationBindings::new();
     bindings.register_aggregate::<RentalFleetAggregate>()?;
@@ -198,7 +198,7 @@ async fn host_shutdown_and_drop_close_retained_transport_at_initiation() -> Test
             NatsRuntime::provision(
                 connection.clone(),
                 NatsRuntimeConfig::new(
-                    context.application().bounded_context("bike-rental")?,
+                    context.application().bounded_context(RENTAL_CONTEXT)?,
                     &bindings,
                     1,
                 )?
@@ -218,7 +218,10 @@ async fn host_shutdown_and_drop_close_retained_transport_at_initiation() -> Test
             .with_tracer(Some(config))
             .provision_and_start()
             .await?;
-        let runtime = host.runtime().clone();
+        let runtime = host
+            .runtime_for(RENTAL_CONTEXT)
+            .ok_or("missing Rental runtime")?
+            .clone();
         let transport = runtime.transport();
         let admitted_transport = transport.clone();
         let admitted = tokio::spawn(async move {

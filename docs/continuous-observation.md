@@ -42,6 +42,12 @@ The feed application must match its runtime; Production continuous observation
 requires the separately attached Normal runtime. Retained inspection can also use
 read-only event-store registrations. See [host configuration](nats-application-host.md).
 
+In a scope with several hosted contexts, each runtime observes its private domain
+events and the integration events it produces. The shared integration stream is
+filtered by producer so an event is decoded only by its owning runtime. A
+single-runtime scope still observes integration events from all producers in the
+application, using its registered codecs.
+
 For custom adapters built directly with `TracerBuilder`, its existing
 `with_continuous_observation` accepts the same feeds. Connect the normal NATS event observer to
 `tracer.correlation_observer(OperationMode::Dispatch)` and the isolated Test
@@ -74,7 +80,7 @@ broker interruption and recovery; an adapter must propagate it to its source gua
 
 Bike-rental enables the feeds in
 [`bike-rental-api.rs`](../examples/bike-rental/src/bin/bike-rental-api.rs) with
-`cargo run --locked -p bike-rental -- --tracer`; the reusable framework host owns
+`cargo run --locked -p bike-rental --bin bike-rental-api -- --tracer`; the reusable framework host owns
 the observer wiring.
 Its real-NATS integration test publishes outside Tracer, observes a rental and its
 integration-triggered return under one correlation, and retrieves the evidence
@@ -177,10 +183,10 @@ Retained inspection reads domain and integration events by correlation directly
 from configured bounded-context event stores and the shared application integration
 stream. The transport-neutral `CorrelationHistory` contract is implemented by
 `NatsCorrelationHistory`. There is no correlation KV bucket, projection worker,
-or backfill. An attached Normal dispatch runtime automatically registers its
-domain store and the shared integration source. Additional domain sources or an
-inspection-only host use `TracerConfig::with_production_event_store`; no projector
-opt-in is needed. See [host registration](nats-application-host.md#retained-correlation-inspection).
+or backfill. Attached Normal dispatch runtimes automatically register each
+context's domain store and one shared integration source. Add domain sources
+or configure an inspection-only host with `TracerConfig::with_production_event_store`;
+no projector opt-in is needed. See [host registration](nats-application-host.md#retained-correlation-inspection).
 
 This reader requires the [fresh subject format](messaging/subjects.mdx#fresh-deployments).
 Native ordered ephemeral consumers discover permanent transaction receipts and

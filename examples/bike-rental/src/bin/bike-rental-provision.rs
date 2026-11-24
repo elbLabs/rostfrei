@@ -1,8 +1,6 @@
 use std::env;
 
-use bike_rental::{
-    APPLICATION_NAME, BikeRentalNatsConfig, BikeRentalNatsResourceLimits, demo::seed_demo,
-};
+use bike_rental::{APPLICATION_NAME, BikeRentalNatsResourceLimits, demo::seed_demo, tracer};
 use rostfrei::nats::{NatsConnectionConfig, ServerVersion, connect};
 
 const DEFAULT_NATS_URL: &str = "nats://127.0.0.1:4222";
@@ -13,7 +11,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let application =
         env::var("ROSTFREI_APPLICATION").unwrap_or_else(|_| APPLICATION_NAME.to_owned());
     let resource_limits = BikeRentalNatsResourceLimits::from_env()?;
-    let config = BikeRentalNatsConfig::new_with_resource_limits(&application, resource_limits)?;
+    let config = tracer::configurations(
+        &application,
+        rostfrei::TrafficScope::Normal,
+        resource_limits,
+    )?;
     let config = match env::var("ROSTFREI_COMPLETED_OUTCOME_EPOCH") {
         Ok(epoch) => config.with_fresh_completed_outcome_epoch(&epoch)?,
         Err(env::VarError::NotPresent) => config.with_fresh_outcomes()?,
@@ -26,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     config.provision(&connection).await?;
-    let store = config.connect_store(&connection).await?;
+    let store = config.rental().connect_store(&connection).await?;
     seed_demo(&store).await?;
     connection.drain().await?;
 

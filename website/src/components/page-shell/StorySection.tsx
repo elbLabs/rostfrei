@@ -66,7 +66,7 @@ export function GettingStartedSection() {
       </h2>
       <p className="section-intro">
         Copy this prompt to run the bike-rental example and inspect a successful
-        rental and a rejection, one step at a time.
+        bicycle registration and a rejection, one step at a time.
       </p>
       <AgentPrompt />
       <Link

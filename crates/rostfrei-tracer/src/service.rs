@@ -610,12 +610,13 @@ impl TracerBuilder {
                 test_transport_payload_limit(self.test_transport.as_deref()),
             )?;
         }
-        let test_enabled = self.test_event_store.is_some() && self.test_transport.is_some();
         let mut catalog = build_catalog(
             &self.bindings.registry,
             self.domain_model.as_ref(),
-            test_enabled,
-            self.dispatch_transport.is_some(),
+            self.test_event_store
+                .as_ref()
+                .and(self.test_transport.as_deref()),
+            self.dispatch_transport.as_deref(),
             self.test_scenario_reset.is_some(),
             self.test_fixtures.keys().map(String::as_str),
             self.test_repository.is_some(),
@@ -1946,6 +1947,13 @@ impl Tracer {
                 schema_version: request.schema_version,
             }
         })?;
+        if !transport.supports_command(context, command, request.schema_version) {
+            return Err(SubmissionError::ModeUnavailable(match mode {
+                OperationMode::Simulate => "simulate",
+                OperationMode::Test => "test",
+                OperationMode::Dispatch => "dispatch",
+            }));
+        }
         #[allow(
             clippy::significant_drop_tightening,
             reason = "the spawned operation must retain the scenario guard until completion"

@@ -5,10 +5,14 @@
 //! independent host. The reset gate coordinates this runtime's submissions only.
 
 mod backend;
+mod group;
 mod observation;
 mod retained_history;
+mod routing;
 pub use backend::NatsExecutionProfile;
 use backend::{Backend, CurrentBackend};
+use group::TestRuntimeGroup;
+use routing::RuntimeGroup;
 
 use crate::{
     ApplicationBindings, CommandBusTransport, CommandInvocation, CommandReceipt, CommandTransport,
@@ -24,7 +28,7 @@ use rostfrei_messaging_core::{
     MessageConsumerFactory, MessageHandler, RetryDelay, TrafficScope,
 };
 use rostfrei_nats::{
-    ApplicationMessagingConfig, NatsConnection, NatsCorrelationObserver, NatsDomainEventConsumer,
+    ApplicationMessagingConfig, NatsConnection, NatsDomainEventConsumer,
     NatsDomainEventConsumerConfig, NatsEventStore, NatsEventStoreConfig, NatsMessagingAdapter,
     provision_application_messaging, provision_domain_event_consumer, provision_durable_consumer,
     provision_event_store,
@@ -133,6 +137,12 @@ impl NatsRuntimeConfig {
                 "runtime resources must belong to its application, scope and context".into(),
             ));
         }
+        if self.event_store.outcome_state_stream_name().is_empty() {
+            return Err(NatsHostError::Configuration(format!(
+                "writable runtime for context `{}` requires explicit split outcome authority",
+                self.context.name().as_str()
+            )));
+        }
         Ok(())
     }
 
@@ -225,6 +235,10 @@ impl NatsRuntimeConfig {
     pub async fn provision(&self, connection: &NatsConnection) -> Result<(), NatsHostError> {
         self.validate()?;
         provision_application_messaging(connection.jetstream(), &self.messaging).await?;
+        self.provision_context(connection).await
+    }
+
+    async fn provision_context(&self, connection: &NatsConnection) -> Result<(), NatsHostError> {
         provision_event_store(connection.jetstream(), &self.event_store).await?;
         if self.domain_events_required {
             provision_domain_event_consumer(
@@ -243,6 +257,27 @@ impl NatsRuntimeConfig {
                 .await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "test assertions report contract failures"
+    )]
+    fn writable_runtime_requires_split_outcome_authority() -> Result<(), NatsHostError> {
+        let context = rostfrei_runtime::ApplicationName::new("host-config")?
+            .test_bounded_context("counter")?;
+        let config = NatsRuntimeConfig::new(context, &ApplicationBindings::new(), 1)?;
+        assert!(matches!(
+            config.validate(),
+            Err(NatsHostError::Configuration(message)) if message.contains("split outcome authority")
+        ));
+        config.with_fresh_outcomes()?.validate()
     }
 }
 
@@ -287,6 +322,24 @@ impl CommandTransport for ScopedTransport {
 }
 
 type Worker = JoinHandle<Result<(), NatsHostError>>;
+type WorkerFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), NatsHostError>> + Send>>;
+
+#[derive(Default)]
+struct PreparedWorkers {
+    application: Vec<WorkerFuture>,
+    observation: Option<WorkerFuture>,
+}
+
+impl PreparedWorkers {
+    fn launch(self, runtime: &NatsRuntime, workers: &mut RuntimeWorkers) {
+        workers
+            .application
+            .extend(self.application.into_iter().map(tokio::spawn));
+        workers.observation = self.observation.map(tokio::spawn);
+        runtime.available.store(true, Ordering::Release);
+    }
+}
 
 #[derive(Default)]
 struct RuntimeWorkers {
@@ -331,8 +384,10 @@ pub struct NatsRuntime {
     shutting_down: Arc<AtomicBool>,
     fixture_events: Arc<RwLock<FixtureEventSet>>,
     reset_required: AtomicBool,
+    // A member cannot independently delete streams shared with other contexts.
+    grouped_reset: bool,
     workers: Mutex<RuntimeWorkers>,
-    observer: Mutex<Option<CorrelationObserver>>,
+    observer: Mutex<Option<(CorrelationObserver, bool)>>,
 }
 
 impl NatsRuntime {
@@ -379,6 +434,7 @@ impl NatsRuntime {
             shutting_down,
             fixture_events: Arc::new(RwLock::new(FixtureEventSet::default())),
             reset_required: AtomicBool::new(false),
+            grouped_reset: false,
             workers: Mutex::new(RuntimeWorkers::default()),
             observer: Mutex::new(None),
         })
@@ -393,6 +449,49 @@ impl NatsRuntime {
         bindings: &ApplicationBindings,
     ) -> Result<(), NatsHostError> {
         config.validate()?;
+        let expected_commands = bindings
+            .commands
+            .iter()
+            .map(|command| {
+                if command.bounded_context != config.context.name().as_str() {
+                    return Err(NatsHostError::Configuration(
+                        "bindings must belong to the configured bounded context".into(),
+                    ));
+                }
+                Ok(config.context.command_address(command.command_name)?)
+            })
+            .collect::<Result<std::collections::HashSet<_>, NatsHostError>>()?;
+        let configured_commands = config
+            .commands
+            .iter()
+            .map(ConsumerConfig::address)
+            .collect::<std::collections::HashSet<_>>();
+        if expected_commands.len() != configured_commands.len()
+            || configured_commands.len() != config.commands.len()
+            || !configured_commands
+                .iter()
+                .all(|address| expected_commands.contains(*address))
+        {
+            return Err(NatsHostError::Configuration(
+                "command consumers must match registered command addresses".into(),
+            ));
+        }
+        if config.integrations.len() != bindings.integration_handlers.len() {
+            return Err(NatsHostError::Configuration(
+                "integration consumers and handlers differ".into(),
+            ));
+        }
+        for (consumer, handler) in config
+            .integrations
+            .iter()
+            .zip(&bindings.integration_handlers)
+        {
+            if consumer.address() != &handler.address(&config.context)? {
+                return Err(NatsHostError::Configuration(
+                    "integration subscription must match its typed producer contract".into(),
+                ));
+            }
+        }
         if config.domain_events_required == bindings.integration_mappings.is_empty() {
             return Err(NatsHostError::Configuration(
                 "runtime resource plan must match its registered integration mappings".into(),
@@ -474,23 +573,29 @@ impl NatsRuntime {
         self.start_in_scope().await
     }
 
-    #[allow(
-        clippy::too_many_lines,
-        reason = "prepare every worker before spawning the owned group"
-    )]
     async fn start_in_scope(&self) -> Result<(), NatsHostError> {
+        let mut workers = self.workers.lock().await;
+        if !workers.is_empty() {
+            if self.available.load(Ordering::Acquire)
+                && !self.shutting_down.load(Ordering::Acquire)
+                && workers.iter().all(|w| !w.is_finished())
+            {
+                return Ok(());
+            }
+            drop(workers);
+            return Err(NatsHostError::Worker(
+                "a worker has exited; stop the runtime before restarting".into(),
+            ));
+        }
+        self.prepare_workers().await?.launch(self, &mut workers);
+        drop(workers);
+        Ok(())
+    }
+
+    async fn prepare_workers(&self) -> Result<PreparedWorkers, NatsHostError> {
         if self.shutting_down.load(Ordering::Acquire) {
             return Err(NatsHostError::Configuration(
                 "runtime is shutting down".into(),
-            ));
-        }
-        let mut workers = self.workers.lock().await;
-        if !workers.is_empty() {
-            if self.available.load(Ordering::Acquire) && workers.iter().all(|w| !w.is_finished()) {
-                return Ok(());
-            }
-            return Err(NatsHostError::Worker(
-                "a worker has exited; stop the runtime before restarting".into(),
             ));
         }
         // Prepare and verify everything before spawning any task.
@@ -499,16 +604,14 @@ impl NatsRuntime {
             .consumer_factory(self.config.messaging.topology().clone());
         let backend = self.backend.snapshot();
         let handler = backend.handler.clone();
-        let mut commands = Vec::new();
+        let mut prepared = PreparedWorkers::default();
         for config in &self.config.commands {
             factory.verify_consumer(config).await?;
-            commands.push(factory.create(config.clone())?);
-        }
-        let mut integrations = Vec::new();
-        if self.config.integrations.len() != self.bindings.integration_handlers.len() {
-            return Err(NatsHostError::Configuration(
-                "integration consumers and handlers differ".into(),
-            ));
+            let consumer = factory.create(config.clone())?;
+            let handler = handler.clone();
+            prepared.application.push(Box::pin(async move {
+                consumer.run(handler).await.map_err(Into::into)
+            }));
         }
         for (config, binding) in self
             .config
@@ -516,11 +619,6 @@ impl NatsRuntime {
             .iter()
             .zip(&self.bindings.integration_handlers)
         {
-            if config.address() != &binding.address(&self.config.context)? {
-                return Err(NatsHostError::Configuration(
-                    "integration subscription must match its typed producer contract".into(),
-                ));
-            }
             factory.verify_consumer(config).await?;
             let adapter: Arc<dyn CommandMessageAdapter> = backend.messaging.clone();
             let bus = CommandBus::new(self.config.context.clone(), adapter);
@@ -529,46 +627,27 @@ impl NatsRuntime {
                 config.durable_name().clone(),
                 self.config.integration_retry_delay,
             );
-            integrations.push((factory.create(config.clone())?, handler));
+            let consumer = factory.create(config.clone())?;
+            prepared.application.push(Box::pin(async move {
+                consumer.run(handler).await.map_err(Into::into)
+            }));
         }
-        let domain = if self.config.domain_events_required {
+        if self.config.domain_events_required {
             let adapter: Arc<dyn IntegrationMessageAdapter> = backend.messaging.clone();
             let bus = IntegrationEventBus::new(self.config.context.clone(), adapter);
             let mut dispatcher = DomainEventDispatcher::with_codecs(self.bindings.codecs.clone());
             for register in &self.bindings.integration_mappings {
                 register(bus.clone(), &mut dispatcher)?;
             }
-            Some(
-                NatsDomainEventConsumer::connect_with_fixture_events(
-                    self.connection.jetstream().clone(),
-                    self.config.event_store.clone(),
-                    self.config.domain_events.clone(),
-                    Arc::new(dispatcher),
-                    self.fixture_events.clone(),
-                )
-                .await?,
+            let consumer = NatsDomainEventConsumer::connect_with_fixture_events(
+                self.connection.jetstream().clone(),
+                self.config.event_store.clone(),
+                self.config.domain_events.clone(),
+                Arc::new(dispatcher),
+                self.fixture_events.clone(),
             )
-        } else {
-            None
-        };
-        let observer = self.observer.lock().await.clone();
-        let observation = match observer {
-            Some(observer) => Some(self.prepare_observation(observer).await?),
-            None => None,
-        };
-        for consumer in commands {
-            let handler = handler.clone();
-            workers.application.push(tokio::spawn(async move {
-                consumer.run(handler).await.map_err(Into::into)
-            }));
-        }
-        for (consumer, handler) in integrations {
-            workers.application.push(tokio::spawn(async move {
-                consumer.run(handler).await.map_err(Into::into)
-            }));
-        }
-        if let Some(consumer) = domain {
-            workers.application.push(tokio::spawn(async move {
+            .await?;
+            prepared.application.push(Box::pin(async move {
                 let (_keepalive, shutdown) = watch::channel(false);
                 consumer
                     .run_until_shutdown(shutdown)
@@ -576,57 +655,15 @@ impl NatsRuntime {
                     .map_err(Into::into)
             }));
         }
-        if let Some((subscription, handler)) = observation {
-            workers.observation = Some(tokio::spawn(async move {
+        let observer = self.observer.lock().await.clone();
+        if let Some((observer, producer_only)) = observer {
+            let (subscription, handler) =
+                observation::prepare(self, observer, producer_only).await?;
+            prepared.observation = Some(Box::pin(async move {
                 subscription.run(handler).await.map_err(Into::into)
             }));
         }
-        self.available.store(true, Ordering::Release);
-        drop(workers);
-        Ok(())
-    }
-
-    async fn prepare_observation(
-        &self,
-        observer: CorrelationObserver,
-    ) -> Result<
-        (
-            rostfrei_nats::NatsCorrelationSubscription,
-            Arc<observation::TracerCorrelationHandler>,
-        ),
-        NatsHostError,
-    > {
-        let source = observer.observation_source(self.config.context.name().as_str())?;
-        let subscription = NatsCorrelationObserver::new_in_scope(
-            self.connection.client().clone(),
-            self.config.context.application().clone(),
-            self.config.context.traffic_scope(),
-            self.config.event_store.subject_filter(),
-        )
-        .with_streams(
-            self.config.event_store.stream_name(),
-            self.config
-                .messaging
-                .topology()
-                .integration_event_stream()
-                .as_str(),
-        )
-        .subscribe()
-        .await?;
-        // Both subscriptions are established before callers can publish. The
-        // handler owns the guard through failures, cancellation and shutdown.
-        if let Some(source) = &source {
-            source.ready();
-        }
-        Ok((
-            subscription,
-            Arc::new(observation::TracerCorrelationHandler {
-                observer,
-                store: self.store(),
-                bindings: self.bindings.clone(),
-                source,
-            }),
-        ))
+        Ok(prepared)
     }
 
     /// Attaches or replaces observation without interrupting application work.
@@ -637,6 +674,14 @@ impl NatsRuntime {
         observer: CorrelationObserver,
     ) -> Result<(), NatsHostError> {
         let _scope = self.gate.write().await;
+        self.attach_observer_in_scope(observer, false).await
+    }
+
+    async fn attach_observer_in_scope(
+        &self,
+        observer: CorrelationObserver,
+        producer_only: bool,
+    ) -> Result<(), NatsHostError> {
         if self.reset_required.load(Ordering::Acquire) {
             return Err(NatsHostError::Configuration(
                 "Test remains unavailable until a successful reset".into(),
@@ -649,7 +694,7 @@ impl NatsRuntime {
         }
         let mut workers = self.workers.lock().await;
         if workers.is_empty() {
-            *self.observer.lock().await = Some(observer);
+            *self.observer.lock().await = Some((observer, producer_only));
             drop(workers);
             return self.start_in_scope().await;
         }
@@ -665,8 +710,11 @@ impl NatsRuntime {
             worker.abort();
             let _ = worker.await;
         }
-        let worker = self.start_correlation_observer(observer.clone()).await?;
-        *configured = Some(observer);
+        let (subscription, handler) =
+            observation::prepare(self, observer.clone(), producer_only).await?;
+        let worker =
+            tokio::spawn(async move { subscription.run(handler).await.map_err(Into::into) });
+        *configured = Some((observer, producer_only));
         drop(configured);
         workers.observation = Some(worker);
         drop(workers);
@@ -679,7 +727,7 @@ impl NatsRuntime {
         &self,
         observer: CorrelationObserver,
     ) -> Result<Worker, NatsHostError> {
-        let (subscription, handler) = self.prepare_observation(observer).await?;
+        let (subscription, handler) = observation::prepare(self, observer, false).await?;
         Ok(tokio::spawn(async move {
             subscription.run(handler).await.map_err(Into::into)
         }))
@@ -728,37 +776,61 @@ impl NatsRuntime {
                 "reset requires Test scope".into(),
             ));
         }
+        if self.grouped_reset {
+            return Err(NatsHostError::Configuration(
+                "a hosted context must reset through its application's Test scenario".into(),
+            ));
+        }
         let _scope = self.gate.write().await;
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err(NatsHostError::Configuration(
+                "runtime is shutting down".into(),
+            ));
+        }
         self.reset_required.store(true, Ordering::Release);
         self.stop_in_scope().await;
         *self.fixture_events.write().await = FixtureEventSet::default();
+        self.delete_shared_streams().await?;
+        self.delete_private_streams().await?;
+        self.config.provision(&self.connection).await?;
+        self.replace_backend(self.connect_backend().await?);
+        self.apply_fixture_in_scope(fixture).await?;
+        self.start_in_scope().await?;
+        self.reset_required.store(false, Ordering::Release);
+        Ok(())
+    }
+
+    async fn delete_shared_streams(&self) -> Result<(), NatsHostError> {
         let topology = self.config.messaging.topology();
         for stream in [
             topology.command_stream().as_str(),
             topology.command_response_stream().as_str(),
             topology.integration_event_stream().as_str(),
             topology.quarantine_stream().as_str(),
-            self.config.event_store.stream_name(),
-            self.config.event_store.outcome_state_stream_name(),
         ] {
             self.connection.delete_stream_if_exists(stream).await?;
         }
-        self.config.provision(&self.connection).await?;
+        Ok(())
+    }
+
+    async fn delete_private_streams(&self) -> Result<(), NatsHostError> {
+        for stream in group::private_stream_names(&self.config) {
+            self.connection.delete_stream_if_exists(stream).await?;
+        }
+        Ok(())
+    }
+
+    async fn connect_backend(&self) -> Result<Backend, NatsHostError> {
         let store = NatsEventStore::connect(
             self.connection.jetstream().clone(),
             self.config.event_store.clone(),
         )
         .await?;
-        self.backend.replace(Backend::new(
-            &self.connection,
-            &self.config,
-            &self.bindings,
-            store,
-        )?);
-        self.apply_fixture_in_scope(fixture).await?;
-        self.start_in_scope().await?;
-        self.reset_required.store(false, Ordering::Release);
-        Ok(())
+        Backend::new(&self.connection, &self.config, &self.bindings, store)
+    }
+
+    fn replace_backend(&self, backend: Backend) {
+        self.backend.replace(backend);
     }
 }
 
@@ -786,7 +858,7 @@ pub struct TracerConfig {
     http: HttpConfig,
     repository: Option<Arc<dyn TestRepository>>,
     payload_policy: Arc<dyn TracePayloadPolicy>,
-    dispatch: Option<Arc<NatsRuntime>>,
+    dispatch: Vec<Arc<NatsRuntime>>,
     production_event_stores: Vec<NatsEventStoreConfig>,
     observation: std::collections::BTreeMap<crate::ObservationScope, Arc<crate::ObservationFeed>>,
 }
@@ -797,7 +869,7 @@ impl TracerConfig {
             http,
             repository: None,
             payload_policy: Arc::new(crate::RedactTracePayloads),
-            dispatch: None,
+            dispatch: Vec::new(),
             production_event_stores: Vec::new(),
             observation: std::collections::BTreeMap::new(),
         }
@@ -820,10 +892,10 @@ impl TracerConfig {
         self.observation.insert(feed.scope(), feed);
         self
     }
-    /// The host supervises and stops this explicitly supplied Normal runtime too.
+    /// Add a Normal context runtime. The host supervises and stops all attached runtimes.
     #[must_use]
     pub fn with_dispatch_runtime(mut self, runtime: Arc<NatsRuntime>) -> Self {
-        self.dispatch = Some(runtime);
+        self.dispatch.push(runtime);
         self
     }
 
@@ -842,7 +914,7 @@ impl TracerConfig {
                 crate::ObservationScope::Production => {
                     &self
                         .dispatch
-                        .as_ref()
+                        .first()
                         .ok_or_else(|| {
                             NatsHostError::Configuration(
                                 "production observation requires a Normal dispatch runtime".into(),
@@ -865,6 +937,7 @@ pub struct NatsApplicationBuilder {
     connection: NatsConnection,
     config: NatsRuntimeConfig,
     bindings: Arc<ApplicationBindings>,
+    contexts: Vec<(NatsRuntimeConfig, Arc<ApplicationBindings>)>,
     fixture: Option<Fixture>,
     initial_fixture: Option<Fixture>,
     fixtures: Vec<Fixture>,
@@ -895,6 +968,16 @@ impl NatsApplicationBuilder {
         self.config = config;
         self
     }
+    /// Add a context in the same application and scope as the primary runtime.
+    #[must_use]
+    pub fn with_context(
+        mut self,
+        config: NatsRuntimeConfig,
+        bindings: Arc<ApplicationBindings>,
+    ) -> Self {
+        self.contexts.push((config, bindings));
+        self
+    }
     #[must_use]
     pub fn with_default_test_fixture(mut self, fixture: Fixture) -> Self {
         self.fixture = Some(fixture);
@@ -918,11 +1001,7 @@ impl NatsApplicationBuilder {
         Box::pin(self.start(false)).await
     }
 
-    #[allow(
-        clippy::too_many_lines,
-        reason = "startup preparation and rollback are kept together"
-    )]
-    async fn start(self, provision: bool) -> Result<NatsApplication, NatsHostError> {
+    fn validate(&self, provision: bool) -> Result<Vec<NatsEventStoreConfig>, NatsHostError> {
         if (self.fixture.is_some()
             || self.initial_fixture.is_some()
             || !self.fixtures.is_empty()
@@ -934,39 +1013,114 @@ impl NatsApplicationBuilder {
         if !provision && self.fixture.is_some() {
             return Err(NatsHostError::Configuration("connect does not reset fixtures; use explicit provision_and_start for the Test host".into()));
         }
-        let production_stores = if let Some(tracer) = &self.tracer {
+        NatsRuntime::validate_resource_plan(&self.config, &self.bindings)?;
+        for (config, bindings) in &self.contexts {
+            NatsRuntime::validate_resource_plan(config, bindings)?;
+        }
+        group::validate_scope(
+            &self.config,
+            std::iter::once(&self.config).chain(self.contexts.iter().map(|(config, _)| config)),
+        )?;
+        if let Some(tracer) = &self.tracer {
+            if self.fixture.is_none() {
+                return Err(NatsHostError::Configuration(
+                    "Tracer requires a default Test fixture".into(),
+                ));
+            }
+            if let Some(first) = tracer.dispatch.first() {
+                if first.config.context.traffic_scope() != TrafficScope::Normal
+                    || first.config.context.application() != self.config.context.application()
+                {
+                    return Err(NatsHostError::Configuration(
+                        "dispatch requires Normal scope in the host application".into(),
+                    ));
+                }
+                group::validate_scope(
+                    &first.config,
+                    tracer.dispatch.iter().map(|runtime| &runtime.config),
+                )?;
+            }
             tracer.validate_observation(&self.config)?;
-            retained_history::sources(tracer, &self.config)?
+            retained_history::sources(tracer, &self.config)
         } else {
-            Vec::new()
+            Ok(Vec::new())
+        }
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "keep startup preparation and rollback together"
+    )]
+    async fn start(self, provision: bool) -> Result<NatsApplication, NatsHostError> {
+        let production_stores = self.validate(provision)?;
+        let multiple_contexts = !self.contexts.is_empty();
+        let dispatch = self
+            .tracer
+            .as_ref()
+            .map_or_else(Vec::new, |tracer| tracer.dispatch.clone());
+        let dispatch_group = if !dispatch.is_empty() && (multiple_contexts || dispatch.len() > 1) {
+            Some(Arc::new(RuntimeGroup::new(dispatch.clone())?))
+        } else {
+            None
         };
-        let runtime = Arc::new(if provision {
-            NatsRuntime::provision(self.connection, self.config, self.bindings.clone()).await?
+        if provision {
+            provision_application_messaging(self.connection.jetstream(), &self.config.messaging)
+                .await?;
+        }
+        let mut members = Vec::new();
+        for (config, bindings) in std::iter::once((self.config, self.bindings)).chain(self.contexts)
+        {
+            if provision {
+                config.provision_context(&self.connection).await?;
+            }
+            let mut runtime =
+                NatsRuntime::connect(self.connection.clone(), config, bindings).await?;
+            runtime.grouped_reset = multiple_contexts;
+            members.push(Arc::new(runtime));
+        }
+        let runtime = members.first().cloned().ok_or_else(|| {
+            NatsHostError::Configuration("application requires at least one runtime".into())
+        })?;
+        let test_group = if multiple_contexts {
+            Some(Arc::new(TestRuntimeGroup(Arc::new(RuntimeGroup::new(
+                members.clone(),
+            )?))))
         } else {
-            NatsRuntime::connect(self.connection, self.config, self.bindings.clone()).await?
-        });
-        let dispatch = self.tracer.as_ref().and_then(|c| c.dispatch.clone());
+            None
+        };
         let (stop_tasks, task_shutdown) = watch::channel(false);
         let result = async {
             if let Some(fixture) = &self.initial_fixture {
-                runtime.apply_fixture(fixture).await?;
-            }
-            if let Some(fixture) = &self.fixture {
-                runtime.reset_scope(fixture).await?;
-            } else {
-                runtime.start_workers().await?;
+                if let Some(group) = &test_group {
+                    group.apply_fixture(fixture).await?;
+                } else {
+                    runtime.apply_fixture(fixture).await?;
+                }
             }
             let mut tasks = Vec::new();
             let tracer = if let Some(config) = self.tracer {
-                let fixture = self.fixture.ok_or_else(|| {
+                let fixture = self.fixture.as_ref().ok_or_else(|| {
                     NatsHostError::Configuration("Tracer requires a default Test fixture".into())
                 })?;
-                let mut builder = runtime
-                    .tracer_builder()
-                    .with_test_transport(runtime.transport())
+                let mut builder = test_group
+                    .as_ref()
+                    .map_or_else(
+                        || {
+                            runtime
+                                .tracer_builder()
+                                .with_test_transport(runtime.transport())
+                                .with_test_scenario_reset(runtime.clone())
+                        },
+                        |group| {
+                            group
+                                .0
+                                .tracer_builder()
+                                .with_test_transport(group.0.clone())
+                                .with_test_scenario_reset(group.clone())
+                        },
+                    )
                     .with_test_quarantine_reader(runtime.quarantine_reader())
-                    .with_test_scenario_reset(runtime.clone())
-                    .with_default_test_fixture(fixture)
+                    .with_default_test_fixture(fixture.clone())
                     .with_trace_payload_policy(config.payload_policy);
                 for feed in config.observation.into_values() {
                     builder = builder.with_continuous_observation(feed);
@@ -977,32 +1131,35 @@ impl NatsApplicationBuilder {
                 if let Some(repository) = config.repository {
                     builder = builder.with_test_repository(repository);
                 }
-                if let Some(dispatch) = &dispatch {
-                    if dispatch.config.context.traffic_scope() != TrafficScope::Normal {
-                        return Err(NatsHostError::Configuration(
-                            "dispatch requires Normal scope".into(),
-                        ));
-                    }
+                if let Some(first) = dispatch.first() {
+                    let transport = dispatch_group.as_ref().map_or_else(
+                        || first.transport(),
+                        |group| -> Arc<dyn CommandTransport> { group.clone() },
+                    );
                     builder = builder
-                        .with_dispatch_transport(dispatch.transport())
-                        .with_production_quarantine_reader(dispatch.quarantine_reader());
+                        .with_dispatch_transport(transport)
+                        .with_production_quarantine_reader(first.quarantine_reader());
                 }
                 builder = retained_history::attach(
                     builder,
                     &runtime,
-                    dispatch.as_deref(),
+                    dispatch.iter().map(Arc::as_ref),
                     production_stores,
                 )
                 .await?;
                 let tracer = builder.build()?;
-                runtime
-                    .attach_observer(tracer.correlation_observer(OperationMode::Test))
-                    .await?;
-                if let Some(dispatch) = &dispatch {
-                    dispatch
-                        .attach_observer(tracer.correlation_observer(OperationMode::Dispatch))
-                        .await?;
+                for member in &members {
+                    *member.observer.lock().await = Some((
+                        tracer.correlation_observer(OperationMode::Test),
+                        multiple_contexts,
+                    ));
                 }
+                reset_test_scope(&runtime, test_group.as_deref(), fixture).await?;
+                group::attach_dispatch_observers(
+                    &dispatch,
+                    tracer.correlation_observer(OperationMode::Dispatch),
+                )
+                .await?;
                 let app = shutdown_aware_router(
                     http::router(tracer.clone(), config.http),
                     task_shutdown.clone(),
@@ -1018,18 +1175,15 @@ impl NatsApplicationBuilder {
                 }));
                 Some(tracer)
             } else {
+                if let Some(fixture) = &self.fixture {
+                    reset_test_scope(&runtime, test_group.as_deref(), fixture).await?;
+                } else {
+                    group::start_fresh(&members).await?;
+                }
                 None
             };
-            let watched = runtime.clone();
-            let mut shutdown = task_shutdown.clone();
-            tasks.push(tokio::spawn(async move {
-                tokio::select! {
-                    error = watched.wait_for_worker_exit() => Err(error),
-                    _ = shutdown.changed() => Ok(()),
-                }
-            }));
-            if let Some(dispatch) = &dispatch {
-                let watched = dispatch.clone();
+            for watched in members.iter().chain(&dispatch) {
+                let watched = Arc::clone(watched);
                 let mut shutdown = task_shutdown.clone();
                 tasks.push(tokio::spawn(async move {
                     tokio::select! {
@@ -1043,16 +1197,34 @@ impl NatsApplicationBuilder {
         .await;
         match result {
             Ok((tracer, tasks)) => Ok(NatsApplication::supervise(
-                runtime, dispatch, tracer, tasks, stop_tasks,
+                runtime, members, dispatch, tracer, tasks, stop_tasks,
             )),
             Err(error) => {
-                runtime.stop_workers().await;
-                if let Some(dispatch) = dispatch {
-                    dispatch.stop_workers().await;
+                for member in members.iter().chain(&dispatch) {
+                    member.available.store(false, Ordering::Release);
                 }
+                futures_util::future::join_all(
+                    members
+                        .iter()
+                        .chain(&dispatch)
+                        .map(|member| member.stop_workers()),
+                )
+                .await;
                 Err(error)
             }
         }
+    }
+}
+
+async fn reset_test_scope(
+    runtime: &NatsRuntime,
+    group: Option<&TestRuntimeGroup>,
+    fixture: &Fixture,
+) -> Result<(), NatsHostError> {
+    if let Some(group) = group {
+        group.reset_scope(fixture).await
+    } else {
+        runtime.reset_scope(fixture).await
     }
 }
 
@@ -1060,7 +1232,8 @@ impl NatsApplicationBuilder {
 /// Dropping it cancels owned HTTP/supervision tasks; `shutdown` awaits cleanup.
 pub struct NatsApplication {
     runtime: Arc<NatsRuntime>,
-    dispatch: Option<Arc<NatsRuntime>>,
+    members: Vec<Arc<NatsRuntime>>,
+    dispatch: Vec<Arc<NatsRuntime>>,
     tracer: Option<Tracer>,
     shutdown: watch::Sender<bool>,
     supervisor: Option<Worker>,
@@ -1068,14 +1241,14 @@ pub struct NatsApplication {
 impl NatsApplication {
     fn supervise(
         runtime: Arc<NatsRuntime>,
-        dispatch: Option<Arc<NatsRuntime>>,
+        members: Vec<Arc<NatsRuntime>>,
+        dispatch: Vec<Arc<NatsRuntime>>,
         tracer: Option<Tracer>,
         tasks: Vec<Worker>,
         stop_tasks: watch::Sender<bool>,
     ) -> Self {
         let (shutdown, mut receiver) = watch::channel(false);
-        let watched = runtime.clone();
-        let watched_dispatch = dispatch.clone();
+        let watched: Vec<_> = members.iter().chain(&dispatch).cloned().collect();
         let supervisor = tokio::spawn(async move {
             let mut tasks = OwnedTasks(tasks);
             let mut result = loop {
@@ -1090,9 +1263,8 @@ impl NatsApplication {
                     };
                 }
             };
-            watched.begin_shutdown();
-            if let Some(dispatch) = &watched_dispatch {
-                dispatch.begin_shutdown();
+            for runtime in &watched {
+                runtime.begin_shutdown();
             }
             let _ = stop_tasks.send(true);
             for mut task in tasks.0.drain(..) {
@@ -1111,14 +1283,13 @@ impl NatsApplication {
                     result = stopped;
                 }
             }
-            watched.stop_workers().await;
-            if let Some(dispatch) = watched_dispatch {
-                dispatch.stop_workers().await;
-            }
+            futures_util::future::join_all(watched.iter().map(|runtime| runtime.stop_workers()))
+                .await;
             result
         });
         Self {
             runtime,
+            members,
             dispatch,
             tracer,
             shutdown,
@@ -1135,6 +1306,7 @@ impl NatsApplication {
             connection,
             config,
             bindings,
+            contexts: Vec::new(),
             fixture: None,
             initial_fixture: None,
             fixtures: Vec::new(),
@@ -1144,13 +1316,18 @@ impl NatsApplication {
     pub const fn runtime(&self) -> &Arc<NatsRuntime> {
         &self.runtime
     }
+    /// Find a context in the primary scope (Test when the host has Tracer).
+    pub fn runtime_for(&self, context: &str) -> Option<&Arc<NatsRuntime>> {
+        self.members
+            .iter()
+            .find(|runtime| runtime.config.context.name().as_str() == context)
+    }
     pub const fn tracer(&self) -> Option<&Tracer> {
         self.tracer.as_ref()
     }
     fn request_shutdown(&self) {
-        self.runtime.begin_shutdown();
-        if let Some(dispatch) = &self.dispatch {
-            dispatch.begin_shutdown();
+        for runtime in self.members.iter().chain(&self.dispatch) {
+            runtime.begin_shutdown();
         }
         let _ = self.shutdown.send(true);
     }

@@ -4,6 +4,7 @@ use async_trait::async_trait;
 mod support;
 rostfrei::install_macro_support!();
 use bike_rental::{
+    RENTAL_CONTEXT,
     demo::{demo_fixture, demo_stream},
     rental_fleet::RentalFleetAggregate,
 };
@@ -114,7 +115,7 @@ async fn submit(runtime: &NatsRuntime, id: &str, bicycle: &str) -> TestResult<Va
         .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment))
         .build()?;
     let queued = tracer
-        .submit_test("bike-rental", "rent-bicycle", request(bicycle), Some(id))
+        .submit_test(RENTAL_CONTEXT, "rent-bicycle", request(bicycle), Some(id))
         .await?;
     let mut events = tracer.subscribe(&queued.operation_id, 0).await?;
     tokio::time::timeout(Duration::from_secs(35), async {
@@ -147,7 +148,7 @@ async fn configured_service_rebuilds_and_recreated_tracer_replays_truthfully_the
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos()
     ))?
-    .test_bounded_context("bike-rental")?;
+    .test_bounded_context(RENTAL_CONTEXT)?;
     let calls = Arc::new(AtomicUsize::new(0));
     let codecs_used = Arc::new(AtomicUsize::new(0));
     let audits = Arc::new(AtomicUsize::new(0));
@@ -230,7 +231,7 @@ async fn configured_service_rebuilds_and_recreated_tracer_replays_truthfully_the
         let diagnostic = runtime
             .tracer_builder()
             .build()?
-            .simulate_handler("bike-rental", "rent-bicycle", request("bike-99"))
+            .simulate_handler(RENTAL_CONTEXT, "rent-bicycle", request("bike-99"))
             .await?;
         assert!(!diagnostic.committed);
         assert!(

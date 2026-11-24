@@ -4,9 +4,12 @@ Builds and validates a JSON description of the domain from an explicit inventory
 
 **Placement:** [Domain root](../project-structure/domain-root.mdx) — `model.rs`.
 
+This focused example lists only the Rental context and a subset of its model.
+The [application model](../project-structure/domain-root.mdx) also includes Finance and Workshop.
+
 ```rust
 domain_model! {
-    contexts: [BikeRental],
+    contexts: [Rental],
     aggregates: [RentalFleetAggregate],
     entities: [RentalFleet, Bicycle],
     value_objects: [BicycleCondition, RegistrationNumber, BicycleTransferRejectionReason],

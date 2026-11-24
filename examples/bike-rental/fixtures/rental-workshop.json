@@ -1,35 +1,35 @@
 {
   "schemaVersion": 1,
   "id": "rental-workshop",
-  "revision": "1",
+  "revision": "2",
   "messages": [
     {
       "kind": "domain-event",
       "messageId": "showcase-city-bike-added",
-      "correlationId": "fixture:rental-workshop:1:city",
+      "correlationId": "fixture:rental-workshop:2:city",
       "name": "bicycle-added",
       "schemaVersion": 1,
-      "aggregate": { "type": "bike-rental/rental-fleet", "id": "city-fleet" },
+      "aggregate": { "type": "rental/rental-fleet", "id": "city-fleet" },
       "streamVersion": 1,
       "payload": { "fleet_id": "city-fleet", "bicycle_id": "bike-42", "condition": "serviceable" }
     },
     {
       "kind": "domain-event",
       "messageId": "showcase-city-bike-rented",
-      "correlationId": "fixture:rental-workshop:1:city",
+      "correlationId": "fixture:rental-workshop:2:city",
       "name": "bicycle-rented",
       "schemaVersion": 1,
-      "aggregate": { "type": "bike-rental/rental-fleet", "id": "city-fleet" },
+      "aggregate": { "type": "rental/rental-fleet", "id": "city-fleet" },
       "streamVersion": 2,
       "payload": { "fleet_id": "city-fleet", "bicycle_id": "bike-42" }
     },
     {
       "kind": "domain-event",
       "messageId": "showcase-harbor-spare-added",
-      "correlationId": "fixture:rental-workshop:1:harbor",
+      "correlationId": "fixture:rental-workshop:2:harbor",
       "name": "bicycle-added",
       "schemaVersion": 1,
-      "aggregate": { "type": "bike-rental/rental-fleet", "id": "harbor-fleet" },
+      "aggregate": { "type": "rental/rental-fleet", "id": "harbor-fleet" },
       "streamVersion": 1,
       "payload": { "fleet_id": "harbor-fleet", "bicycle_id": "bike-77", "condition": "serviceable" }
     }

@@ -25,6 +25,10 @@ const BOOKED_CITY_BIKE_FIXTURE: &[u8] = include_bytes!("../../fixtures/booked-ci
 const RETURNED_CITY_BIKE_FIXTURE: &[u8] = include_bytes!("../../fixtures/returned-city-bike.json");
 const PENDING_CITY_COLLECTION_FIXTURE: &[u8] =
     include_bytes!("../../fixtures/pending-city-collection.json");
+const COLLECTED_CITY_BIKE_FIXTURE: &[u8] =
+    include_bytes!("../../fixtures/collected-city-bike.json");
+const REQUESTED_RENTAL_PAYMENT_FIXTURE: &[u8] =
+    include_bytes!("../../fixtures/requested-rental-payment.json");
 
 #[allow(
     clippy::expect_used,
@@ -76,6 +80,17 @@ pub fn pending_city_collection_fixture() -> Result<Fixture, DemoFixtureError> {
     serde_json::from_slice(PENDING_CITY_COLLECTION_FIXTURE).map_err(Into::into)
 }
 
+pub fn collected_city_bike_fixture() -> Result<Fixture, DemoFixtureError> {
+    serde_json::from_slice(COLLECTED_CITY_BIKE_FIXTURE).map_err(Into::into)
+}
+
+/// A Finance payment request with no matching Rental hold or fleet state.
+pub fn requested_rental_payment_fixture() -> Result<Fixture, DemoFixtureError> {
+    serde_json::from_slice(REQUESTED_RENTAL_PAYMENT_FIXTURE).map_err(Into::into)
+}
+
+/// Decode fixtures for standalone stores. The NATS host applies cross-context
+/// fixtures through its runtime group, which routes each event to its owner.
 pub fn message_series_engine() -> Result<MessageSeriesEngine, DemoFixtureError> {
     let mut engine = MessageSeriesEngine::new();
     engine.register_json::<RentalFleetAggregate>()?;
@@ -148,22 +163,20 @@ pub async fn seed_demo<S: ExecutionStore + Clone>(
         let metadata = CommandExecutionMetadata::new(
             OperationId::new(&operation)?,
             ContentFingerprint::digest(serde_json::to_vec(&(
-                crate::BOUNDED_CONTEXT_NAME,
+                crate::RENTAL_CONTEXT,
                 RegisterBicycle::LOCAL_ID,
                 RegisterBicycle::SCHEMA_VERSION,
                 payload,
             ))?),
         )
-        .with_bounded_context(rostfrei::BoundedContextName::new(
-            crate::BOUNDED_CONTEXT_NAME,
-        )?)
+        .with_bounded_context(rostfrei::BoundedContextName::new(crate::RENTAL_CONTEXT)?)
         .with_correlation_id(rostfrei::CorrelationId::new(operation)?);
         match executor
             .execute_with_rejection_codec(
                 &RegisterBicycleHandler,
                 metadata,
                 &command,
-                &JsonRejectionCodec::new("bike-rental.bicycle-already-in-fleet", 1),
+                &JsonRejectionCodec::new("rental.bicycle-already-in-fleet", 1),
             )
             .await?
         {

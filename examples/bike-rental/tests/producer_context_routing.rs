@@ -6,7 +6,10 @@
 use async_trait::async_trait;
 mod support;
 rostfrei::install_macro_support!();
-use bike_rental::demo::{demo_fixture, demo_stream, seed_demo};
+use bike_rental::{
+    RENTAL_CONTEXT,
+    demo::{demo_fixture, demo_stream, seed_demo},
+};
 use futures_util::{StreamExt as _, TryStreamExt as _};
 use rostfrei::messaging::{
     DeliveryDisposition, IntegrationEventAddress, MessageDelivery, MessageHandler,
@@ -143,7 +146,7 @@ async fn typed_handler_subscribes_to_declared_producer() -> Result<(), Box<dyn E
     let mut bindings = tracer::bindings()?;
     bindings.register_integration_handler::<ProducerChanged, _>(RecordIntegration(sender));
     let host = NatsApplication::builder(
-        application.test_bounded_context("bike-rental")?,
+        application.test_bounded_context(RENTAL_CONTEXT)?,
         connection.clone(),
         Arc::new(bindings),
     )?
@@ -151,22 +154,24 @@ async fn typed_handler_subscribes_to_declared_producer() -> Result<(), Box<dyn E
     .with_default_test_fixture(demo_fixture()?)
     .provision_and_start()
     .await?;
+    let rental = host
+        .runtime_for(RENTAL_CONTEXT)
+        .ok_or("missing Rental runtime")?;
     let producer = application
         .test_bounded_context(ProducerChanged::BOUNDED_CONTEXT.ok_or("producer context")?)?;
     let expected = producer.integration_event_address(ProducerChanged::EVENT_NAME)?;
-    let actual = host
-        .runtime()
+    let actual = rental
         .config()
         .integrations
-        .last()
+        .iter()
+        .find(|subscription| subscription.address() == &expected)
         .ok_or("subscription")?
         .address();
     println!("declared producer address: {expected}; host subscription: {actual}");
-    let history = host.runtime().store().load(&demo_stream()).await?;
+    let history = rental.store().load(&demo_stream()).await?;
     let source = history.first().ok_or("source fixture event")?;
-    let adapter = Arc::new(
-        connection.messaging_adapter(host.runtime().config().messaging.topology().clone()),
-    );
+    let adapter =
+        Arc::new(connection.messaging_adapter(rental.config().messaging.topology().clone()));
     IntegrationEventBus::new(producer, adapter)
         .publish(CommittedEventContext::new(source)?, ProducerChanged)
         .await?;
@@ -206,7 +211,7 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
     let normal = Arc::new(
         NatsRuntime::provision(
             connection.clone(),
-            NatsRuntimeConfig::new(application.bounded_context("bike-rental")?, &bindings, 1)?
+            NatsRuntimeConfig::new(application.bounded_context(RENTAL_CONTEXT)?, &bindings, 1)?
                 .with_fresh_completed_outcome_epoch("producer-routing")?,
             bindings.clone(),
         )
@@ -222,7 +227,7 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
     .with_continuous_observation(feed.clone())
     .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
     let host = NatsApplication::builder(
-        application.test_bounded_context("bike-rental")?,
+        application.test_bounded_context(RENTAL_CONTEXT)?,
         connection.clone(),
         bindings,
     )?
@@ -231,15 +236,18 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
     .with_tracer(Some(tracer_config))
     .provision_and_start()
     .await?;
-    let integrations = &host.runtime().config().integrations;
-    let fallback = integrations.first().ok_or("fallback subscription")?;
-    assert_eq!(
-        fallback.address(),
-        &host
-            .runtime()
-            .config()
-            .context
-            .integration_event_address(bike_rental::BICYCLE_RENTAL_STARTED_EVENT_NAME)?
+    let rental = host
+        .runtime_for(RENTAL_CONTEXT)
+        .ok_or("missing Rental runtime")?;
+    let integrations = &rental.config().integrations;
+    let own = rental
+        .config()
+        .context
+        .integration_event_address(bike_rental::BICYCLE_RENTAL_STARTED_EVENT_NAME)?;
+    assert!(
+        integrations
+            .iter()
+            .any(|consumer| consumer.address() == &own)
     );
     let foreign: Vec<_> = integrations
         .iter()
@@ -249,15 +257,15 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
     assert!(
         foreign
             .iter()
-            .all(|c| c.durable_name().context() == "bike-rental"
-                && c.address().context() != "bike-rental")
+            .all(|c| c.durable_name().context() == RENTAL_CONTEXT
+                && c.address().context() != RENTAL_CONTEXT)
     );
     assert_ne!(
         foreign.first().ok_or("first")?.durable_name(),
         foreign.last().ok_or("last")?.durable_name()
     );
 
-    for runtime in [host.runtime(), &normal] {
+    for runtime in [rental, &normal] {
         let source_history = runtime.store().load(&demo_stream()).await?;
         let source = source_history.first().ok_or("source fixture")?;
         let committed = CommittedEventContext::new(source)?;
@@ -340,16 +348,14 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
             );
         }
     }
-    assert_eq!(host.runtime().store().load(&demo_stream()).await?.len(), 3);
-    let history = host.runtime().store().load(&demo_stream()).await?;
+    assert_eq!(rental.store().load(&demo_stream()).await?.len(), 3);
+    let history = rental.store().load(&demo_stream()).await?;
     let source = history.first().ok_or("source")?;
     let other = application
         .test_bounded_context(OtherProducerChanged::BOUNDED_CONTEXT.ok_or("producer")?)?;
     IntegrationEventBus::new(
         other.clone(),
-        Arc::new(
-            connection.messaging_adapter(host.runtime().config().messaging.topology().clone()),
-        ),
+        Arc::new(connection.messaging_adapter(rental.config().messaging.topology().clone())),
     )
     .publish(
         CommittedEventContext::new(source)?,
@@ -386,7 +392,7 @@ async fn typed_mapper_dispatches_across_contexts_with_scoped_causal_evidence()
     .await;
     if observed.is_err() {
         let snapshot = feed.snapshot();
-        let test_evidence = broker_evidence(&connection, host.runtime()).await?;
+        let test_evidence = broker_evidence(&connection, rental).await?;
         let normal_evidence = broker_evidence(&connection, &normal).await?;
         host.shutdown().await?;
         connection.drain().await?;
@@ -442,7 +448,7 @@ async fn attaching_observation_preserves_an_in_flight_integration_handler()
         completed,
     });
     let host = NatsApplication::builder(
-        application.test_bounded_context("bike-rental")?,
+        application.test_bounded_context(RENTAL_CONTEXT)?,
         connection.clone(),
         Arc::new(bindings),
     )?
@@ -450,13 +456,14 @@ async fn attaching_observation_preserves_an_in_flight_integration_handler()
     .with_default_test_fixture(demo_fixture()?)
     .provision_and_start()
     .await?;
-    let history = host.runtime().store().load(&demo_stream()).await?;
+    let rental = host
+        .runtime_for(RENTAL_CONTEXT)
+        .ok_or("missing Rental runtime")?;
+    let history = rental.store().load(&demo_stream()).await?;
     let source = history.first().ok_or("source fixture event")?;
     IntegrationEventBus::new(
         application.test_bounded_context("producer")?,
-        Arc::new(
-            connection.messaging_adapter(host.runtime().config().messaging.topology().clone()),
-        ),
+        Arc::new(connection.messaging_adapter(rental.config().messaging.topology().clone())),
     )
     .publish(CommittedEventContext::new(source)?, ProducerChanged)
     .await?;
@@ -465,43 +472,40 @@ async fn attaching_observation_preserves_an_in_flight_integration_handler()
         Some(())
     );
     let feed = ObservationFeed::new(application.clone(), ObservationScope::Test);
-    let tracer = host
-        .runtime()
+    let tracer = rental
         .tracer_builder()
         .with_continuous_observation(feed.clone())
         .build()?;
     // The second attachment replaces the same named source.
     for _ in 0..2 {
-        host.runtime()
+        rental
             .attach_observer(tracer.correlation_observer(OperationMode::Test))
             .await?;
-        assert!(host.runtime().has_correlation_observer().await);
+        assert!(rental.has_correlation_observer().await);
         assert_eq!(feed.snapshot().status, ObservationStatus::Live);
     }
     let unavailable_feed = ObservationFeed::new(application, ObservationScope::Test);
-    let occupied = unavailable_feed.source("bike-rental")?;
-    let invalid_tracer = host
-        .runtime()
+    let occupied = unavailable_feed.source(RENTAL_CONTEXT)?;
+    let invalid_tracer = rental
         .tracer_builder()
         .with_continuous_observation(unavailable_feed)
         .build()?;
-    let failed = host
-        .runtime()
+    let failed = rental
         .attach_observer(invalid_tracer.correlation_observer(OperationMode::Test))
         .await;
     assert!(matches!(failed, Err(NatsHostError::Observation(_))));
-    assert!(!host.runtime().has_correlation_observer().await);
+    assert!(!rental.has_correlation_observer().await);
     assert_eq!(feed.snapshot().status, ObservationStatus::Unavailable);
     drop(occupied);
-    host.runtime()
+    rental
         .attach_observer(tracer.correlation_observer(OperationMode::Test))
         .await?;
-    assert!(host.runtime().has_correlation_observer().await);
+    assert!(rental.has_correlation_observer().await);
     assert_eq!(feed.snapshot().status, ObservationStatus::Live);
     release.notify_one();
     let completed = tokio::time::timeout(Duration::from_secs(2), finished.recv()).await;
     let evidence = if completed.is_err() {
-        Some(broker_evidence(&connection, host.runtime()).await?)
+        Some(broker_evidence(&connection, rental).await?)
     } else {
         None
     };
@@ -532,13 +536,14 @@ struct OwnRentalStarted;
 impl IntegrationEvent for OwnRentalStarted {
     const EVENT_NAME: &'static str = bike_rental::BICYCLE_RENTAL_STARTED_EVENT_NAME;
     const SCHEMA_VERSION: u32 = 2;
-    const BOUNDED_CONTEXT: Option<&'static str> = Some("bike-rental");
+    const BOUNDED_CONTEXT: Option<&'static str> = Some(RENTAL_CONTEXT);
 }
 
 #[test]
 fn handlers_competing_for_one_integration_address_are_rejected_before_provisioning()
 -> Result<(), Box<dyn Error + Send + Sync>> {
-    let context = ApplicationName::new("ambiguous-subscription")?.bounded_context("bike-rental")?;
+    let context =
+        ApplicationName::new("ambiguous-subscription")?.bounded_context(RENTAL_CONTEXT)?;
     let (sender, _received) = tokio::sync::mpsc::unbounded_channel();
     let mut versions = tracer::bindings()?;
     versions.register_integration_command::<ProducerChanged, _>(RentAfterChange);

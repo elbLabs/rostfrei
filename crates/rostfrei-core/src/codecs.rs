@@ -93,6 +93,34 @@ pub struct AggregateCodecs {
 }
 
 impl AggregateCodecs {
+    /// Import just the requested codec without rebuilding it. Returns `false`
+    /// if the source has no explicit codec for this aggregate.
+    pub fn import(
+        &mut self,
+        source: &Self,
+        aggregate_type: &AggregateType,
+    ) -> Result<bool, CodecRegistrationError> {
+        let Some(source_entry) = source.entries.get(aggregate_type) else {
+            return Ok(false);
+        };
+        if let Some(entry) = self.entries.get(aggregate_type) {
+            if entry.model != source_entry.model {
+                return Err(CodecRegistrationError::ModelConflict {
+                    aggregate_type: aggregate_type.clone(),
+                });
+            }
+            if !Arc::ptr_eq(&entry.codec, &source_entry.codec) {
+                return Err(CodecRegistrationError::Duplicate {
+                    aggregate_type: aggregate_type.clone(),
+                });
+            }
+        } else {
+            self.entries
+                .insert(aggregate_type.clone(), source_entry.clone());
+        }
+        Ok(true)
+    }
+
     pub fn register<A, C>(&mut self, codec: C) -> Result<(), CodecRegistrationError>
     where
         A: Aggregate + 'static,

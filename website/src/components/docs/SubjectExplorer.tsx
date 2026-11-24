@@ -13,7 +13,7 @@ export function SubjectExplorer() {
     { label: "Application", value: "bike-rental" },
     ...(isTest ? [{ label: "Traffic scope", value: "test" }] : []),
     { label: "Kind", value: "command" },
-    { label: "Bounded context", value: "bike-rental" },
+    { label: "Bounded context", value: "finance" },
     { label: "Business name", value: "collect-rental-payment" },
   ]
 

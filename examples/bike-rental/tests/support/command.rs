@@ -1,7 +1,7 @@
 use rostfrei::Command;
 
 use bike_rental::{
-    BikeRental,
+    Rental,
     rental_fleet::{BicycleId, FleetId},
 };
 
@@ -9,7 +9,7 @@ use bike_rental::{
 #[domain(
     id = "rent-bicycle",
     label = "Rent bicycle",
-    context = BikeRental,
+    context = Rental,
     schema_version = 2
 )]
 pub struct RentBicycle {

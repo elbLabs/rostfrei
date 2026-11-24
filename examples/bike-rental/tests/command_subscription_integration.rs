@@ -5,7 +5,7 @@ use std::{error::Error, sync::Arc, time::Duration};
 use async_nats::jetstream::{Message, consumer::PullConsumer};
 use bike_rental::{
     BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsError, BikeRentalNatsResourceLimits,
-    BikeRentalNatsRuntime, rental_fleet::ReturnBicycle,
+    BikeRentalNatsRuntime, RENTAL_CONTEXT, rental_fleet::ReturnBicycle,
 };
 use futures_util::StreamExt as _;
 use rostfrei::messaging::{CommandAddress, CommandEnvelope, ConsumerConfig};
@@ -42,7 +42,7 @@ impl Fixture {
         Ok(Self { connection, config })
     }
 
-    // Snapshot the old example's schema-derived identity without sharing the new
+    // Model the schema-derived durable identity in Rental without sharing the
     // subscription-generation constant, so a naming regression fails reprovisioning.
     fn legacy_consumer(&self, schema_version: u32) -> TestResult<ConsumerConfig<CommandAddress>> {
         let context = self.config.context();
@@ -160,6 +160,7 @@ async fn reprovisioning_preserves_existing_durable_progress_and_pending_older_sc
         assert_eq!(legacy.name(), route.consumer().name());
         assert_eq!(legacy.durable_name(), route.consumer().durable_name());
         assert_eq!(legacy.address(), route.address());
+        assert_eq!(route.address().context(), RENTAL_CONTEXT);
         let mut reused: PullConsumer = stream
             .get_consumer(route.consumer().durable_name().as_str())
             .await?;

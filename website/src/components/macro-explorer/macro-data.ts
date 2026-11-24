@@ -42,13 +42,13 @@ pub mod __rostfrei_macro_support {
       "Stable context ID",
       "No runtime behavior",
     ],
-    file: "src/domain/bike_rental/context.rs",
+    file: "src/domain/rental/context.rs",
     authored: getMacroCode("BoundedContext"),
-    generated: `impl BoundedContextType for BikeRental {
+    generated: `impl BoundedContextType for Rental {
     const DESCRIPTOR: BoundedContextDescriptor =
         BoundedContextDescriptor {
-            id: BoundedContextId("bike-rental"),
-            label: "Bike Rental",
+            id: BoundedContextId("rental"),
+            label: "Rental",
         };
 }`,
   },
@@ -63,7 +63,7 @@ pub mod __rostfrei_macro_support {
       "Explicit AggregateDefinition",
       "Runtime bridge generated",
     ],
-    file: "src/domain/bike_rental/rental_fleet/aggregate.rs",
+    file: "src/domain/rental/rental_fleet/aggregate.rs",
     authored: getMacroCode("Aggregate"),
     generated: `impl AggregateType for RentalFleetAggregate {
     const DESCRIPTOR: AggregateDescriptor =
@@ -87,7 +87,7 @@ impl rostfrei_core::Aggregate for RentalFleetAggregate {
       "JSON codec and replay",
       "Unregistered events fail to compile",
     ],
-    file: "src/domain/bike_rental/rental_fleet/event_set.rs",
+    file: "src/domain/rental/rental_fleet/event_set.rs",
     authored: getMacroCode("AggregateEvents"),
     generated: `impl From<BicycleRented> for RentalFleetEvent { /* … */ }
 impl EventVariant<BicycleRented> for RentalFleetEvent { /* … */ }
@@ -112,7 +112,7 @@ where A: AggregateDefinition<Event = Self>
       "Identity accessor required",
       "Custom fields stay opaque",
     ],
-    file: "src/domain/bike_rental/rental_fleet/bicycle/entity.rs",
+    file: "src/domain/rental/rental_fleet/bicycle/entity.rs",
     authored: getMacroCode("Entity"),
     generated: `impl EntityType for Bicycle {
     const LOCAL_ID: &str = "bicycle";
@@ -135,7 +135,7 @@ where A: AggregateDefinition<Event = Self>
       "No scalar declaration",
       "UUIDs and custom types work",
     ],
-    file: "src/domain/bike_rental/rental_fleet/bicycle/identity.rs",
+    file: "src/domain/rental/rental_fleet/bicycle/identity.rs",
     authored: getMacroCode("DomainIdentity"),
     generated: `impl DomainIdentity for BicycleId {}
 
@@ -153,7 +153,7 @@ where A: AggregateDefinition<Event = Self>
       "ID and label only",
       "Always declared in value.rs",
     ],
-    file: "src/domain/bike_rental/rental_fleet/bicycle/condition/value.rs",
+    file: "src/domain/rental/rental_fleet/bicycle/condition/value.rs",
     authored: getMacroCode("ValueObject"),
     generated: `impl ValueObject for BicycleCondition {
     const DESCRIPTOR: ValueObjectDescriptor =
@@ -174,7 +174,7 @@ where A: AggregateDefinition<Event = Self>
       "Context relationship is explicit",
       "Actions and policies are ordinary traits",
     ],
-    file: "src/domain/bike_rental/bicycle_transfer/service.rs",
+    file: "src/domain/rental/bicycle_transfer/service.rs",
     authored: getMacroCode("DomainService"),
     generated: `impl DomainServiceType for BicycleTransfer {
     const DESCRIPTOR: DomainServiceDescriptor =
@@ -195,10 +195,10 @@ where A: AggregateDefinition<Event = Self>
       "Explicit bounded context",
       "Handler loads participating aggregates",
     ],
-    file: "src/domain/bike_rental/rental_fleet/collect_reserved_bicycle/command.rs",
+    file: "src/domain/rental/rental_fleet/collect_reserved_bicycle/command.rs",
     authored: getMacroCode("Command"),
     generated: `impl Command for CollectReservedBicycle {
-    type Context = BikeRental;
+    type Context = Rental;
     const LOCAL_ID: &str = "collect-reserved-bicycle";
     const LABEL: &str = "Collect reserved bicycle";
     const SCHEMA_VERSION: u32 = 1;
@@ -221,7 +221,7 @@ impl JsonCommandPayload for CollectReservedBicycle {
       "Serializable Rust payload",
       "Membership defined once",
     ],
-    file: "src/domain/bike_rental/rental_fleet/rent_bicycle/event.rs",
+    file: "src/domain/rental/rental_fleet/rent_bicycle/event.rs",
     authored: getMacroCode("DomainEvent"),
     generated: `impl DomainEvent for BicycleRented {
     const LOCAL_ID: &str = "bicycle-rented";
@@ -241,7 +241,7 @@ impl JsonCommandPayload for CollectReservedBicycle {
       "Stable code and message",
       "JSON encoding by default",
     ],
-    file: "src/domain/bike_rental/rental_fleet/rent_bicycle/rejection.rs",
+    file: "src/domain/rental/rental_fleet/rent_bicycle/rejection.rs",
     authored: getMacroCode("DomainError"),
     generated: `impl DomainError for BicycleUnavailable {
     const LOCAL_ID: &str = "bicycle-unavailable";
@@ -264,7 +264,7 @@ impl JsonErrorPayload for BicycleUnavailable { /* … */ }`,
       "Ordered outcome metadata",
       "Arbitrary Rust payloads",
     ],
-    file: "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/outcome.rs",
+    file: "src/domain/rental/rental_fleet/bicycle/assess_rental_eligibility/outcome.rs",
     authored: getMacroCode("PolicyOutcome"),
     generated: `impl PolicyOutcomeType for RentalEligibilityOutcome {
     const OUTCOMES: &[PolicyOutcomeDescriptor] = &[
@@ -287,7 +287,7 @@ impl JsonErrorPayload for BicycleUnavailable { /* … */ }`,
       "Explicit initial state",
       "LifecycleState implementation",
     ],
-    file: "src/domain/bike_rental/rental_fleet/bicycle/rental_status/lifecycle.rs",
+    file: "src/domain/rental/rental_fleet/bicycle/rental_status/lifecycle.rs",
     authored: getMacroCode("EntityLifecycle"),
     generated: `impl EntityLifecycleType for BicycleStatus {
     const DESCRIPTOR: EntityLifecycleDescriptor =
@@ -315,7 +315,7 @@ impl LifecycleState for BicycleStatus {
       "One or more typed edges",
       "Pure rejection for illegal state",
     ],
-    file: "src/domain/bike_rental/rental_fleet/bicycle/rental_status/transition.rs",
+    file: "src/domain/rental/rental_fleet/bicycle/rental_status/transition.rs",
     authored: getMacroCode("StateTransition"),
     generated: `impl StateTransition for BicycleRentalTransition {
     type State = BicycleStatus;
@@ -338,7 +338,7 @@ impl LifecycleState for BicycleStatus {
       "Application-defined signatures",
       "Checked implementation owner",
     ],
-    file: "src/domain/bike_rental/rental_fleet/rent_bicycle/action.rs",
+    file: "src/domain/rental/rental_fleet/rent_bicycle/action.rs",
     authored: getMacroCode("domain_action"),
     generated: `pub trait RentBicycleAction {
     fn rent_bicycle(
@@ -362,7 +362,7 @@ impl LifecycleState for BicycleStatus {
       "Inputs and outputs are ordinary Rust",
       "Separate from HTTP query registration",
     ],
-    file: "src/domain/bike_rental/rental_fleet/bicycle_availability/query.rs",
+    file: "src/domain/rental/rental_fleet/bicycle_availability/query.rs",
     authored: getMacroCode("domain_query"),
     generated: `pub trait BicycleAvailabilityQuery {
     fn bicycle_availability(
@@ -386,7 +386,7 @@ impl LifecycleState for BicycleStatus {
       "Application-defined inputs and outputs",
       "Optional PolicyOutcome enum",
     ],
-    file: "src/domain/bike_rental/rental_fleet/bicycle/assess_rental_eligibility/policy.rs",
+    file: "src/domain/rental/rental_fleet/bicycle/assess_rental_eligibility/policy.rs",
     authored: getMacroCode("domain_policy"),
     generated: `pub trait RentalEligibilityPolicy {
     fn assess_rental_eligibility(&self) -> RentalEligibilityOutcome;
@@ -407,7 +407,7 @@ impl LifecycleState for BicycleStatus {
       "Arbitrary validation signature",
       "InvariantViolation stays explicit",
     ],
-    file: "src/domain/bike_rental/rental_fleet/fleet_consistency/contract.rs",
+    file: "src/domain/rental/rental_fleet/fleet_consistency/contract.rs",
     authored: getMacroCode("domain_invariant"),
     generated: `pub trait FleetConsistency {
     fn unique_bicycle_identities(
@@ -430,7 +430,7 @@ impl LifecycleState for BicycleStatus {
       "Typed descriptor expression",
       "Ignored discovery companion",
     ],
-    file: "src/domain/tests/bike_rental/rental_fleet/fleet_consistency.rs",
+    file: "src/domain/tests/rental/rental_fleet/fleet_consistency.rs",
     authored: getMacroCode("domain_*_test"),
     generated: `#[test]
 fn exposes_owner_independent_invariant_metadata() {
@@ -459,7 +459,7 @@ const __DOMAIN_TEST_SUBJECT: DomainTestSubject =
     file: "src/domain/model.rs",
     authored: getMacroCode("domain_model!"),
     generated: `try_build(|builder| {
-    builder.add_bounded_context(BikeRental::DESCRIPTOR)?;
+    builder.add_bounded_context(Rental::DESCRIPTOR)?;
     builder.add_aggregate_type::<RentalFleetAggregate>()?;
     builder.add_entity_type::<RentalFleet>()?;
     builder.add_entity_type::<Bicycle>()?;

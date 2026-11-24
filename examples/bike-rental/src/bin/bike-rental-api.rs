@@ -1,16 +1,17 @@
 use bike_rental::{
-    APPLICATION_NAME, BikeRentalNatsConfig, BikeRentalNatsResourceLimits,
+    APPLICATION_NAME, BikeRentalNatsResourceLimits,
     demo::{
-        booked_city_bike_fixture, demo_fixture, no_rental_fleets_fixture,
-        pending_city_collection_fixture, rental_workshop_fixture, rented_demo_fixture,
-        reservable_branch_fixture, seed_demo,
+        booked_city_bike_fixture, collected_city_bike_fixture, demo_fixture,
+        no_rental_fleets_fixture, pending_city_collection_fixture, rental_workshop_fixture,
+        rented_demo_fixture, requested_rental_payment_fixture, reservable_branch_fixture,
+        returned_city_bike_fixture, seed_demo,
     },
     tracer,
 };
 use rostfrei::nats::{NatsConnectionConfig, ServerVersion, connect};
 use rostfrei::tracer::{
-    ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, NatsApplication, NatsRuntime,
-    ObservationFeed, ObservationScope, TracerConfig, http::HttpConfig,
+    ExposeTracePayloadsForLocalDevelopment, FilesystemTestRepository, ObservationFeed,
+    ObservationScope, TracerConfig, http::HttpConfig,
 };
 use std::{env, path::PathBuf, sync::Arc};
 
@@ -25,44 +26,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .with_minimum_server_version(ServerVersion::new(2, 12, 1)),
     )
     .await?;
-    let bindings = Arc::new(tracer::bindings()?);
-    let mut normal = BikeRentalNatsConfig::for_bindings(
-        &application,
-        rostfrei::TrafficScope::Normal,
-        limits,
-        &bindings,
-    )?;
     let epoch = match env::var("ROSTFREI_COMPLETED_OUTCOME_EPOCH") {
         Ok(epoch) => Some(epoch),
         Err(env::VarError::NotPresent) => None,
         Err(error) => return Err(error.into()),
     };
-    if let Some(epoch) = &epoch {
-        normal = normal.with_fresh_completed_outcome_epoch(epoch)?;
-    } else {
-        normal = normal.with_fresh_outcomes()?;
-    }
-    let host = if enabled {
-        let mut test = BikeRentalNatsConfig::for_bindings(
-            &application,
-            rostfrei::TrafficScope::Test,
-            limits,
-            &bindings,
-        )?;
-        if let Some(epoch) = &epoch {
-            test = test.with_fresh_completed_outcome_epoch(epoch)?;
-        } else {
-            test = test.with_fresh_outcomes()?;
+    let configurations = |scope| {
+        let configs = tracer::configurations(&application, scope, limits)?;
+        match &epoch {
+            Some(epoch) => configs.with_fresh_completed_outcome_epoch(epoch),
+            None => configs.with_fresh_outcomes(),
         }
-        let dispatch = Arc::new(
-            NatsRuntime::provision(
-                connection.clone(),
-                normal.host_config().clone(),
-                bindings.clone(),
-            )
-            .await?,
-        );
-        seed_demo(&dispatch.store()).await?;
+    };
+    let normal = configurations(rostfrei::TrafficScope::Normal)?;
+    let host = if enabled {
+        let test = configurations(rostfrei::TrafficScope::Test)?;
         let address = env::var("ROSTFREI_API_ADDR").unwrap_or_else(|_| "127.0.0.1:1309".to_owned());
         let listener = tokio::net::TcpListener::bind(&address).await?;
         let mut http = HttpConfig::new(env::var("ROSTFREI_API_TOKEN")?)?
@@ -73,29 +51,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Err(error) => return Err(error.into()),
         }
         let tracer = TracerConfig::new(listener, http)
-            .with_dispatch_runtime(dispatch)
             .with_continuous_observation(ObservationFeed::new(
-                test.application().clone(),
+                test.rental().application().clone(),
                 ObservationScope::Test,
             ))
             .with_continuous_observation(ObservationFeed::new(
-                normal.application().clone(),
+                normal.rental().application().clone(),
                 ObservationScope::Production,
             ))
             .with_test_repository(Arc::new(FilesystemTestRepository::load(
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/tracer"),
             )?))
             .with_trace_payload_policy(Arc::new(ExposeTracePayloadsForLocalDevelopment));
-        let host = NatsApplication::builder(test.context().clone(), connection.clone(), bindings)?
-            .with_runtime_config(test.host_config().clone())
+        let tracer = normal.with_dispatch_runtimes(&connection, tracer).await?;
+        seed_demo(&normal.rental().connect_store(&connection).await?).await?;
+        let host = test
+            .application_builder(connection.clone())?
             .with_default_test_fixture(demo_fixture()?)
             .with_test_fixture(no_rental_fleets_fixture()?)
             .with_test_fixture(rented_demo_fixture()?)
             .with_test_fixture(rental_workshop_fixture()?)
             .with_test_fixture(reservable_branch_fixture()?)
             .with_test_fixture(booked_city_bike_fixture()?)
-            .with_test_fixture(bike_rental::demo::returned_city_bike_fixture()?)
+            .with_test_fixture(collected_city_bike_fixture()?)
+            .with_test_fixture(returned_city_bike_fixture()?)
             .with_test_fixture(pending_city_collection_fixture()?)
+            .with_test_fixture(requested_rental_payment_fixture()?)
             .with_tracer(Some(tracer))
             .provision_and_start()
             .await?;
@@ -103,9 +84,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         host
     } else {
         normal.provision(&connection).await?;
-        seed_demo(&normal.connect_store(&connection).await?).await?;
-        NatsApplication::builder(normal.context().clone(), connection.clone(), bindings)?
-            .with_runtime_config(normal.host_config().clone())
+        seed_demo(&normal.rental().connect_store(&connection).await?).await?;
+        normal
+            .application_builder(connection.clone())?
             .connect_and_start()
             .await?
     };

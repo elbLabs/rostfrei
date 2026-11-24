@@ -5,6 +5,8 @@ pub mod payments;
 pub mod tracer;
 pub mod workshop;
 
+use rostfrei::BoundedContextType;
+
 pub use bike_rental_nats::{
     APPLICATION_NAME, BICYCLE_RENTAL_STARTED_EVENT_NAME, BOUNDED_CONTEXT_NAME,
     BicycleRentalStarted, BicycleRentalStartedHandler, BicycleRentedIntegrationMapper,
@@ -12,6 +14,12 @@ pub use bike_rental_nats::{
     BikeRentalNatsConfig, BikeRentalNatsError, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime,
 };
 pub use domain::{
-    BikeRental, domain_model, rental_fleet, rental_payment, rental_tariff, repair_job,
+    Finance, Rental, Workshop, bicycle_transfer, domain_model, rental_fleet, rental_payment,
+    rental_tariff, repair_job,
 };
+
+pub const RENTAL_CONTEXT: &str = Rental::DESCRIPTOR.id.0;
+pub const FINANCE_CONTEXT: &str = Finance::DESCRIPTOR.id.0;
+pub const WORKSHOP_CONTEXT: &str = Workshop::DESCRIPTOR.id.0;
+
 rostfrei::install_macro_support!();

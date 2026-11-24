@@ -188,6 +188,17 @@ impl RuntimeBindings {
         }
     }
 
+    #[cfg(feature = "nats-host")]
+    pub(crate) fn merge(&mut self, other: &Self) -> Result<(), crate::ApplicationBindingError> {
+        other.validate()?;
+        self.registry.merge(&other.registry)?;
+        // Both maps are keyed by registered command coordinates. The registry
+        // merge already rejects a collision on those coordinates.
+        self.payloads.extend(other.payloads.clone());
+        self.input_options.extend(other.input_options.clone());
+        Ok(())
+    }
+
     pub fn register_json<C, Handler>(
         &mut self,
         handler: Handler,

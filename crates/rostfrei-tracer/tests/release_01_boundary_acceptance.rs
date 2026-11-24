@@ -83,6 +83,20 @@ impl Aggregate for Ledger {
     }
 }
 
+struct UnhostedLedger;
+impl Aggregate for UnhostedLedger {
+    type State = i64;
+    type Event = Changes;
+    const BOUNDED_CONTEXT: &'static str = "unhosted";
+    const AGGREGATE_TYPE: &'static str = "unhosted/ledger";
+    fn initial(stream: &StreamId) -> i64 {
+        Ledger::initial(stream)
+    }
+    fn apply(state: &mut i64, event: &Changes) {
+        Ledger::apply(state, event);
+    }
+}
+
 // Neither representation is the generated Changed { value } representation.
 // v1 whole units and v2 minor units deliberately have different meanings.
 struct HistoricalCodec;
@@ -539,6 +553,41 @@ async fn assert_diagnostics_are_read_only(
     );
     assert_eq!(runtime.store().load(&stream()?).await?, history);
     assert_eq!(serde_json::to_value(feed.snapshot())?, observation);
+    Ok(())
+}
+
+#[tokio::test]
+async fn single_context_host_can_use_an_application_wide_codec_registry() -> TestResult {
+    let (connection, application) = connection("boundary-shared-codecs").await?;
+    let mut codecs = AggregateCodecs::default();
+    codecs.register::<Ledger, _>(HistoricalCodec)?;
+    codecs.register_json::<UnhostedLedger>()?;
+    let mut bindings = ApplicationBindings::new().with_event_codecs(Arc::new(codecs));
+    bindings.register_aggregate::<Ledger>()?;
+    let tracer = TracerConfig::new(
+        tokio::net::TcpListener::bind("127.0.0.1:0").await?,
+        HttpConfig::new("owned-boundary-test-capability")?,
+    );
+    let host = NatsApplication::builder(
+        application.test_bounded_context("boundary")?,
+        connection,
+        Arc::new(bindings),
+    )?
+    .with_fresh_outcomes()?
+    .with_default_test_fixture(fixture("shared-codecs", &json!({"whole":2}))?)
+    .with_tracer(Some(tracer))
+    .provision_and_start()
+    .await?;
+    let catalog = host.tracer().ok_or("missing Tracer")?.catalog();
+    assert_eq!(catalog.contexts.len(), 1);
+    assert_eq!(
+        catalog.contexts[0].aggregates[0].aggregate_type,
+        "boundary/ledger"
+    );
+    let events = host.runtime().store().load(&stream()?).await?;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].payload(), br#"{"whole":2}"#);
+    host.shutdown().await?;
     Ok(())
 }
 

@@ -82,7 +82,7 @@
 <span class="code-muted">#[domain(</span>
     id = <span class="code-string">"rent-bicycle"</span>,
     label = <span class="code-string">"Rent bicycle"</span>,
-    context = BikeRental,
+    context = Rental,
     schema_version = <span class="code-string">2</span>
 <span class="code-muted">)]</span>
 <span class="code-keyword">pub struct</span> RentBicycle {
@@ -95,7 +95,7 @@
               <div class="example-node"><span class="node-index">02</span><div><span class="node-kind">Domain event</span><strong>bicycle-rented</strong></div><span class="node-symbol" aria-hidden="true">◇</span></div>
               <div class="example-node"><span class="node-index">03</span><div><span class="node-kind">Integration event</span><strong>bicycle-rental-started</strong></div><span class="node-symbol" aria-hidden="true">↗</span></div>
             </div>
-            <div class="proof-footer"><span>Expected flow · framework test fixture</span><a href="https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/tests/support/definitions/rent-available-bicycle.json">View source ↗</a></div>
+            <div class="proof-footer"><span>Expected flow · test-only command, not exposed by the demo host</span><a href="https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/tests/support/definitions/rent-available-bicycle.json">View source ↗</a></div>
           </div>
         </div>
 
@@ -127,7 +127,7 @@
             <p class="eyebrow">Application</p>
             <div class="application-name">bike-rental <span>⌄</span></div>
             <div class="sidebar-heading"><span>COMPILED MODEL</span><span>01</span></div>
-            <p class="context-name"><span aria-hidden="true">⌑</span> BikeRental</p>
+            <p class="context-name"><span aria-hidden="true">⌑</span> Rental</p>
             <p class="aggregate-name">RentalFleet</p>
             <div class="command-list" role="group" aria-label="Example command">
               <button data-command="rent" aria-pressed="true"><span aria-hidden="true">↳</span> RentBicycle <span>v2</span></button>
@@ -136,8 +136,8 @@
             <div class="sidebar-note"><span class="small-rule" aria-hidden="true"></span><p>One model.<br />A visible chain of decisions.</p><span>2 example commands shown</span></div>
           </aside>
           <div class="studio-main">
-            <div class="studio-breadcrumb"><span>BikeRental</span><span>/</span><span>RentalFleet</span><span>/</span><strong id="breadcrumb-command">RentBicycle</strong></div>
-            <div class="command-heading"><div><p class="eyebrow">Command / schema v2</p><h1 id="command-title">Rent bicycle<span>.</span></h1></div><span class="context-badge">bike-rental</span></div>
+            <div class="studio-breadcrumb"><span>Rental</span><span>/</span><span>RentalFleet</span><span>/</span><strong id="breadcrumb-command">RentBicycle</strong></div>
+            <div class="command-heading"><div><p class="eyebrow">Command / schema v2</p><h1 id="command-title">Rent bicycle<span>.</span></h1></div><span class="context-badge">rental</span></div>
             <div class="mode-row"><div class="mode-switch" role="group" aria-label="Tracer mode"><button data-mode="simulate" aria-pressed="false">Simulate handler</button><button data-mode="test" aria-pressed="true">Isolated Test</button><button data-mode="dispatch" aria-pressed="false">Dispatch</button></div><span id="mode-note">Isolated state · resettable fixtures</span></div>
             <div class="workbench">
               <section class="input-pane" aria-labelledby="input-title">

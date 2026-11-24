@@ -175,8 +175,8 @@ struct CommandBuilder {
 pub fn build_catalog<'a>(
     registry: &DomainRegistry,
     domain_model: Option<&Value>,
-    test_enabled: bool,
-    dispatch_enabled: bool,
+    test_transport: Option<&dyn crate::CommandTransport>,
+    dispatch_transport: Option<&dyn crate::CommandTransport>,
     reset_enabled: bool,
     test_fixture_ids: impl IntoIterator<Item = &'a str>,
     test_repository_enabled: bool,
@@ -194,6 +194,13 @@ pub fn build_catalog<'a>(
         let command_label = descriptor.modeled_command().label.to_owned();
         let fields = command_fields(descriptor.modeled_command().fields);
         let payload_template = payload_template(&fields);
+        let supports = |transport: &dyn crate::CommandTransport| {
+            transport.supports_command(
+                descriptor.bounded_context,
+                descriptor.command_name,
+                descriptor.schema_version,
+            )
+        };
         let context = contexts
             .entry(context_id.clone())
             .or_insert_with(|| ContextBuilder {
@@ -221,13 +228,13 @@ pub fn build_catalog<'a>(
                 "/contexts/{context_id}/commands/{}/simulate-handler",
                 descriptor.command_name
             ),
-            test_href_template: test_enabled.then(|| {
+            test_href_template: test_transport.is_some_and(supports).then(|| {
                 format!(
                     "/contexts/{context_id}/commands/{}/test",
                     descriptor.command_name
                 )
             }),
-            dispatch_href_template: dispatch_enabled.then(|| {
+            dispatch_href_template: dispatch_transport.is_some_and(supports).then(|| {
                 format!(
                     "/contexts/{context_id}/commands/{}/dispatch",
                     descriptor.command_name
@@ -307,11 +314,13 @@ pub fn build_catalog<'a>(
                     .collect(),
             })
             .collect(),
-        behavioral_test: (test_enabled && reset_enabled).then(|| CatalogBehavioralTest {
-            schema_href: "/schemas/behavioral-test-v2".to_owned(),
-            validate_href: "/tests/validate".to_owned(),
-            run_href: "/test-runs".to_owned(),
-            definitions_href: test_repository_enabled.then(|| "/tests".to_owned()),
+        behavioral_test: (test_transport.is_some() && reset_enabled).then(|| {
+            CatalogBehavioralTest {
+                schema_href: "/schemas/behavioral-test-v2".to_owned(),
+                validate_href: "/tests/validate".to_owned(),
+                run_href: "/test-runs".to_owned(),
+                definitions_href: test_repository_enabled.then(|| "/tests".to_owned()),
+            }
         }),
         test_scenario: reset_enabled.then(|| CatalogTestScenario {
             reset_href: "/test-scenario/reset".to_owned(),
@@ -342,6 +351,52 @@ pub fn encode_path_segment(value: &str) -> String {
         }
     }
     encoded
+}
+
+/// Merge just the domain-model entries that are used by the catalog. A full
+/// model can be shared across contexts, so allow identical declarations.
+#[cfg(feature = "nats-host")]
+pub fn merge_catalog_models<'a>(
+    models: impl IntoIterator<Item = &'a Value>,
+) -> Result<Value, String> {
+    let mut contexts = BTreeMap::new();
+    let mut aggregates = BTreeMap::new();
+    for model in models {
+        for item in model
+            .get("boundedContexts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(id) = item.get("id").and_then(Value::as_str)
+                && contexts.insert(id, item).is_some_and(|prior| prior != item)
+            {
+                return Err(format!("conflicting catalog metadata for context `{id}`"));
+            }
+        }
+        for item in model
+            .get("aggregates")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let (Some(context), Some(local)) = (
+                item.pointer("/id/context").and_then(Value::as_str),
+                item.pointer("/id/local").and_then(Value::as_str),
+            ) && aggregates
+                .insert((context, local), item)
+                .is_some_and(|prior| prior != item)
+            {
+                return Err(format!(
+                    "conflicting catalog metadata for aggregate `{context}/{local}`"
+                ));
+            }
+        }
+    }
+    Ok(json!({
+        "boundedContexts": contexts.into_values().collect::<Vec<_>>(),
+        "aggregates": aggregates.into_values().collect::<Vec<_>>(),
+    }))
 }
 
 fn model_context_label(model: Option<&Value>, context: &str) -> Option<String> {
@@ -499,6 +554,32 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::value_template;
+
+    #[cfg(feature = "nats-host")]
+    #[test]
+    fn context_catalog_models_share_exact_declarations_but_reject_conflicting_anchors() {
+        use super::{merge_catalog_models, model_aggregate_anchor, model_context_label};
+
+        let rental = json!({
+            "boundedContexts": [{"id": "rental", "label": "Rental"}],
+            "aggregates": [{"id": {"context": "rental", "local": "fleet"}, "anchor": true}],
+        });
+        let workshop = json!({
+            "boundedContexts": [{"id": "workshop", "label": "Workshop"}],
+            "aggregates": [{"id": {"context": "workshop", "local": "repair"}, "anchor": false}],
+        });
+        let combined = merge_catalog_models([&rental, &workshop, &rental]).unwrap();
+        assert_eq!(
+            model_context_label(Some(&combined), "workshop").as_deref(),
+            Some("Workshop")
+        );
+        assert!(model_aggregate_anchor(Some(&combined), "rental", "fleet"));
+
+        let conflict = json!({
+            "aggregates": [{"id": {"context": "rental", "local": "fleet"}, "anchor": false}],
+        });
+        assert!(merge_catalog_models([&rental, &conflict]).is_err());
+    }
 
     #[test]
     fn identity_payload_templates_do_not_invent_a_scalar_representation() {

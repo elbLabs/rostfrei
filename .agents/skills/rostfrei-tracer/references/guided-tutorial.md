@@ -61,7 +61,7 @@ In the source checkout, read:
 
 Verify them against the registered resources. Both definitions use JSON v2.
 The successful registration uses empty `no-rental-fleets` revision `1`;
-the rejection uses `demo-fleet` revision `2`. The latter applies two
+the rejection uses `demo-fleet` revision `3`. The latter applies two
 `bicycle-added` domain events to `city-fleet`: serviceable `bike-42`, then
 maintenance-required `bike-99`. Fixture application seeds history; it does not
 execute rental commands or publish integration events.
@@ -70,7 +70,7 @@ Explain these **expectations**, not yet observed results:
 
 | Behavior | Given | When | Then |
 | --- | --- | --- | --- |
-| `add-first-bicycle` | `no-rental-fleets`, no registered bicycles | `bike-rental` / `register-bicycle` schema 2, payload `{"fleet_id":"city-fleet","bicycle_id":"bike-42","condition":"serviceable"}` | Accepted; `bicycle-added` v1 records the fleet registration |
+| `add-first-bicycle` | `no-rental-fleets`, no registered bicycles | `rental` / `register-bicycle` schema 2, payload `{"fleet_id":"city-fleet","bicycle_id":"bike-42","condition":"serviceable"}` | Accepted; `bicycle-added` v1 records the fleet registration |
 | `reject-duplicate-bicycle` | A fresh `demo-fleet`, already containing `bike-42` | Same command/schema and payload | Rejected with `BICYCLE_ALREADY_IN_FLEET` and rejection payload `{"bicycle_id":"bike-42"}` |
 
 The rejection scenario protects fleet identity. Each run resets its own fixture;

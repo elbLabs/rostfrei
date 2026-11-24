@@ -5,7 +5,7 @@ const rentalCode = `#[derive(Command, Clone, Debug)]
 #[domain(
     id = "collect-rental-payment",
     label = "Collect rental payment",
-    context = BikeRental
+    context = Finance
 )]
 pub struct CollectRentalPayment {
     pub payment_id: PaymentId,
@@ -25,7 +25,7 @@ export function RentalExampleSection() {
       <div className="rental-example">
         <div className="rental-source">
           <a
-            href="https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/src/domain/bike_rental/rental_payment/process_payment/command.rs"
+            href="https://github.com/elbLabs/rostfrei/blob/main/examples/bike-rental/src/domain/finance/rental_payment/process_payment/command.rs"
             className="source-link"
           >
             process_payment/command.rs
@@ -47,7 +47,7 @@ export function RentalExampleSection() {
             <h3>
               <code>BicycleRented</code>
             </h3>
-            <p>Record the rental atomically with payment approval and collection.</p>
+            <p>Rental records collection after Finance publishes its approval.</p>
           </li>
           <li>
             <span className="text-integration-event">Integration event</span>
