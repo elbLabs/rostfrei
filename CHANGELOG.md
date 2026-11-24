@@ -12,6 +12,8 @@ All notable changes to this project are documented in this file.
 
 - Refresh Rust TLS, certificate trust, Tokio and rustix dependencies in both
   lockfiles, including the lock packaged with future CLI releases.
+- Update `url` to 2.5.9 in both Rust lockfiles to fix the nested `blob:` URL
+  stack overflow (RUSTSEC-2026-0592).
 - Update frontend and experimental MCP reader dependencies to address known
   advisories, including deserialization, archive extraction and development
   tooling issues.
