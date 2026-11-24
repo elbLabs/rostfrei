@@ -93,6 +93,11 @@ on these routes. These reads inspect Normal traffic, not isolated Test runs.
 
 ## Run locally
 
+For identity-bound inspection with field-level approvals, enable the optional
+[governed Insights workspace](../docs/continuous-observation.md#host-and-studio-setup).
+It provides Keycloak sign-in, partial queries, approval administration, policy
+updates, and access-journal inspection against the shared HTTP/MCP service.
+
 From the repository root:
 
 ```sh

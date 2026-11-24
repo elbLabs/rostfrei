@@ -1,4 +1,8 @@
 import assert from "node:assert/strict"
+import {
+  installInsightsScenario,
+  prepareInsightsScenario,
+} from "./insights-fixture.mjs"
 
 import { settlePage } from "./browser.mjs"
 import {
@@ -16,6 +20,10 @@ import {
 } from "./observation-fixture.mjs"
 
 export const scenarios = {
+  insights:
+    "Governed partial result with an access request and durable audit reference",
+  "insights-approval":
+    "Administrator reviews a frozen record selection and field approval",
   "saved-accepted":
     "Result-first inspection of the unchanged real accepted capture",
   "saved-rejected": "Passing test with a recorded business rejection",
@@ -90,6 +98,8 @@ const catalog = {
 }
 
 export async function installScenario(page, scene, samples, diagnostics) {
+  if (scene.startsWith("insights"))
+    return installInsightsScenario(page, diagnostics)
   if (scene.startsWith("saved-")) {
     const runs = structuredClone(samples.SAVED_CAPTURE_RUNS)
     if (scene === "saved-report") delete runs[0].capture
@@ -381,6 +391,7 @@ export async function installScenario(page, scene, samples, diagnostics) {
 }
 
 export async function prepareScenario(page, scene) {
+  if (scene.startsWith("insights")) return prepareInsightsScenario(page, scene)
   await page.waitForFunction(() =>
     document
       .querySelector(".execution-header")

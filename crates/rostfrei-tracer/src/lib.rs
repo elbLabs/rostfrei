@@ -6,6 +6,8 @@ mod correlation;
 mod correlation_view;
 mod handler_simulation;
 mod input;
+#[cfg(feature = "insights")]
+pub mod insights;
 mod message_series;
 mod observation;
 mod operation;

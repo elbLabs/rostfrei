@@ -9,6 +9,9 @@ For earlier evidence still stored in NATS, use
 [retained correlation inspection](#retained-correlation-inspection). It reads
 history on demand, independently of this rolling observation window.
 
+For identity-bound reads, administrator approvals, and mandatory access auditing,
+use [governed Insights](#governed-insights).
+
 The current adapter captures **domain and integration events**. It does not consume
 the application's command work queue, fabricate missing commands, or establish
 that an external side effect completed. Correlation metadata must be propagated by
@@ -353,3 +356,286 @@ result. A truncated direct read may return an empty `refs` array with
 `truncated: true`; it cannot establish absence. An existing anchor with no
 correlations returns an empty list, while an unknown anchor type or stream returns
 404. See the [HTTP contract tests](../crates/rostfrei-tracer/tests/correlations.rs).
+
+## Governed Insights
+
+The optional `rostfrei` **`insights`** feature supplies one authorization service
+for Studio, HTTP, and MCP. It supports data-minimization and access-accountability
+controls for DSGVO deployments: verified identities, type/field policies,
+time-limited approvals, and durable audit entries for approval-free reads too.
+The deployment owner chooses the lawful purposes, role assignments, retention
+period, source partitions, and backup/deletion procedures.
+
+### Policies and partial disclosure
+
+A policy key is **source + resource kind + type + schema version**. Resource kinds
+are `event`, `command`, `aggregate`, `operation`, `readModel`, and `diagnostic`.
+Each type has a record rule and JSON Pointer field rules:
+
+- `requestLess`: readable by an authenticated `insights.read` principal.
+- `requestOnly`: requires a separate administrator's unexpired approval.
+- `deny`: never disclosed, including under an approval.
+
+Unknown types and unclassified fields are denied. A field rule covers its subtree;
+more restrictive ancestor or descendant rules win. Selecting an entire container
+cannot bypass protection on a child. A record rule also governs identifiers,
+existence, and all its fields. An administrator can approve only some fields and
+some frozen record references; record-level approval does not override that subset.
+
+For example, `PUT /insights/policies` with a policy administrator's bearer token:
+
+```json
+{
+  "expectedRevision": 0,
+  "policy": {
+    "types": [
+      {
+        "source": "events",
+        "resource": {"kind": "event", "type": "tomato", "schemaVersion": 1},
+        "record": "requestOnly",
+        "fields": {"/weight": "requestOnly", "/producer": "requestOnly"}
+      },
+      {
+        "source": "users",
+        "resource": {"kind": "aggregate", "type": "identity/user", "schemaVersion": 1},
+        "record": "requestLess",
+        "fields": {
+          "/age": "requestLess",
+          "/name": "requestOnly",
+          "/postaddress": "requestOnly"
+        }
+      }
+    ]
+  }
+}
+```
+
+The sources must be explicitly registered by the application. This example makes
+every `tomato` record approval-only; fields not classified above remain denied.
+Reading a user can immediately return `/age` while withholding `/name` and
+`/postaddress`.
+
+`conditions` on a type can only tighten its base policy, for example:
+
+```json
+{
+  "when": {"path": "/age", "op": "lt", "value": 18},
+  "fields": {"/name": "deny"}
+}
+```
+
+Conditions and query filters support scalar `eq` and numeric `lt`/`gt`.
+When a condition's operand can itself be hidden, its restriction is applied
+conservatively, so changes in redaction cannot reveal the hidden value.
+This includes record-level and overlapping field restrictions, even when a grant
+approves another field in that record.
+A query filter on a protected field pauses the **whole query** until authorized;
+returning matching ages would otherwise reveal whether a hidden name matched.
+`partial` describes the policy restriction independently of matching record count.
+An empty partial result cannot establish absence.
+
+### Query and approval workflow
+
+Submit a JSON body to `POST /insights/query`:
+
+```json
+{
+  "selection": {
+    "source": "users",
+    "resource": {"kind": "aggregate", "type": "identity/user", "schemaVersion": 1},
+    "aggregateType": "identity/user",
+    "aggregateId": "user-42"
+  },
+  "fields": ["/age", "/name", "/postaddress"],
+  "purpose": "support-case-42",
+  "requestMissing": true
+}
+```
+
+The response contains `records` with `reference` and pointer-keyed `fields`,
+`status` (`partial` or `complete`), `auditId`, `policyRevision`, and an optional
+`requestId`. `requestMissing: false` reads only currently permitted data.
+Denied fields alone do not create approval requests.
+
+An approver reads the request metadata, then submits:
+
+```text
+POST /insights/access-requests/<requestId>/decision
+```
+
+```json
+{"approve": true, "durationSeconds": 300, "fields": ["/name"], "records": null}
+```
+
+`records: null` selects all frozen references; an explicit array selects a subset.
+`fields: null` selects all requested fields, including filter operands.
+`{"approve": false}` rejects the request. Pending requests last 24 hours; grants
+last 1–900 seconds. The same issuer/subject cannot approve its own request, even
+through another OAuth client.
+
+The requester repeats the original query with `requestId`. A grant binds its
+issuer, subject, client, tenant/application/environment, query, purpose, policy
+revision, exact fields, and frozen source versions. New records are excluded;
+changed or unavailable approved versions require a new request. Changing the query
+or using another identity fails. Any policy update revokes existing requests and
+grants. Revocation and disclosure admission are ordered by the same native
+JetStream expected-sequence publication. Expiry is checked again after durable
+acknowledgement, before data is released.
+
+| HTTP endpoint | Required role |
+| --- | --- |
+| `POST /insights/query` | `insights.read`; also `insights.request` when requesting missing access |
+| `POST /insights/access-requests` | Read and request roles; equivalent to `requestMissing: true` |
+| `GET /insights/access-requests/{id}` | Request owner, or `insights.approve` in the same scope |
+| `GET /insights/access-requests` | `insights.approve` |
+| `POST /insights/access-requests/{id}/decision` | `insights.approve` |
+| `POST /insights/grants/{id}/revoke` | `insights.approve` |
+| `GET`, `PUT /insights/policies` | `insights.policy.manage` |
+| `GET /insights/audit?limit=50&before=<cursor>` | `insights.audit.read` |
+
+The request owner's status view omits frozen record counts and identifiers.
+An approver receives selection metadata, never the protected field values.
+Audit paging returns `nextBefore`; omit `before` for the newest page.
+
+### Keycloak and MCP
+
+Configure a confidential resource-server client, for example `insights-api`,
+with the five client roles above. Configure a public Studio client with
+Authorization Code flow, **PKCE S256**, exact redirect URIs and web origins.
+MCP clients use separately registered OAuth clients. Add an audience mapper for
+`insights-api` and include its client roles in access tokens/introspection.
+Administrator-controlled mappers must supply string claims `tenant`,
+`application`, and `environment`; do not source these authority claims from
+user-editable profile attributes.
+
+`OidcAuthenticator::discover` retrieves discovery from the configured issuer and
+uses authenticated online access-token introspection on every HTTP/MCP request.
+It checks active status, exact issuer, audience, bearer type, expiry/not-before,
+allowed client, scope claims, and audience-specific client roles. Introspection
+credentials remain server-side. HTTPS is required except for an explicit numeric
+loopback HTTP option for local identity-provider testing. Principal expiry is
+rechecked after service work. Caller-supplied usernames, actor metadata, request
+bodies, and legacy Tracer tokens never establish an Insights identity.
+
+`POST /mcp` provides stateless Streamable HTTP with JSON responses and protocol
+`2025-11-25`. Initialize, then send `MCP-Protocol-Version: 2025-11-25`,
+`Authorization: Bearer …`, and `Accept: application/json, text/event-stream`.
+The tools are `insights.query`, `insights.request_access`, and
+`insights.get_access_request`. Query arguments match HTTP; approval administration
+uses the HTTP endpoints/Studio. GET streaming and server sessions are not provided.
+OAuth resource metadata is served at `/.well-known/oauth-protected-resource`
+and `/.well-known/oauth-protected-resource/mcp`; 401 responses advertise it.
+Configure the MCP client's Keycloak registration and external resource URL to
+match this deployment.
+
+### Host and Studio setup
+
+Use `Insights::new(scope, journal, &binding_key)` with a persistent random
+32-byte server secret. Share it across replicas; keep it outside NATS snapshots.
+HMAC bindings prevent offline guesses of filter literals and content-hash versions.
+Rotating the key invalidates outstanding requests/grants. Record identifiers
+remain visible when the record rule allows them; use opaque source identifiers.
+
+Register `EventHistorySource::new(scope, history)` for JSON event payloads or
+`AggregateStateSource::<A>::new(scope, history, codec, state_schema_version)` to
+rehydrate actual application state. Both require tenant/environment-isolated,
+validated history handles. They check the bound scope but cannot establish that
+an incorrectly supplied NATS account belongs to a tenant. Custom `InsightsSource`
+adapters provide commands, operations, read models, diagnostics, or non-JSON codecs.
+They must return stable versions and a complete bounded selection, and must not
+consume an application's command work queue to implement inspection.
+
+Serve `insights::http::router(InsightsHttp::new(...))` directly, or pass
+`HttpConfig::governed(insights_http)` to the application-linked host. Governed mode
+serves the governed routes exclusively. Legacy catalog, observation, correlation,
+quarantine, operation, and dispatch routes are absent on that listener. Remove
+public access to any separately deployed legacy inspection listener during cutover.
+
+The compiled [governed host example](../crates/rostfrei-tracer/examples/governed-insights.rs)
+attaches an existing Normal-traffic JSON event history as source `events`.
+Configure these environment variables:
+
+| Configuration | Variables |
+| --- | --- |
+| Existing isolated source | `NATS_URL`, `INSIGHTS_CONTEXT`, `INSIGHTS_TENANT`, `INSIGHTS_APPLICATION`, `INSIGHTS_ENVIRONMENT` |
+| Authority | `INSIGHTS_JOURNAL`, `INSIGHTS_BINDING_KEY_FILE` (32 raw random bytes) |
+| Initial provisioning | `INSIGHTS_REPLICAS` (1, 3, or 5), `INSIGHTS_MAX_BYTES` (at least 1 MiB), `INSIGHTS_RETENTION_SECONDS` |
+| Identity provider | `INSIGHTS_ISSUER`, `INSIGHTS_AUDIENCE`, `INSIGHTS_INTROSPECTION_CLIENT`, `INSIGHTS_CLIENT_SECRET_FILE`, `INSIGHTS_ALLOWED_CLIENTS` (comma-separated) |
+| HTTP | `INSIGHTS_RESOURCE` (external MCP URL), `INSIGHTS_BROWSER_ORIGINS` (exact comma-separated origins), optional `INSIGHTS_LISTEN` (default `127.0.0.1:1309`) |
+
+```sh
+# First deployment: explicitly provision a new deny-by-default authority.
+cargo run --locked -p rostfrei-tracer --features insights --example governed-insights -- --provision
+# Subsequent startup: attach and validate existing authority.
+cargo run --locked -p rostfrei-tracer --features insights --example governed-insights
+```
+
+For a local numeric-loopback Keycloak issuer, explicitly set
+`INSIGHTS_LOOPBACK_HTTP=true`. Install the desired policy through an authenticated
+policy administrator after provisioning.
+
+Studio's optional governed workspace uses the official Keycloak JS client:
+
+```sh
+VITE_INSIGHTS_ENABLED=true \
+VITE_INSIGHTS_ISSUER=https://identity.example/realms/garden \
+VITE_INSIGHTS_CLIENT_ID=studio \
+VITE_INSIGHTS_AUDIENCE=insights-api \
+VITE_INSIGHTS_API_URL=/api \
+VITE_TRACER_TARGET=http://127.0.0.1:1309 \
+pnpm --dir studio dev
+```
+
+Allow the actual Studio origin in the host and Keycloak. Use a same-origin `/api`
+reverse proxy in production; the host's origin allowlist does not enable CORS.
+Studio keeps tokens, query data, and approval results in memory, refreshes tokens,
+and exposes Query, Access requests, Policies, and Access journal according to roles.
+Vite settings contain client identifiers and URLs, never introspection secrets.
+Governed reads do not enter Studio's persisted run history.
+
+### Audit durability, retention, and recovery
+
+Every disclosure waits for a durable audit acknowledgement. An unavailable/full
+journal or uncertain acknowledgement withholds even approval-free data.
+Authenticated attempts, denied administration, decisions, policy changes, and
+audit reads are journaled. Disclosure entries record server time, issuer/subject/
+client, scope, purpose, policy revision, source/type/selection, record versions,
+and disclosed/predicate field paths. They omit payloads, bearer tokens, and query
+filter literals. Keep purpose codes and identifiers free of unnecessary personal
+data. `admitted; delivery unconfirmed` records authorization to release data,
+not proof that the client received it or a person consumed it.
+
+`NatsInsightsConfig` requires explicit finite retention and capacity. The
+file-backed stream rejects new writes at capacity and denies message deletion
+and purge. Native `max_age` expires entries. Each entry atomically carries the
+current policy/request snapshot, pruning expired requests from subsequent writes.
+Old copies of request metadata can survive until their entry's retention expires;
+the maximum is request expiry plus the configured retention window. This snapshot
+design deliberately trades write amplification for one consistent authority.
+
+If there are no accesses for an entire retention window, the latest state also
+expires. Reads/startup then fail closed; they never recreate permissive state.
+Recovery is explicit: stop the old listener, provision a new named authority,
+install its reviewed policy, and switch the listener. Requests must be made again.
+Apply the same planned rotation when changing retention or retiring a scope.
+Delete retired streams and backups according to the deployment's retention rules.
+Changing a running stream's retention/capacity or recreating it invalidates pinned
+handles. Provisioning is separate from normal startup.
+
+Grant windows are at most 15 minutes; requests hold at most 256 frozen records,
+64 fields and 8 predicates. A service admits at most 32 sources and 256 retained
+requests. Source/result data is limited to 1 MiB, HTTP bodies to 64 KiB, journal
+entries to 512 KiB, and query work to 15 seconds. History adapters load their
+bound history before checking its byte size; use suitably bounded source
+partitions. Capacity exhaustion is explicit, never silent truncation.
+
+NATS service credentials need publication only to the authority's `.state`
+subject, scoped stream INFO/raw GET, and response inbox permissions. Source
+credentials need only the relevant history reader's permissions. Provisioners
+own stream creation/lifecycle permissions. Keep broker administration and raw
+journal access separate from browser/MCP identities.
+
+The [inspection contracts](../crates/rostfrei-tracer/tests/correlations/insights.rs)
+run through `cargo xtask test`; their Keycloak/HTTP/MCP journey owns a disposable
+Keycloak 26.8.2 container and uses real NATS history. See the
+[testing policy](testing/strategy.md) for the complete workspace gate.

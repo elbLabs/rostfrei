@@ -1941,12 +1941,15 @@ dependencies = [
 name = "rostfrei-tracer"
 version = "0.2.3"
 dependencies = [
+ "async-nats",
  "async-trait",
  "axum",
  "base64",
  "futures-util",
  "http-body-util",
  "percent-encoding",
+ "reqwest",
+ "ring",
  "rostfrei-core",
  "rostfrei-domain",
  "rostfrei-fixtures",
@@ -1961,6 +1964,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "uuid",
 ]
 
 [[package]]
