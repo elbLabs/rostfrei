@@ -5,7 +5,7 @@ mod source;
 
 use std::time::Duration;
 
-use application::{GetAccess, OrganizationAccess};
+use application::{FleetStatus, GetFleetStatus};
 use rostfrei_core::{
     AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventStore,
     EventTransaction, ExpectedVersion, NewEvent, OperationId, StreamId, TransactionParticipant,
@@ -24,7 +24,7 @@ use rostfrei_nats::{
 use rostfrei_runtime::{
     ApplicationName, QueryHandler, QueryHandlerRequest, ReadModelKey, ReadModels,
 };
-use source::{BillingChanged, DemoChanged, MemberJoined, OrganizationEvent, OrganizationRenamed};
+use source::{BicycleRegistered, FleetEvent, FleetRenamed, InspectionChanged, RentalWindowChanged};
 
 rostfrei_runtime::install_macro_support!();
 type ExampleResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -46,14 +46,14 @@ async fn main() -> ExampleResult {
     ))
     .await?;
     let application = ApplicationName::new("read-model-runtime-example")?;
-    let context = application.bounded_context("access")?;
-    let billing = application.bounded_context("billing")?;
+    let context = application.bounded_context("bike-rental")?;
+    let workshop = application.bounded_context("workshop")?;
     let events = NatsEventStoreConfig::for_bounded_context(&context)?
         .with_fresh_split_outcome_epoch("read-model-example")?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     let messaging =
         ApplicationMessagingConfig::new(&application)?.with_max_bytes(8 * 1024 * 1024)?;
-    let policy = NatsReadModelConfig::for_model::<OrganizationAccess>(&context)?;
+    let policy = NatsReadModelConfig::for_model::<FleetStatus>(&context)?;
     provision_event_store(connection.jetstream(), &events).await?;
     provision_application_messaging(connection.jetstream(), &messaging).await?;
     provision_read_model(connection.jetstream(), &policy).await?;
@@ -83,20 +83,20 @@ async fn main() -> ExampleResult {
     .await?;
 
     let history = NatsEventStore::connect(connection.jetstream().clone(), events).await?;
-    seed_organization(&history).await?;
+    seed_fleet(&history).await?;
     let fact = IntegrationEventEnvelope::new(
-        envelope("billing-update")?,
+        envelope("workshop-update")?,
         MessageTimestamp::from_unix_milliseconds(1)?,
-        BillingChanged {
-            organization_id: "org-1".to_owned(),
-            paid: true,
+        InspectionChanged {
+            fleet_id: "fleet-1".to_owned(),
+            inspection_passed: true,
         },
     )?;
     connection
         .publisher(messaging.topology().clone())
         .publish_integration_event_with_ack(
             OutboundMessage::json(
-                billing.integration_event_address("billing-changed")?,
+                workshop.integration_event_address("inspection-changed")?,
                 fact.message_id().clone(),
                 &fact,
             )?,
@@ -111,14 +111,14 @@ async fn main() -> ExampleResult {
             return Err("read-model worker stopped unexpectedly".into());
         }
         result = tokio::time::timeout(Duration::from_secs(10), async {
-            let key = ReadModelKey::new("org-1")?;
+            let key = ReadModelKey::new("fleet-1")?;
             loop {
-                if model.reader().read(&key).await?.is_some_and(|view| view.members == 1 && view.demo && view.paid) { return ExampleResult::Ok(()); }
+                if model.reader().read(&key).await?.is_some_and(|view| view.bicycles_registered == 1 && view.rentals_open && view.inspection_passed) { return ExampleResult::Ok(()); }
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         }) => { result??; }
     }
-    let query = GetAccess {
+    let query = GetFleetStatus {
         reader: model.reader(),
     };
     let request = QueryHandlerRequest::new(
@@ -126,7 +126,7 @@ async fn main() -> ExampleResult {
         MessageTimestamp::from_unix_milliseconds(1)?,
         CallerMetadata::default(),
         None,
-        "org-1".to_owned(),
+        "fleet-1".to_owned(),
     )?;
     let result = query
         .handle(request)
@@ -136,21 +136,18 @@ async fn main() -> ExampleResult {
     Ok(())
 }
 
-async fn seed_organization(history: &NatsEventStore) -> ExampleResult {
-    let stream = StreamId::new(
-        AggregateType::new("organization")?,
-        AggregateId::new("org-1")?,
-    );
+async fn seed_fleet(history: &NatsEventStore) -> ExampleResult {
+    let stream = StreamId::new(AggregateType::new("fleet")?, AggregateId::new("fleet-1")?);
     let changes = [
-        OrganizationEvent::MemberJoined(MemberJoined {
-            organization_id: "org-1".to_owned(),
+        FleetEvent::BicycleRegistered(BicycleRegistered {
+            fleet_id: "fleet-1".to_owned(),
         }),
-        OrganizationEvent::OrganizationRenamed(OrganizationRenamed {
+        FleetEvent::FleetRenamed(FleetRenamed {
             name: "Example".to_owned(),
         }),
-        OrganizationEvent::DemoChanged(DemoChanged {
-            organization_id: "org-1".to_owned(),
-            active: true,
+        FleetEvent::RentalWindowChanged(RentalWindowChanged {
+            fleet_id: "fleet-1".to_owned(),
+            open: true,
         }),
     ];
     let operation = OperationId::new("seed-example")?;

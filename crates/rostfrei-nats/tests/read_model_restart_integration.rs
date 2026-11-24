@@ -65,8 +65,8 @@ async fn snapshots_tombstones_and_cas_survive_authenticated_broker_restart() -> 
     })
     .await
     .map_err(|_| "broker startup timed out")?;
-    let context = ApplicationName::new("restart-test")?.bounded_context("access")?;
-    let config = NatsReadModelConfig::new(&context, "entitlements")?;
+    let context = ApplicationName::new("restart-test")?.bounded_context("bike-rental")?;
+    let config = NatsReadModelConfig::new(&context, "fleet-status")?;
     provision_read_model(connection.jetstream(), &config).await?;
     let store = NatsReadModelStore::connect(
         connection.jetstream().clone(),

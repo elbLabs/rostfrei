@@ -542,38 +542,41 @@ mod tests {
 
     #[test]
     fn application_config_derives_disjoint_streams_and_subjects() {
-        let application = ApplicationName::new("fast-inbox").unwrap();
+        let application = ApplicationName::new("bike-rental-demo").unwrap();
         let config = ApplicationMessagingConfig::new(&application)
             .unwrap()
             .with_replicas(3)
             .unwrap();
 
-        assert_eq!(config.application().as_str(), "fast-inbox");
-        assert_eq!(config.commands.name().as_str(), "FAST_INBOX_COMMANDS");
+        assert_eq!(config.application().as_str(), "bike-rental-demo");
+        assert_eq!(config.commands.name().as_str(), "BIKE_RENTAL_DEMO_COMMANDS");
         assert_eq!(
             config.command_responses.name().as_str(),
-            "FAST_INBOX_COMMAND_RESPONSES"
+            "BIKE_RENTAL_DEMO_COMMAND_RESPONSES"
         );
         assert_eq!(
             config.integration_events.name().as_str(),
-            "FAST_INBOX_INTEGRATION_EVENTS"
+            "BIKE_RENTAL_DEMO_INTEGRATION_EVENTS"
         );
-        assert_eq!(config.quarantine.name().as_str(), "FAST_INBOX_QUARANTINE");
+        assert_eq!(
+            config.quarantine.name().as_str(),
+            "BIKE_RENTAL_DEMO_QUARANTINE"
+        );
         assert_eq!(
             config.commands.subjects()[0].as_str(),
-            "fast-inbox.command.>"
+            "bike-rental-demo.command.>"
         );
         assert_eq!(
             config.command_responses.subjects()[0].as_str(),
-            "fast-inbox.command-response.>"
+            "bike-rental-demo.command-response.>"
         );
         assert_eq!(
             config.integration_events.subjects()[0].as_str(),
-            "fast-inbox.integration.*.*.>"
+            "bike-rental-demo.integration.*.*.>"
         );
         assert_eq!(
             config.quarantine.subjects()[0].as_str(),
-            "fast-inbox.quarantine.>"
+            "bike-rental-demo.quarantine.>"
         );
         assert_eq!(config.commands.retention(), StreamRetention::WorkQueue);
         assert_eq!(
@@ -607,25 +610,28 @@ mod tests {
 
     #[test]
     fn test_application_config_uses_the_test_subject_and_stream_scope() {
-        let application = ApplicationName::new("fast-inbox").unwrap();
+        let application = ApplicationName::new("bike-rental-demo").unwrap();
         let config =
             ApplicationMessagingConfig::new_in_scope(&application, TrafficScope::Test).unwrap();
 
         assert_eq!(config.traffic_scope(), TrafficScope::Test);
-        assert_eq!(config.commands.name().as_str(), "FAST_INBOX__TEST_COMMANDS");
+        assert_eq!(
+            config.commands.name().as_str(),
+            "BIKE_RENTAL_DEMO__TEST_COMMANDS"
+        );
         assert_eq!(
             config.commands.subjects()[0].as_str(),
-            "fast-inbox.test.command.>"
+            "bike-rental-demo.test.command.>"
         );
         assert_eq!(
             config.quarantine.subjects()[0].as_str(),
-            "fast-inbox.test.quarantine.>"
+            "bike-rental-demo.test.quarantine.>"
         );
     }
 
     #[test]
     fn application_config_rejects_invalid_replica_counts() {
-        let application = ApplicationName::new("fast-inbox").unwrap();
+        let application = ApplicationName::new("bike-rental-demo").unwrap();
 
         assert!(
             ApplicationMessagingConfig::new(&application)
@@ -643,7 +649,7 @@ mod tests {
 
     #[test]
     fn application_config_validates_capacity_overrides() {
-        let application = ApplicationName::new("fast-inbox").unwrap();
+        let application = ApplicationName::new("bike-rental-demo").unwrap();
 
         assert!(
             ApplicationMessagingConfig::new(&application)
@@ -715,8 +721,8 @@ mod tests {
 
     #[test]
     fn low_level_stream_config_rejects_cross_application_filters() {
-        let application = ApplicationName::new("fast-inbox").unwrap();
-        let name = StreamName::new("FAST_INBOX_CUSTOM").unwrap();
+        let application = ApplicationName::new("bike-rental-demo").unwrap();
+        let name = StreamName::new("BIKE_RENTAL_DEMO_CUSTOM").unwrap();
 
         for filter in [">", "*.command.>", "other.command.>"] {
             assert!(
@@ -733,7 +739,7 @@ mod tests {
 
     #[test]
     fn application_policy_comparison_covers_authoritative_controls() {
-        let application = ApplicationName::new("fast-inbox").unwrap();
+        let application = ApplicationName::new("bike-rental-demo").unwrap();
         let expected = ApplicationMessagingConfig::new(&application)
             .unwrap()
             .commands()

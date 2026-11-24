@@ -24,7 +24,7 @@ readiness and observer lifetime:
 use rostfrei::ApplicationName;
 use rostfrei::tracer::{NatsApplication, ObservationFeed, ObservationScope, TracerConfig};
 
-let application = ApplicationName::new("fast-inbox")?;
+let application = ApplicationName::new("bike-rental")?;
 let test_feed = ObservationFeed::new(application.clone(), ObservationScope::Test);
 let production_feed = ObservationFeed::new(application, ObservationScope::Production);
 
@@ -56,7 +56,7 @@ coverage (for example a bounded context), not an individual correlation:
 
 ```rust,ignore
 let observer = tracer.correlation_observer(OperationMode::Dispatch);
-let source = observer.observation_source("commercial-access")?;
+let source = observer.observation_source("bike-rental")?;
 let subscription = nats_observer.subscribe().await?;
 if let Some(source) = &source {
     source.ready();
@@ -76,9 +76,9 @@ Bike-rental enables the feeds in
 [`bike-rental-api.rs`](../examples/bike-rental/src/bin/bike-rental-api.rs) with
 `cargo run --locked -p bike-rental -- --tracer`; the reusable framework host owns
 the observer wiring.
-Its real-NATS integration test publishes outside Tracer, observes a rental and its
-integration-triggered return under one correlation, and retrieves the evidence
-through the read-only HTTP API.
+Its [real-NATS integration test](../examples/bike-rental/tests/shared_host_observation.rs)
+publishes outside Tracer and retrieves `bicycle-rented` and the `bicycle-rental-started`
+integration event it caused under one correlation through the read-only HTTP API.
 
 ## Discovery and HTTP
 

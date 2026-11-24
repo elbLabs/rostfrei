@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `Events: EventVariant<support::ForeignEvent>` is not satisfied
  --> tests/ui/fail/read_model_foreign_event.rs:9:10
   |
-9 |         .on_domain_event::<ForeignEvent>(|_| "org-1".to_owned(), |_, _| {});
+9 |         .on_domain_event::<ForeignEvent>(|_| "fleet-1".to_owned(), |_, _| {});
   |          ^^^^^^^^^^^^^^^ unsatisfied trait bound
   |
 help: the trait `EventVariant<support::ForeignEvent>` is not implemented for `Events`

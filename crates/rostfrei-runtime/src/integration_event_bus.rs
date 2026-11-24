@@ -431,12 +431,12 @@ mod tests {
     use super::*;
 
     #[derive(Serialize, serde::Deserialize)]
-    struct BillingChanged;
+    struct InspectionChanged;
 
-    impl IntegrationEvent for BillingChanged {
-        const EVENT_NAME: &'static str = "billing-changed";
+    impl IntegrationEvent for InspectionChanged {
+        const EVENT_NAME: &'static str = "inspection-changed";
         const SCHEMA_VERSION: u32 = 1;
-        const BOUNDED_CONTEXT: Option<&'static str> = Some("billing");
+        const BOUNDED_CONTEXT: Option<&'static str> = Some("workshop");
     }
 
     struct NoPublish;
@@ -464,16 +464,19 @@ mod tests {
             occurred_at: Some(MessageTimestamp::from_unix_milliseconds(1).unwrap()),
         };
         let correct = IntegrationEventBus::new(
-            application.bounded_context("billing").unwrap(),
+            application.bounded_context("workshop").unwrap(),
             Arc::new(NoPublish),
         );
-        assert!(correct.encode(committed.clone(), BillingChanged).is_ok());
+        assert!(correct.encode(committed.clone(), InspectionChanged).is_ok());
         let wrong = IntegrationEventBus::new(
-            application.bounded_context("access").unwrap(),
+            application.bounded_context("bike-rental").unwrap(),
             Arc::new(NoPublish),
         );
         assert_eq!(
-            wrong.encode(committed, BillingChanged).unwrap_err().kind(),
+            wrong
+                .encode(committed, InspectionChanged)
+                .unwrap_err()
+                .kind(),
             IntegrationEventBusErrorKind::InvalidConfiguration
         );
     }

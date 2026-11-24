@@ -6,8 +6,8 @@ mod application;
 use std::{num::NonZeroU32, sync::Arc};
 
 use application::{
-    BillingChanged, DemoChanged, Entitlement, Entitlements, ExampleResult, GetEntitlement,
-    MemberJoined, OrganizationEvent, rebuild,
+    BicycleRegistered, ExampleResult, FleetEvent, FleetStatus, FleetStatusProjection,
+    GetFleetStatus, InspectionChanged, RentalWindowChanged, rebuild,
 };
 use rostfrei_core::{
     AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventStore,
@@ -32,15 +32,15 @@ async fn main() -> ExampleResult {
         std::env::var("ROSTFREI_NATS_URL")?,
     ))
     .await?;
-    let context = ApplicationName::new("read-model-example")?.bounded_context("access")?;
+    let context = ApplicationName::new("read-model-example")?.bounded_context("bike-rental")?;
     let events = NatsEventStoreConfig::for_bounded_context(&context)?
         .with_fresh_split_outcome_epoch("read-model-storage-example")?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     provision_event_store(connection.jetstream(), &events).await?;
     let history = NatsEventStore::connect(connection.jetstream().clone(), events).await?;
-    let config = NatsReadModelConfig::new(&context, "entitlements")?;
+    let config = NatsReadModelConfig::new(&context, "fleet-status")?;
     provision_read_model(connection.jetstream(), &config).await?;
-    let store: Arc<dyn ReadModelStore<Entitlement>> = Arc::new(
+    let store: Arc<dyn ReadModelStore<FleetStatus>> = Arc::new(
         NatsReadModelStore::connect(
             connection.jetstream().clone(),
             config,
@@ -48,15 +48,12 @@ async fn main() -> ExampleResult {
         )
         .await?,
     );
-    let handlers = Arc::new(Entitlements::new(store)?);
+    let handlers = Arc::new(FleetStatusProjection::new(store)?);
     let dispatcher = handlers.dispatcher()?;
-    let stream = StreamId::new(
-        AggregateType::new("organization")?,
-        AggregateId::new("org-1")?,
-    );
+    let stream = StreamId::new(AggregateType::new("fleet")?, AggregateId::new("fleet-1")?);
     let source_events = [
-        OrganizationEvent::MemberJoined(MemberJoined),
-        OrganizationEvent::DemoChanged(DemoChanged { active: true }),
+        FleetEvent::BicycleRegistered(BicycleRegistered),
+        FleetEvent::RentalWindowChanged(RentalWindowChanged { open: true }),
     ];
     let operation = OperationId::new("example-operation")?;
     let commit = derive_commit_id(&stream, &operation);
@@ -94,13 +91,13 @@ async fn main() -> ExampleResult {
     rebuild(&history, &stream, &dispatcher).await?;
     rebuild(&history, &stream, &dispatcher).await?;
     handlers
-        .billing_changed(&BillingChanged {
-            organization_id: "org-1".to_owned(),
+        .inspection_changed(&InspectionChanged {
+            fleet_id: "fleet-1".to_owned(),
             source_version: 7,
-            paid: true,
+            inspection_passed: true,
         })
         .await?;
-    let query = GetEntitlement { lookup: handlers };
+    let query = GetFleetStatus { lookup: handlers };
     let request = QueryHandlerRequest::new(
         EnvelopeContext::new(
             MessageId::new("query-1")?,
@@ -111,7 +108,7 @@ async fn main() -> ExampleResult {
         MessageTimestamp::from_unix_milliseconds(1)?,
         CallerMetadata::default(),
         None,
-        "org-1".to_owned(),
+        "fleet-1".to_owned(),
     )?;
     let result = query
         .handle(request)

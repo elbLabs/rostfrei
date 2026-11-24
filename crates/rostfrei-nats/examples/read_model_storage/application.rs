@@ -20,51 +20,51 @@ use serde::{Deserialize, Serialize};
 pub type ExampleResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Entitlement {
-    pub members: u64,
-    pub demo: bool,
-    pub paid: bool,
-    pub organization_version: u64,
-    pub billing_version: u64,
+pub struct FleetStatus {
+    pub bicycles_registered: u64,
+    pub rentals_open: bool,
+    pub inspection_passed: bool,
+    pub fleet_version: u64,
+    pub inspection_version: u64,
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct MemberJoined;
+pub struct BicycleRegistered;
 
 #[derive(Deserialize, Serialize)]
-pub struct DemoChanged {
-    pub active: bool,
+pub struct RentalWindowChanged {
+    pub open: bool,
 }
 
 #[derive(Deserialize, Serialize)]
-pub enum OrganizationEvent {
-    MemberJoined(MemberJoined),
-    DemoChanged(DemoChanged),
+pub enum FleetEvent {
+    BicycleRegistered(BicycleRegistered),
+    RentalWindowChanged(RentalWindowChanged),
 }
 
-pub struct Organization;
+pub struct Fleet;
 
-impl Aggregate for Organization {
+impl Aggregate for Fleet {
     type State = (u64, bool);
-    type Event = OrganizationEvent;
-    const BOUNDED_CONTEXT: &'static str = "access";
-    const AGGREGATE_TYPE: &'static str = "organization";
+    type Event = FleetEvent;
+    const BOUNDED_CONTEXT: &'static str = "bike-rental";
+    const AGGREGATE_TYPE: &'static str = "fleet";
     fn initial(_: &StreamId) -> Self::State {
         (0, false)
     }
     fn apply(state: &mut Self::State, event: &Self::Event) {
         match event {
-            OrganizationEvent::MemberJoined(_) => state.0 = state.0.saturating_add(1),
-            OrganizationEvent::DemoChanged(event) => state.1 = event.active,
+            FleetEvent::BicycleRegistered(_) => state.0 = state.0.saturating_add(1),
+            FleetEvent::RentalWindowChanged(event) => state.1 = event.open,
         }
     }
 }
 
-impl Event for OrganizationEvent {
+impl Event for FleetEvent {
     fn event_type(&self) -> &'static str {
         match self {
-            Self::MemberJoined(_) => "member-joined",
-            Self::DemoChanged(_) => "demo-changed",
+            Self::BicycleRegistered(_) => "bicycle-registered",
+            Self::RentalWindowChanged(_) => "rental-window-changed",
         }
     }
     fn schema_version(&self) -> u32 {
@@ -79,7 +79,7 @@ impl Event for OrganizationEvent {
         if event.schema_version() != 1 {
             return Err(EventCodecError::new(
                 EventCodecErrorKind::UnsupportedSchemaVersion,
-                "unsupported organization event",
+                "unsupported fleet event",
             ));
         }
         let decoded: Self = serde_json::from_slice(event.payload()).map_err(|error| {
@@ -95,33 +95,16 @@ impl Event for OrganizationEvent {
     }
 }
 
-impl EventVariant<MemberJoined> for OrganizationEvent {
-    fn event(&self) -> Option<&MemberJoined> {
-        if let Self::MemberJoined(event) = self {
+impl EventVariant<BicycleRegistered> for FleetEvent {
+    fn event(&self) -> Option<&BicycleRegistered> {
+        if let Self::BicycleRegistered(event) = self {
             Some(event)
         } else {
             None
         }
     }
-    fn into_event(self) -> Option<MemberJoined> {
-        if let Self::MemberJoined(event) = self {
-            Some(event)
-        } else {
-            None
-        }
-    }
-}
-
-impl EventVariant<DemoChanged> for OrganizationEvent {
-    fn event(&self) -> Option<&DemoChanged> {
-        if let Self::DemoChanged(event) = self {
-            Some(event)
-        } else {
-            None
-        }
-    }
-    fn into_event(self) -> Option<DemoChanged> {
-        if let Self::DemoChanged(event) = self {
+    fn into_event(self) -> Option<BicycleRegistered> {
+        if let Self::BicycleRegistered(event) = self {
             Some(event)
         } else {
             None
@@ -129,56 +112,74 @@ impl EventVariant<DemoChanged> for OrganizationEvent {
     }
 }
 
-/// Public billing contract: a complete replacement fact with a monotonically
-/// increasing per-organization source version, supplied by the billing owner.
+impl EventVariant<RentalWindowChanged> for FleetEvent {
+    fn event(&self) -> Option<&RentalWindowChanged> {
+        if let Self::RentalWindowChanged(event) = self {
+            Some(event)
+        } else {
+            None
+        }
+    }
+    fn into_event(self) -> Option<RentalWindowChanged> {
+        if let Self::RentalWindowChanged(event) = self {
+            Some(event)
+        } else {
+            None
+        }
+    }
+}
+
+/// Public workshop contract: a complete replacement fact with a monotonically
+/// increasing per-fleet source version, supplied by the workshop owner.
 /// This version is not the NATS consumer sequence or an unordered webhook ID.
 #[derive(Deserialize, Serialize)]
-pub struct BillingChanged {
-    pub organization_id: String,
+pub struct InspectionChanged {
+    pub fleet_id: String,
     pub source_version: u64,
-    pub paid: bool,
+    pub inspection_passed: bool,
 }
 
 /// Application-owned query port: query handlers do not know about KV or codecs.
 #[async_trait]
-pub trait EntitlementLookup: Send + Sync {
-    async fn lookup(&self, organization_id: &str) -> Result<Option<Entitlement>, ReadModelError>;
+pub trait FleetStatusLookup: Send + Sync {
+    async fn lookup(&self, fleet_id: &str) -> Result<Option<FleetStatus>, ReadModelError>;
 }
 
-pub struct Entitlements {
-    store: Arc<dyn ReadModelStore<Entitlement>>,
+pub struct FleetStatusProjection {
+    store: Arc<dyn ReadModelStore<FleetStatus>>,
     retry_delay: RetryDelay,
     invalid_message: QuarantineReason,
     materialization_failed: QuarantineReason,
 }
 
-impl Entitlements {
-    pub fn new(store: Arc<dyn ReadModelStore<Entitlement>>) -> ExampleResult<Self> {
+impl FleetStatusProjection {
+    pub fn new(store: Arc<dyn ReadModelStore<FleetStatus>>) -> ExampleResult<Self> {
         Ok(Self {
             store,
             retry_delay: RetryDelay::new(Duration::from_millis(100))?,
             invalid_message: QuarantineReason::new(
-                "invalid billing read-model input or configuration",
+                "invalid workshop read-model input or configuration",
             )?,
             materialization_failed: QuarantineReason::new(
-                "billing snapshot not materialized; repair storage/configuration, then replay or refresh billing",
+                "inspection snapshot not materialized; repair storage/configuration, then replay or fetch the latest inspection",
             )?,
         })
     }
 
     pub fn dispatcher(self: &Arc<Self>) -> ExampleResult<DomainEventDispatcher> {
         let mut dispatcher = DomainEventDispatcher::new();
-        dispatcher.register::<Organization, MemberJoined, _>("member-joined", self.clone())?;
-        dispatcher.register::<Organization, DemoChanged, _>("demo-changed", self.clone())?;
+        dispatcher.register::<Fleet, BicycleRegistered, _>("bicycle-registered", self.clone())?;
+        dispatcher
+            .register::<Fleet, RentalWindowChanged, _>("rental-window-changed", self.clone())?;
         Ok(dispatcher)
     }
 
     async fn change(
         &self,
-        organization_id: &str,
-        apply: impl Fn(&mut Entitlement) -> Result<bool, DomainEventHandlerError> + Send + Sync,
+        fleet_id: &str,
+        apply: impl Fn(&mut FleetStatus) -> Result<bool, DomainEventHandlerError> + Send + Sync,
     ) -> Result<(), DomainEventHandlerError> {
-        let key = ReadModelKey::new(organization_id).map_err(|error| storage_error(&error))?;
+        let key = ReadModelKey::new(fleet_id).map_err(|error| storage_error(&error))?;
         for _ in 0..8 {
             let current = self
                 .store
@@ -186,7 +187,7 @@ impl Entitlements {
                 .await
                 .map_err(|error| storage_error(&error))?;
             let (mut value, revision) = current.map_or_else(
-                || (Entitlement::default(), None),
+                || (FleetStatus::default(), None),
                 |entry| (entry.value, Some(entry.revision)),
             );
             if !apply(&mut value)? {
@@ -210,28 +211,28 @@ impl Entitlements {
         ))
     }
 
-    /// A complete billing fact can skip versions, unlike organization deltas.
+    /// A complete workshop fact can skip versions, unlike fleet deltas.
     ///
-    /// Also use this path with the latest fact fetched from the billing authority
+    /// Also use this path with the latest fact fetched from the workshop authority
     /// to reconcile a quarantined update. Fetch/retry scheduling and recovery
     /// tracking belong to the application; storage recovery alone does not redrive
     /// an integration event that the consumer has already quarantined.
-    pub async fn billing_changed(
+    pub async fn inspection_changed(
         &self,
-        event: &BillingChanged,
+        event: &InspectionChanged,
     ) -> Result<(), DomainEventHandlerError> {
         if event.source_version == 0 {
             return Err(DomainEventHandlerError::new(
                 DomainEventHandlerErrorKind::InvalidCommittedEvent,
-                "billing source version must be positive",
+                "workshop source version must be positive",
             ));
         }
-        self.change(&event.organization_id, |value| {
-            if event.source_version <= value.billing_version {
+        self.change(&event.fleet_id, |value| {
+            if event.source_version <= value.inspection_version {
                 return Ok(false);
             }
-            value.paid = event.paid;
-            value.billing_version = event.source_version;
+            value.inspection_passed = event.inspection_passed;
+            value.inspection_version = event.source_version;
             Ok(true)
         })
         .await
@@ -248,42 +249,40 @@ fn storage_error(error: &ReadModelError) -> DomainEventHandlerError {
     DomainEventHandlerError::new(kind, error.to_string())
 }
 
-fn next_organization_event(
-    value: &Entitlement,
-    version: u64,
-) -> Result<bool, DomainEventHandlerError> {
-    if version <= value.organization_version {
+fn next_fleet_event(value: &FleetStatus, version: u64) -> Result<bool, DomainEventHandlerError> {
+    if version <= value.fleet_version {
         return Ok(false);
     }
-    if value.organization_version.checked_add(1) != Some(version) {
+    if value.fleet_version.checked_add(1) != Some(version) {
         return Err(DomainEventHandlerError::new(
             DomainEventHandlerErrorKind::OperatorBlocking,
-            "organization source gap: rebuild missing history before resuming",
+            "fleet source gap: rebuild missing history before resuming",
         ));
     }
     Ok(true)
 }
 
 #[async_trait]
-impl DomainEventHandler<MemberJoined> for Entitlements {
+impl DomainEventHandler<BicycleRegistered> for FleetStatusProjection {
     async fn handle(
         &self,
-        event: &CommittedDomainEvent<'_, MemberJoined>,
+        event: &CommittedDomainEvent<'_, BicycleRegistered>,
     ) -> Result<(), DomainEventHandlerError> {
         let version = event.recorded().stream_version().value();
         self.change(
             event.recorded().stream_id().aggregate_id().as_str(),
             |value| {
-                if !next_organization_event(value, version)? {
+                if !next_fleet_event(value, version)? {
                     return Ok(false);
                 }
-                value.members = value.members.checked_add(1).ok_or_else(|| {
-                    DomainEventHandlerError::new(
-                        DomainEventHandlerErrorKind::OperatorBlocking,
-                        "member count overflow",
-                    )
-                })?;
-                value.organization_version = version;
+                value.bicycles_registered =
+                    value.bicycles_registered.checked_add(1).ok_or_else(|| {
+                        DomainEventHandlerError::new(
+                            DomainEventHandlerErrorKind::OperatorBlocking,
+                            "registration count overflow",
+                        )
+                    })?;
+                value.fleet_version = version;
                 Ok(true)
             },
         )
@@ -292,20 +291,20 @@ impl DomainEventHandler<MemberJoined> for Entitlements {
 }
 
 #[async_trait]
-impl DomainEventHandler<DemoChanged> for Entitlements {
+impl DomainEventHandler<RentalWindowChanged> for FleetStatusProjection {
     async fn handle(
         &self,
-        event: &CommittedDomainEvent<'_, DemoChanged>,
+        event: &CommittedDomainEvent<'_, RentalWindowChanged>,
     ) -> Result<(), DomainEventHandlerError> {
         let version = event.recorded().stream_version().value();
         self.change(
             event.recorded().stream_id().aggregate_id().as_str(),
             |value| {
-                if !next_organization_event(value, version)? {
+                if !next_fleet_event(value, version)? {
                     return Ok(false);
                 }
-                value.demo = event.event().active;
-                value.organization_version = version;
+                value.rentals_open = event.event().open;
+                value.fleet_version = version;
                 Ok(true)
             },
         )
@@ -314,20 +313,20 @@ impl DomainEventHandler<DemoChanged> for Entitlements {
 }
 
 #[async_trait]
-impl MessageHandler<IntegrationEventAddress> for Entitlements {
+impl MessageHandler<IntegrationEventAddress> for FleetStatusProjection {
     async fn handle(
         &self,
         delivery: MessageDelivery<IntegrationEventAddress>,
     ) -> DeliveryDisposition {
-        let Ok(envelope) =
-            serde_json::from_slice::<IntegrationEventEnvelope<BillingChanged>>(delivery.payload())
-        else {
+        let Ok(envelope) = serde_json::from_slice::<IntegrationEventEnvelope<InspectionChanged>>(
+            delivery.payload(),
+        ) else {
             return DeliveryDisposition::Quarantine(self.invalid_message.clone());
         };
         if envelope.schema_version().get() != 1 {
             return DeliveryDisposition::Quarantine(self.invalid_message.clone());
         }
-        match self.billing_changed(envelope.payload()).await {
+        match self.inspection_changed(envelope.payload()).await {
             Ok(()) => DeliveryDisposition::Acknowledge,
             Err(error) if error.kind() == DomainEventHandlerErrorKind::Retryable => {
                 DeliveryDisposition::RetryAfter(self.retry_delay)
@@ -341,26 +340,26 @@ impl MessageHandler<IntegrationEventAddress> for Entitlements {
 }
 
 #[async_trait]
-impl EntitlementLookup for Entitlements {
-    async fn lookup(&self, organization_id: &str) -> Result<Option<Entitlement>, ReadModelError> {
+impl FleetStatusLookup for FleetStatusProjection {
+    async fn lookup(&self, fleet_id: &str) -> Result<Option<FleetStatus>, ReadModelError> {
         Ok(self
             .store
-            .read(&ReadModelKey::new(organization_id)?)
+            .read(&ReadModelKey::new(fleet_id)?)
             .await?
             .map(|entry| entry.value))
     }
 }
 
-pub struct GetEntitlement {
-    pub lookup: Arc<dyn EntitlementLookup>,
+pub struct GetFleetStatus {
+    pub lookup: Arc<dyn FleetStatusLookup>,
 }
 
 #[async_trait]
-impl QueryHandler<String, Option<Entitlement>> for GetEntitlement {
+impl QueryHandler<String, Option<FleetStatus>> for GetFleetStatus {
     async fn handle(
         &self,
         request: QueryHandlerRequest<String>,
-    ) -> Result<Option<Entitlement>, QueryErrorPayload> {
+    ) -> Result<Option<FleetStatus>, QueryErrorPayload> {
         self.lookup
             .lookup(request.payload())
             .await
@@ -370,7 +369,7 @@ impl QueryHandler<String, Option<Entitlement>> for GetEntitlement {
 
 /// Replays authoritative domain history into a new generation of the read
 /// model, or fills a gap in an existing one. Duplicate replay is harmless.
-/// External billing facts must separately be re-fetched from their authority.
+/// External workshop facts must separately be re-fetched from their authority.
 pub async fn rebuild(
     history: &dyn EventHistory,
     stream: &StreamId,

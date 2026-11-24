@@ -591,7 +591,7 @@ and the dispatch token. Test-state discoveries are not production inputs.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ROSTFREI_NATS_URL` | `nats://127.0.0.1:4222` | NATS connection. |
+| `ROSTFREI_NATS_URL` | Required by `bike-rental-api`; `bike-rental-provision` defaults to `nats://127.0.0.1:4222` | NATS connection. |
 | `ROSTFREI_API_ADDR` | `127.0.0.1:1309` | HTTP listen address. |
 | `ROSTFREI_APPLICATION` | `bike-rental` | Application namespace. |
 | `ROSTFREI_NATS_MESSAGING_STREAM_MAX_BYTES` | 64 MiB | Limit per messaging stream. |

@@ -240,7 +240,7 @@ mod tests {
                 ReadModelErrorKind::InvalidRequest
             );
         }
-        assert!(ReadModelKey::new("org-1.member_2/summary=v1").is_ok());
+        assert!(ReadModelKey::new("fleet-1.bicycle_2/summary=v1").is_ok());
     }
 
     #[test]

@@ -12,8 +12,8 @@ mod recovery;
 use std::{num::NonZeroU32, sync::Arc};
 
 use application::{
-    BillingChanged, DemoChanged, Entitlement, EntitlementLookup, Entitlements, ExampleResult,
-    GetEntitlement, MemberJoined, OrganizationEvent, rebuild,
+    BicycleRegistered, ExampleResult, FleetEvent, FleetStatus, FleetStatusLookup,
+    FleetStatusProjection, GetFleetStatus, InspectionChanged, RentalWindowChanged, rebuild,
 };
 use rostfrei_core::{
     AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, ExpectedVersion, NewEvent,
@@ -35,27 +35,30 @@ use rostfrei_runtime::{
 
 fn envelope_context() -> ExampleResult<EnvelopeContext> {
     Ok(EnvelopeContext::new(
-        MessageId::new("billing-7")?,
+        MessageId::new("workshop-7")?,
         SchemaVersion::new(1)?,
         CorrelationId::new("example")?,
         None,
     ))
 }
 
-fn billing_delivery(
+fn workshop_delivery(
     context: &rostfrei_runtime::BoundedContext,
 ) -> ExampleResult<MessageDelivery<IntegrationEventAddress>> {
     let envelope = IntegrationEventEnvelope::new(
         envelope_context()?,
         MessageTimestamp::from_unix_milliseconds(1)?,
-        BillingChanged {
-            organization_id: "org-1".to_owned(),
+        InspectionChanged {
+            fleet_id: "fleet-1".to_owned(),
             source_version: 7,
-            paid: true,
+            inspection_passed: true,
         },
     )?;
     Ok(MessageDelivery::new(
-        context.integration_event_address("billing-changed")?,
+        context
+            .application()
+            .bounded_context("workshop")?
+            .integration_event_address("inspection-changed")?,
         envelope.message_id().clone(),
         serde_json::to_vec(&envelope)?,
         CallerMetadata::default(),
@@ -71,30 +74,27 @@ async fn multiple_handlers_merge_checkpoints_and_rebuild_from_authoritative_hist
         native_connection_support::client(rostfrei_testing::integration::nats_url()?).await?;
     let jetstream = async_nats::jetstream::new(client);
     let context = ApplicationName::new(format!("read-model-projection-{}", std::process::id()))?
-        .bounded_context("access")?;
+        .bounded_context("bike-rental")?;
     let events = NatsEventStoreConfig::for_bounded_context(&context)?
         .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
     provision_event_store(&jetstream, &events).await?;
     let history = NatsEventStore::connect(jetstream.clone(), events.clone()).await?;
-    let config = NatsReadModelConfig::new(&context, "entitlements")?;
+    let config = NatsReadModelConfig::new(&context, "fleet-status")?;
     provision_read_model(&jetstream, &config).await?;
     let store = Arc::new(
         NatsReadModelStore::connect(
             jetstream.clone(),
             config.clone(),
-            JsonReadModelCodec::<Entitlement>::new(NonZeroU32::MIN),
+            JsonReadModelCodec::<FleetStatus>::new(NonZeroU32::MIN),
         )
         .await?,
     );
-    let handlers = Arc::new(Entitlements::new(store.clone())?);
+    let handlers = Arc::new(FleetStatusProjection::new(store.clone())?);
     let dispatcher = handlers.dispatcher()?;
-    let stream = StreamId::new(
-        AggregateType::new("organization")?,
-        AggregateId::new("org-1")?,
-    );
+    let stream = StreamId::new(AggregateType::new("fleet")?, AggregateId::new("fleet-1")?);
     let source_events = [
-        OrganizationEvent::MemberJoined(MemberJoined),
-        OrganizationEvent::DemoChanged(DemoChanged { active: true }),
+        FleetEvent::BicycleRegistered(BicycleRegistered),
+        FleetEvent::RentalWindowChanged(RentalWindowChanged { open: true }),
     ];
     let operation = OperationId::new("projection-operation")?;
     let commit = derive_commit_id(&stream, &operation);
@@ -124,34 +124,34 @@ async fn multiple_handlers_merge_checkpoints_and_rebuild_from_authoritative_hist
         dispatcher.dispatch(second).await.unwrap_err().kind(),
         DomainEventHandlerErrorKind::OperatorBlocking
     );
-    let key = ReadModelKey::new("org-1")?;
+    let key = ReadModelKey::new("fleet-1")?;
     assert!(store.read(&key).await?.is_none()); // A gap never advances the checkpoint.
 
     let (domain, integration) = tokio::join!(
         rebuild(&history, &stream, &dispatcher),
-        MessageHandler::handle(handlers.as_ref(), billing_delivery(&context)?)
+        MessageHandler::handle(handlers.as_ref(), workshop_delivery(&context)?)
     );
     domain?;
     assert_eq!(integration, DeliveryDisposition::Acknowledge);
-    let expected = Entitlement {
-        members: 1,
-        demo: true,
-        paid: true,
-        organization_version: 2,
-        billing_version: 7,
+    let expected = FleetStatus {
+        bicycles_registered: 1,
+        rentals_open: true,
+        inspection_passed: true,
+        fleet_version: 2,
+        inspection_version: 7,
     };
-    assert_eq!(handlers.lookup("org-1").await?, Some(expected.clone()));
+    assert_eq!(handlers.lookup("fleet-1").await?, Some(expected.clone()));
     let before_duplicates = store.read(&key).await?.ok_or("missing snapshot")?.revision;
     rebuild(&history, &stream, &dispatcher).await?;
     assert_eq!(
-        MessageHandler::handle(handlers.as_ref(), billing_delivery(&context)?).await,
+        MessageHandler::handle(handlers.as_ref(), workshop_delivery(&context)?).await,
         DeliveryDisposition::Acknowledge
     );
     handlers
-        .billing_changed(&BillingChanged {
-            organization_id: "org-1".to_owned(),
+        .inspection_changed(&InspectionChanged {
+            fleet_id: "fleet-1".to_owned(),
             source_version: 6,
-            paid: false,
+            inspection_passed: false,
         })
         .await?;
     assert_eq!(
@@ -159,13 +159,13 @@ async fn multiple_handlers_merge_checkpoints_and_rebuild_from_authoritative_hist
         before_duplicates
     );
 
-    let query = GetEntitlement { lookup: handlers };
+    let query = GetFleetStatus { lookup: handlers };
     let request = QueryHandlerRequest::new(
         envelope_context()?,
         MessageTimestamp::from_unix_milliseconds(1)?,
         CallerMetadata::default(),
         None,
-        "org-1".to_owned(),
+        "fleet-1".to_owned(),
     )?;
     assert_eq!(
         query
@@ -177,35 +177,35 @@ async fn multiple_handlers_merge_checkpoints_and_rebuild_from_authoritative_hist
 
     // Rebuild into a separately provisioned generation, leaving the serving
     // snapshot available until application-owned cutover.
-    let next = NatsReadModelConfig::new(&context, "entitlements-rebuild")?;
+    let next = NatsReadModelConfig::new(&context, "fleet-status-rebuild")?;
     provision_read_model(&jetstream, &next).await?;
     let next_store = Arc::new(
         NatsReadModelStore::connect(
             jetstream.clone(),
             next.clone(),
-            JsonReadModelCodec::<Entitlement>::new(NonZeroU32::MIN),
+            JsonReadModelCodec::<FleetStatus>::new(NonZeroU32::MIN),
         )
         .await?,
     );
-    let rebuilt = Arc::new(Entitlements::new(next_store)?);
+    let rebuilt = Arc::new(FleetStatusProjection::new(next_store)?);
     rebuild(&history, &stream, &rebuilt.dispatcher()?).await?;
     assert!(
         !rebuilt
-            .lookup("org-1")
+            .lookup("fleet-1")
             .await?
             .ok_or("missing rebuilt snapshot")?
-            .paid
+            .inspection_passed
     );
-    // Billing is re-fetched from its authoritative owner; domain history alone
+    // Inspection is re-fetched from its authoritative owner; domain history alone
     // cannot recreate external-source facts.
     rebuilt
-        .billing_changed(&BillingChanged {
-            organization_id: "org-1".to_owned(),
+        .inspection_changed(&InspectionChanged {
+            fleet_id: "fleet-1".to_owned(),
             source_version: 7,
-            paid: true,
+            inspection_passed: true,
         })
         .await?;
-    assert_eq!(rebuilt.lookup("org-1").await?, Some(expected));
+    assert_eq!(rebuilt.lookup("fleet-1").await?, Some(expected));
     for stream in [
         config.stream_name(),
         next.stream_name(),
