@@ -14,21 +14,30 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: prepare-release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
+  security:
+    name: Security gate
+    uses: ./.github/workflows/security.yml
+
   prepare-release:
     name: Create draft release
+    needs: security
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
       - name: Install the repository Rust toolchain
         run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Validate release
         env:
           GH_TOKEN: ${{ github.token }}

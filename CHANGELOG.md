@@ -8,6 +8,19 @@ All notable changes to this project are documented in this file.
   release-matched Agent Skills (`--no-skills` to skip) and a runnable rental
   command demonstrating durable replay on JetStream.
 
+### Security
+
+- Refresh Rust TLS, certificate trust, Tokio and rustix dependencies in both
+  lockfiles, including the lock packaged with future CLI releases.
+- Update `url` to 2.5.9 in both Rust lockfiles to fix the nested `blob:` URL
+  stack overflow (RUSTSEC-2026-0592).
+- Update frontend and experimental MCP reader dependencies to address known
+  advisories, including deserialization, archive extraction and development
+  tooling issues.
+- Gate release preparation on Rust/JavaScript dependency audits and a source
+  secret scan, also run weekly and on PRs. Pin release/security workflow actions
+  to commits and add scheduled dependency-update PRs.
+
 ## [0.2.3] - 2026-11-19
 
 ### Added

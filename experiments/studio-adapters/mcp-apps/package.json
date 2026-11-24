@@ -20,17 +20,17 @@
     "@modelcontextprotocol/ext-apps": "2.0.4",
     "@modelcontextprotocol/server": "2.4.0",
     "ajv": "8.20.0",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@rostfrei/ui": "file:../../../packages/ui",
-    "@modelcontextprotocol/inspector": "2.14.0",
+    "@modelcontextprotocol/inspector": "2.16.0",
     "@types/node": "24.10.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "esbuild": "0.25.12",
     "mermaid": "12.3.0",
-    "puppeteer-core": "24.37.5",
+    "puppeteer-core": "25.18.1",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "typescript": "5.9.3"
