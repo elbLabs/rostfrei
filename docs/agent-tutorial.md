@@ -133,8 +133,9 @@ host uses the application's real handlers, workers, fixtures and NATS store.
 
 ### 4. Discover, run, inspect, pause
 
-Use the skill's bounded, authenticated `/catalog` request and advertised links
-to confirm the host, schema contracts, registered definitions and fixtures.
+Use the skill's linked HTTP reference for a bounded, authenticated `/catalog`
+request and advertised links to confirm the host, schema contracts, registered
+definitions and fixtures.
 Prepare a new writable `EVIDENCE_DIR` outside the checkout to hold both saved
 JSON results. Follow the [guided tutorial reference](../.agents/skills/rostfrei-tracer/references/guided-tutorial.md):
 
