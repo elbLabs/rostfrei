@@ -195,17 +195,17 @@ where A: AggregateDefinition<Event = Self>
       "Explicit bounded context",
       "Handler loads participating aggregates",
     ],
-    file: "src/domain/bike_rental/rental_fleet/rent_bicycle/command.rs",
+    file: "src/domain/bike_rental/rental_fleet/collect_reserved_bicycle/command.rs",
     authored: getMacroCode("Command"),
-    generated: `impl Command for RentBicycle {
+    generated: `impl Command for CollectReservedBicycle {
     type Context = BikeRental;
-    const LOCAL_ID: &str = "rent-bicycle";
-    const LABEL: &str = "Rent bicycle";
-    const SCHEMA_VERSION: u32 = 2;
+    const LOCAL_ID: &str = "collect-reserved-bicycle";
+    const LABEL: &str = "Collect reserved bicycle";
+    const SCHEMA_VERSION: u32 = 1;
     const FIELDS: &[FieldDescriptor] = /* … */;
 }
 
-impl JsonCommandPayload for RentBicycle {
+impl JsonCommandPayload for CollectReservedBicycle {
     fn encode_json(&self) -> Result<Value, String> { /* … */ }
     fn decode_json(value: &Value) -> Result<Self, String> { /* … */ }
 }`,

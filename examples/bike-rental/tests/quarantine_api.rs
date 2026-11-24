@@ -1,11 +1,11 @@
+mod support;
+rostfrei::install_macro_support!();
 use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode},
 };
-use bike_rental::{
-    BikeRentalNatsConfig, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime, demo::demo_fixture,
-};
+use bike_rental::{BikeRentalNatsConfig, BikeRentalNatsResourceLimits, demo::demo_fixture};
 use http_body_util::BodyExt as _;
 use rostfrei::DomainRegistry;
 use rostfrei::nats::{NatsConnectionConfig, connect};
@@ -15,6 +15,7 @@ use rostfrei::tracer::{
 };
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
+use support::BikeRentalNatsRuntime;
 use tower::ServiceExt as _;
 
 #[allow(clippy::unwrap_used)]

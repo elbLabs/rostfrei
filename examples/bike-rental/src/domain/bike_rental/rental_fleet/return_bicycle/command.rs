@@ -2,7 +2,7 @@ use rostfrei::Command;
 
 use crate::domain::{
     BikeRental,
-    rental_fleet::{BicycleId, FleetId},
+    rental_fleet::{BicycleId, FleetId, ReturnTime},
 };
 
 #[derive(Command, Clone, Debug, Eq, PartialEq)]
@@ -15,4 +15,6 @@ use crate::domain::{
 pub struct ReturnBicycle {
     pub fleet_id: FleetId,
     pub bicycle_id: BicycleId,
+    pub damage_report: Option<String>,
+    pub returned_at: Option<ReturnTime>,
 }

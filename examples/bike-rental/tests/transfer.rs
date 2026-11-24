@@ -4,7 +4,8 @@ use bike_rental::{
     BikeRentalCommand, BikeRentalNatsConfig, BikeRentalNatsResourceLimits, BikeRentalNatsRuntime,
     demo::{apply_demo_fixture, demo_stream, seed_demo},
     rental_fleet::{
-        self, BicycleCondition, BicycleId, BicycleStatus, BicycleTransferRejectionReason,
+        self, AddCategorizedBicycleAction as _, BicycleCategory, BicycleCondition, BicycleId,
+        BicycleStatus, BicycleTransfer, BicycleTransferAction as _, BicycleTransferRejectionReason,
         BicycleTransferredIn, BicycleTransferredOut, FleetId, RentalFleetAggregate,
         TransferBicycle, TransferBicycleHandler,
     },
@@ -25,6 +26,39 @@ use uuid::Uuid;
 const DESTINATION_FLEET_ID: &str = "harbor-fleet";
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
+
+#[test]
+fn transferred_bicycle_retains_its_reservable_category_after_replay() -> TestResult {
+    let mut source =
+        rostfrei::AggregateInstance::<RentalFleetAggregate>::rehydrate(demo_stream(), vec![]);
+    let mut destination = rostfrei::AggregateInstance::<RentalFleetAggregate>::rehydrate(
+        destination_stream()?,
+        vec![],
+    );
+    let category = BicycleCategory::new("electric").ok_or("invalid category")?;
+    source
+        .add_categorized_bicycle(
+            BicycleId::new("bike-42").ok_or("invalid bicycle")?,
+            BicycleCondition::Serviceable,
+            category.clone(),
+        )
+        .map_err(|error| io::Error::other(format!("category setup failed: {error:?}")))?;
+    BicycleTransfer::transfer(&mut source, &mut destination, &transfer_command("bike-42")?)
+        .map_err(|error| io::Error::other(format!("transfer failed: {error:?}")))?;
+    let replay = rostfrei::AggregateInstance::<RentalFleetAggregate>::rehydrate(
+        destination_stream()?,
+        destination.into_parts().2,
+    );
+    ensure(
+        replay
+            .state()
+            .bicycles()
+            .first()
+            .and_then(|bike| bike.category())
+            == Some(&category),
+        "transfer lost the bicycle's reservation category",
+    )
+}
 
 #[tokio::test]
 async fn executor_atomically_transfers_replays_and_rejects_in_memory() -> TestResult {

@@ -4,10 +4,9 @@
 )]
 
 use async_trait::async_trait;
-use bike_rental::{
-    demo::{demo_fixture, demo_stream, seed_demo},
-    tracer,
-};
+mod support;
+rostfrei::install_macro_support!();
+use bike_rental::demo::{demo_fixture, demo_stream, seed_demo};
 use futures_util::{StreamExt as _, TryStreamExt as _};
 use rostfrei::messaging::{
     DeliveryDisposition, IntegrationEventAddress, MessageDelivery, MessageHandler,
@@ -21,6 +20,7 @@ use rostfrei::tracer::{
 use rostfrei::{ApplicationName, CommittedEventContext, IntegrationEvent, IntegrationEventBus};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, sync::Arc, time::Duration};
+use support::tracer;
 
 #[derive(Deserialize, Serialize)]
 struct ProducerChanged;
@@ -32,7 +32,7 @@ impl IntegrationEvent for ProducerChanged {
 
 struct RentAfterChange;
 impl rostfrei::IntegrationCommandMapper<ProducerChanged> for RentAfterChange {
-    type Command = bike_rental::rental_fleet::RentBicycle;
+    type Command = support::RentBicycle;
     type Error = &'static str;
     fn map(&self, _: &ProducerChanged) -> Result<Self::Command, Self::Error> {
         Ok(Self::Command {

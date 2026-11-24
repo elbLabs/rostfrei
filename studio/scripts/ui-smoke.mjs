@@ -235,9 +235,10 @@ async function checkStudio() {
     await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
     5
   )
-  assert.equal(
-    await page.$$eval("[data-graph-edge]", (edges) => edges.length),
-    4
+  // The run verdict arrives before React Flow measures handles and renders edges.
+  await page.waitForFunction(
+    () => document.querySelectorAll("[data-graph-edge]").length === 4,
+    { timeout: 5000 }
   )
   assert.match(
     await text(page, ".execution-result"),

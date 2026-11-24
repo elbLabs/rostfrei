@@ -22,7 +22,7 @@ fn projects_registered_services_and_omits_unattached_capabilities() {
     let identities = model["domainIdentities"]
         .as_array()
         .expect("domain identities should be an array");
-    assert_eq!(identities.len(), 2);
+    assert_eq!(identities.len(), 6);
     assert!(
         identities
             .iter()
@@ -30,6 +30,10 @@ fn projects_registered_services_and_omits_unattached_capabilities() {
     );
     assert_eq!(identities[0]["id"]["owner"]["local"], "rental-fleet-root");
     assert_eq!(identities[1]["id"]["owner"]["local"], "bicycle");
+    assert_eq!(identities[2]["id"]["owner"]["local"], "reservation");
+    assert_eq!(identities[3]["id"]["owner"]["local"], "repair-job-root");
+    assert_eq!(identities[4]["id"]["owner"]["local"], "rental-tariff-root");
+    assert_eq!(identities[5]["id"]["owner"]["local"], "rental-payment-root");
 
     assert_eq!(
         model["valueObjects"],
@@ -39,7 +43,17 @@ fn projects_registered_services_and_omits_unattached_capabilities() {
             {
                 "id": "bicycle-transfer-rejection-reason",
                 "label": "Bicycle transfer rejection reason"
-            }
+            },
+            { "id": "repair-details", "label": "Repair details" },
+            { "id": "bicycle-category", "label": "Bicycle category" },
+            { "id": "rental-period", "label": "Rental period" },
+            { "id": "rental-tariff-terms", "label": "Rental tariff terms" },
+            { "id": "rental-quote", "label": "Rental quote" },
+            { "id": "collection-payment", "label": "Collection payment" },
+            { "id": "collection-assignment", "label": "Collection assignment" },
+            { "id": "payment-outcome", "label": "Payment outcome" },
+            { "id": "rental-return", "label": "Rental return" },
+            { "id": "return-time", "label": "Return time" }
         ])
     );
 
@@ -61,12 +75,14 @@ fn projects_registered_services_and_omits_unattached_capabilities() {
         .expect("bicycle entity should be projected");
     assert!(bicycle["identity"].get("field").is_none());
     assert_eq!(bicycle["identity"]["owner"]["local"], "bicycle");
-    assert!(
-        bicycle["fields"]
-            .as_array()
-            .expect("bicycle fields should be an array")
-            .iter()
-            .all(|field| field["value"]["kind"] == "opaque")
+    assert_eq!(
+        bicycle["fields"],
+        json!([
+            {"name": "bicycle_id", "value": {"kind": "opaque"}},
+            {"name": "status", "value": {"kind": "opaque"}},
+            {"name": "condition", "value": {"kind": "opaque"}},
+            {"name": "category", "value": {"kind": "optional", "value": {"kind": "opaque"}}}
+        ])
     );
     assert_eq!(bicycle["lifecycle"], json!(null));
 }

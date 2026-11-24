@@ -1,6 +1,6 @@
 # `Command`
 
-Declares a bounded-context command and generates its JSON payload codec. Set `context` to the owning bounded context and include every required aggregate ID in the payload. The schema version defaults to 1; the rental example explicitly uses version 2.
+Declares a bounded-context command and generates its JSON payload codec. Set `context` to the owning bounded context and include every required aggregate ID in the payload. The schema version defaults to 1.
 
 The registered handler loads the participating aggregates and declares the command's rejection type.
 
@@ -9,13 +9,15 @@ The registered handler loads the participating aggregates and declares the comma
 ```rust
 #[derive(Command, Clone, Debug)]
 #[domain(
-    id = "rent-bicycle",
-    label = "Rent bicycle",
-    context = BikeRental,
-    schema_version = 2
+    id = "collect-reserved-bicycle",
+    label = "Collect reserved bicycle",
+    context = BikeRental
 )]
-pub struct RentBicycle {
+pub struct CollectReservedBicycle {
     pub fleet_id: FleetId,
+    pub reservation_id: ReservationId,
     pub bicycle_id: BicycleId,
+    pub payment_id: PaymentId,
+    pub payment_method: String,
 }
 ```

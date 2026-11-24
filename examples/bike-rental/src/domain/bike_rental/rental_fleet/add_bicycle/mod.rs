@@ -7,7 +7,7 @@ mod handler;
 mod rejection;
 
 pub use action::AddBicycleAction;
-pub use command::AddBicycle;
+pub use command::RegisterBicycle;
 pub use event::BicycleAdded;
-pub use handler::AddBicycleHandler;
+pub use handler::RegisterBicycleHandler;
 pub use rejection::BicycleAlreadyInFleet;

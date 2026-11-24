@@ -63,12 +63,19 @@ impl BicycleTransferAction for BicycleTransfer {
         }
 
         let condition = source_bicycle.condition();
+        let category = source_bicycle.category().cloned();
         source.transfer_bicycle_out(
             command.bicycle_id.clone(),
             command.to_fleet_id.clone(),
             condition,
+            category.clone(),
         );
-        destination.transfer_bicycle_in(command.bicycle_id.clone(), from_fleet_id, condition);
+        destination.transfer_bicycle_in(
+            command.bicycle_id.clone(),
+            from_fleet_id,
+            condition,
+            category,
+        );
         Ok(())
     }
 }

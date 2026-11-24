@@ -3,7 +3,7 @@ use rostfrei::domain_action;
 use super::BicycleAlreadyInFleet;
 use crate::domain::rental_fleet::{BicycleCondition, BicycleId};
 
-#[domain_action(id = "add-bicycle", label = "Add bicycle")]
+#[domain_action(id = "register-bicycle", label = "Register bicycle")]
 pub trait AddBicycleAction {
     fn add_bicycle(
         &mut self,

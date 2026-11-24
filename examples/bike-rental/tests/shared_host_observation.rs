@@ -7,11 +7,10 @@
 use std::{error::Error, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+mod support;
+rostfrei::install_macro_support!();
 use axum::{body::Body, http::Request};
-use bike_rental::{
-    demo::{demo_fixture, demo_stream, seed_demo},
-    tracer,
-};
+use bike_rental::demo::{demo_fixture, demo_stream, seed_demo};
 use http_body_util::BodyExt as _;
 use rostfrei::nats::{NatsConnectionConfig, connect};
 use rostfrei::tracer::{
@@ -23,6 +22,7 @@ use rostfrei::tracer::{
 };
 use rostfrei::{ApplicationName, Command, OperationId};
 use serde_json::{Value, json};
+use support::tracer;
 use tower::ServiceExt as _;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -44,12 +44,12 @@ async fn rent(runtime: &NatsRuntime, correlation: &str) -> TestResult {
                 command_execution_fingerprint(
                     "bike-rental",
                     "rent-bicycle",
-                    bike_rental::rental_fleet::RentBicycle::SCHEMA_VERSION,
+                    support::RentBicycle::SCHEMA_VERSION,
                     &payload,
                 ),
                 "bike-rental",
                 "rent-bicycle",
-                bike_rental::rental_fleet::RentBicycle::SCHEMA_VERSION,
+                support::RentBicycle::SCHEMA_VERSION,
                 payload,
             ),
             Arc::new(Observer),

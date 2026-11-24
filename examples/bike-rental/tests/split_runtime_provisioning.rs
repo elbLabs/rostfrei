@@ -6,11 +6,9 @@
 use std::{error::Error, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use bike_rental::{
-    demo::{demo_fixture, demo_stream},
-    rental_fleet::RentBicycle,
-    tracer,
-};
+mod support;
+rostfrei::install_macro_support!();
+use bike_rental::demo::{demo_fixture, demo_stream};
 use rostfrei::nats::{NatsConnectionConfig, connect};
 use rostfrei::tracer::{
     CommandInvocation, CommandOutcome, CommandPublication, CommandTransportObserver,
@@ -18,6 +16,7 @@ use rostfrei::tracer::{
 };
 use rostfrei::{ApplicationName, Command, OperationId};
 use serde_json::json;
+use support::{RentBicycle, tracer};
 
 struct Observer;
 #[async_trait]
