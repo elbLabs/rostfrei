@@ -1,13 +1,14 @@
 # Read-model query benchmarks
 
-The benchmark compares an organization-access query over two linked aggregates:
-organization membership and billing seats. Every path returns and serializes the
+The benchmark asks how many docks a station has left after allocating one per
+registered bicycle. The fleet history identifies its station and bicycles; the
+station history supplies its dock count. Every path returns and serializes the
 same JSON, checked byte-for-byte on every query.
 
 | Path | Timed work |
 | --- | --- |
 | `kv_snapshot` | Read one typed KV value and decode its versioned envelope. |
-| `replay_sequential` | Load/replay organization history, discover the billing ID, then load/replay billing history and join. |
+| `replay_sequential` | Replay the fleet, discover its station ID, then replay the station and join. |
 | `replay_parallel` | Load both histories concurrently with both IDs known, replay, and join. |
 | `replay_loaded_history` | Decode/apply already-loaded validated histories and join. |
 
@@ -52,12 +53,13 @@ environment, and raw results alongside performance reports.
 
 ## Interpretation
 
-The workload has warm history, one organization/billing pair per case, no concurrent
+The workload has warm history, one fleet/station pair per case, no concurrent
 writers, and one replica. It does not measure saturation, consumer lag, cold disk,
 or production contention. Loaded-history replay separates CPU work from retrieval;
 KV shifts materialization cost into event processing and can lag its sources.
 Replaying changing streams also needs an application consistency contract.
 
 The historical paired reports in this directory are retained as comparison-format
-regression fixtures. Rerun current binaries for performance claims. See
+regression fixtures. For timing comparisons, run both revisions with the same
+workload and payload sizes. See
 [read models](../read-models.md) for runtime tradeoffs.

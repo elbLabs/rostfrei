@@ -108,8 +108,8 @@ async fn check_account_quota(
     storage: StreamStorage,
     raw_storage: StorageType,
 ) -> TestResult {
-    let context_name = ApplicationName::new("quota-test")?.bounded_context("access")?;
-    let config = NatsReadModelConfig::new(&context_name, "entitlements")?
+    let context_name = ApplicationName::new("quota-test")?.bounded_context("bike-rental")?;
+    let config = NatsReadModelConfig::new(&context_name, "fleet-status")?
         .with_storage(storage)
         .with_storage_limits(16 * 1024, 2048)?;
     provision_read_model(context, &config).await?;

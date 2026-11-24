@@ -270,12 +270,12 @@ mod tests {
 
     #[test]
     fn application_binds_addresses_to_one_bounded_context() {
-        let application = ApplicationName::new("fast-inbox").unwrap();
-        let context = application.bounded_context("commercial-access").unwrap();
+        let application = ApplicationName::new("bike-rental-demo").unwrap();
+        let context = application.bounded_context("bike-rental").unwrap();
 
         assert_eq!(
-            context.command_address("evaluate").unwrap().as_str(),
-            "fast-inbox.command.commercial-access.evaluate"
+            context.command_address("rent-bicycle").unwrap().as_str(),
+            "bike-rental-demo.command.bike-rental.rent-bicycle"
         );
         assert_eq!(
             context
@@ -283,37 +283,43 @@ mod tests {
                 .unwrap()
                 .as_str(),
             format!(
-                "fast-inbox.command-response.commercial-access.{}",
+                "bike-rental-demo.command-response.bike-rental.{}",
                 "a".repeat(64)
             )
         );
         assert_eq!(
             context
-                .integration_event_address("entitlement-changed")
+                .integration_event_address("bicycle-rental-started")
                 .unwrap()
                 .as_str(),
-            "fast-inbox.integration.commercial-access.entitlement-changed"
+            "bike-rental-demo.integration.bike-rental.bicycle-rental-started"
         );
         assert_eq!(
             context
-                .query_address("current-entitlement")
+                .query_address("bicycle-availability")
                 .unwrap()
                 .as_str(),
-            "fast-inbox.query.commercial-access.current-entitlement"
+            "bike-rental-demo.query.bike-rental.bicycle-availability"
         );
         assert_eq!(
-            context.consumer_name("evaluate", 1).unwrap().as_str(),
-            "fast-inbox--commercial-access--evaluate--v1"
+            context.consumer_name("rent-bicycle", 1).unwrap().as_str(),
+            "bike-rental-demo--bike-rental--rent-bicycle--v1"
         );
         assert_eq!(
-            context.durable_name("evaluate", 1).unwrap().as_str(),
-            "fast-inbox--commercial-access--evaluate--v1"
+            context.durable_name("rent-bicycle", 1).unwrap().as_str(),
+            "bike-rental-demo--bike-rental--rent-bicycle--v1"
         );
     }
 
     #[test]
     fn scope_names_are_lowercase_kebab_case() {
-        for invalid in ["", "Fast-Inbox", "fast_inbox", "-fast-inbox", "fast--inbox"] {
+        for invalid in [
+            "",
+            "Bike-Rental",
+            "bike_rental",
+            "-bike-rental-demo",
+            "bike--rental",
+        ] {
             assert!(ApplicationName::new(invalid).is_err(), "{invalid}");
             assert!(BoundedContextName::new(invalid).is_err(), "{invalid}");
         }
@@ -321,19 +327,17 @@ mod tests {
 
     #[test]
     fn test_context_derives_the_opinionated_test_namespace() {
-        let application = ApplicationName::new("fast-inbox").unwrap();
-        let context = application
-            .test_bounded_context("commercial-access")
-            .unwrap();
+        let application = ApplicationName::new("bike-rental-demo").unwrap();
+        let context = application.test_bounded_context("bike-rental").unwrap();
 
         assert_eq!(context.traffic_scope(), TrafficScope::Test);
         assert_eq!(
-            context.command_address("evaluate").unwrap().as_str(),
-            "fast-inbox.test.command.commercial-access.evaluate"
+            context.command_address("rent-bicycle").unwrap().as_str(),
+            "bike-rental-demo.test.command.bike-rental.rent-bicycle"
         );
         assert_eq!(
-            context.consumer_name("evaluate", 1).unwrap().as_str(),
-            "fast-inbox--test--commercial-access--evaluate--v1"
+            context.consumer_name("rent-bicycle", 1).unwrap().as_str(),
+            "bike-rental-demo--test--bike-rental--rent-bicycle--v1"
         );
     }
 }

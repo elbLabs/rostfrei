@@ -3,6 +3,6 @@ mod support;
 rostfrei::install_macro_support!();
 
 fn mutate(reader: &rostfrei::ReadModelReader<support::View>) {
-    reader.delete("org-1");
+    reader.delete("fleet-1");
 }
 fn main() {}

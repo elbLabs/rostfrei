@@ -11,29 +11,29 @@ use rostfrei_runtime::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ApplicationMessagingConfig, BillingChanged as VersionedBilling, CallerMetadata,
-    DeliveryDisposition, DeliveryInfo, Fixture, IntegrationEventEnvelope, MessageDelivery,
-    MessageTimestamp, NatsPublisher, NatsReadModelConfig, NatsReadModelConsumerOptions,
-    NatsReadModelWorker, OrganizationAccess, OutboundMessage, ReadModelKey, ReadModelStore,
-    RebuiltAccess, TestResult, application, envelope,
+    ApplicationMessagingConfig, CallerMetadata, DeliveryDisposition, DeliveryInfo, Fixture,
+    FleetStatus, InspectionChanged as VersionedInspection, IntegrationEventEnvelope,
+    MessageDelivery, MessageTimestamp, NatsPublisher, NatsReadModelConfig,
+    NatsReadModelConsumerOptions, NatsReadModelWorker, OutboundMessage, ReadModelKey,
+    ReadModelStore, RebuiltFleetStatus, TestResult, application, envelope,
     faults::{Backend, Faults},
     provision_application_messaging, provision_read_model, provision_read_model_consumers, source,
 };
 
 #[derive(Serialize, Deserialize)]
-struct Revoked {
-    organization_id: String,
+struct InspectionRevoked {
+    fleet_id: String,
 }
 
-impl IntegrationEvent for Revoked {
-    const EVENT_NAME: &'static str = "billing-revoked";
+impl IntegrationEvent for InspectionRevoked {
+    const EVENT_NAME: &'static str = "inspection-revoked";
     const SCHEMA_VERSION: u32 = 1;
-    const BOUNDED_CONTEXT: Option<&'static str> = Some("billing");
+    const BOUNDED_CONTEXT: Option<&'static str> = Some("workshop");
 }
 
 #[derive(Serialize, Deserialize)]
 struct LocalEvent {
-    organization_id: String,
+    fleet_id: String,
 }
 
 impl IntegrationEvent for LocalEvent {
@@ -78,18 +78,18 @@ async fn simple_example_defaults_to_broker_sequence_and_declared_producer() -> T
     assert_eq!(
         binding.address(),
         &fixture
-            .billing
-            .integration_event_address("billing-changed")?
+            .workshop
+            .integration_event_address("inspection-changed")?
     );
-    let event = source::BillingChanged {
-        organization_id: "org-1".to_owned(),
-        paid: true,
+    let event = source::InspectionChanged {
+        fleet_id: "fleet-1".to_owned(),
+        inspection_passed: true,
     };
     assert_eq!(
         deliver_at(&model, &event, "first", 400, 1).await?,
         DeliveryDisposition::Acknowledge
     );
-    let key = ReadModelKey::new("org-1")?;
+    let key = ReadModelKey::new("fleet-1")?;
     let revision = fixture
         .state()
         .await?
@@ -111,15 +111,22 @@ async fn simple_example_defaults_to_broker_sequence_and_declared_producer() -> T
             .revision,
         revision
     );
-    let later = source::BillingChanged {
-        organization_id: "org-1".to_owned(),
-        paid: false,
+    let later = source::InspectionChanged {
+        fleet_id: "fleet-1".to_owned(),
+        inspection_passed: false,
     };
     assert_eq!(
         deliver_at(&model, &later, "later", 401, 3).await?,
         DeliveryDisposition::Acknowledge
     );
-    assert!(!model.reader().read(&key).await?.ok_or("missing")?.paid);
+    assert!(
+        !model
+            .reader()
+            .read(&key)
+            .await?
+            .ok_or("missing")?
+            .inspection_passed
+    );
     fixture.cleanup().await
 }
 
@@ -128,24 +135,24 @@ async fn business_versions_override_arrival_order_when_explicitly_requested() ->
     let fixture = Fixture::new().await?;
     let models = ReadModels::new(fixture.context.clone(), fixture.backend());
     let broker = models
-        .register::<OrganizationAccess>()
-        .on_integration_event::<VersionedBilling>(
-            |event| event.organization_id.clone(),
-            |view, event| view.paid = event.paid,
+        .register::<FleetStatus>()
+        .on_integration_event::<VersionedInspection>(
+            |event| event.fleet_id.clone(),
+            |view, event| view.inspection_passed = event.inspection_passed,
         )
         .build()
         .await?;
-    let policy = NatsReadModelConfig::for_model::<RebuiltAccess>(&fixture.context)?;
+    let policy = NatsReadModelConfig::for_model::<RebuiltFleetStatus>(&fixture.context)?;
     provision_read_model(&fixture.js, &policy).await?;
     let business = models
-        .register::<RebuiltAccess>()
-        .on_integration_event::<VersionedBilling>(
-            |event| event.organization_id.clone(),
-            |view, event| view.0.paid = event.paid,
+        .register::<RebuiltFleetStatus>()
+        .on_integration_event::<VersionedInspection>(
+            |event| event.fleet_id.clone(),
+            |view, event| view.0.inspection_passed = event.inspection_passed,
         )
-        .integration_source::<VersionedBilling>(
-            fixture.billing.clone(),
-            IntegrationEventOrder::<VersionedBilling>::latest("billing", |event| {
+        .integration_source::<VersionedInspection>(
+            fixture.workshop.clone(),
+            IntegrationEventOrder::<VersionedInspection>::latest("workshop", |event| {
                 event.source_version
             }),
         )
@@ -158,14 +165,14 @@ async fn business_versions_override_arrival_order_when_explicitly_requested() ->
             .ok_or("missing")?
             .is_broker_ordered()
     );
-    for (id, source_sequence, consumer_sequence, version, paid) in [
+    for (id, source_sequence, consumer_sequence, version, inspection_passed) in [
         ("new-fact", 10, 1, 8, false),
         ("late-old-fact", 11, 2, 7, true),
     ] {
-        let event = VersionedBilling {
-            organization_id: "org-1".to_owned(),
+        let event = VersionedInspection {
+            fleet_id: "fleet-1".to_owned(),
             source_version: version,
-            paid,
+            inspection_passed,
         };
         assert_eq!(
             deliver_at(&broker, &event, id, source_sequence, consumer_sequence).await?,
@@ -176,9 +183,24 @@ async fn business_versions_override_arrival_order_when_explicitly_requested() ->
             DeliveryDisposition::Acknowledge
         );
     }
-    let key = ReadModelKey::new("org-1")?;
-    assert!(broker.reader().read(&key).await?.ok_or("missing")?.paid);
-    assert!(!business.reader().read(&key).await?.ok_or("missing")?.0.paid);
+    let key = ReadModelKey::new("fleet-1")?;
+    assert!(
+        broker
+            .reader()
+            .read(&key)
+            .await?
+            .ok_or("missing")?
+            .inspection_passed
+    );
+    assert!(
+        !business
+            .reader()
+            .read(&key)
+            .await?
+            .ok_or("missing")?
+            .0
+            .inspection_passed
+    );
     fixture.js.delete_stream(policy.stream_name()).await?;
     fixture.cleanup().await
 }
@@ -188,8 +210,8 @@ async fn undeclared_producers_default_locally_and_allow_a_context_only_override(
     let fixture = Fixture::new().await?;
     let models = ReadModels::new(fixture.context.clone(), fixture.backend());
     let local = models
-        .register::<OrganizationAccess>()
-        .on_integration_event::<LocalEvent>(|event| event.organization_id.clone(), |_, _| {})
+        .register::<FleetStatus>()
+        .on_integration_event::<LocalEvent>(|event| event.fleet_id.clone(), |_, _| {})
         .build()
         .await?;
     assert_eq!(
@@ -201,9 +223,9 @@ async fn undeclared_producers_default_locally_and_allow_a_context_only_override(
         &fixture.context.integration_event_address("local-event")?
     );
     let other = ReadModels::new(fixture.context.clone(), fixture.backend())
-        .register::<OrganizationAccess>()
-        .on_integration_event::<LocalEvent>(|event| event.organization_id.clone(), |_, _| {})
-        .integration_context::<LocalEvent>(fixture.billing.clone())
+        .register::<FleetStatus>()
+        .on_integration_event::<LocalEvent>(|event| event.fleet_id.clone(), |_, _| {})
+        .integration_context::<LocalEvent>(fixture.workshop.clone())
         .build()
         .await?;
     assert_eq!(
@@ -212,15 +234,15 @@ async fn undeclared_producers_default_locally_and_allow_a_context_only_override(
             .first()
             .ok_or("missing")?
             .address(),
-        &fixture.billing.integration_event_address("local-event")?
+        &fixture.workshop.integration_event_address("local-event")?
     );
     let wrong = ReadModels::new(fixture.context.clone(), fixture.backend())
-        .register::<OrganizationAccess>()
-        .on_integration_event::<source::BillingChanged>(
-            |event| event.organization_id.clone(),
+        .register::<FleetStatus>()
+        .on_integration_event::<source::InspectionChanged>(
+            |event| event.fleet_id.clone(),
             |_, _| {},
         )
-        .integration_context::<source::BillingChanged>(fixture.context.clone())
+        .integration_context::<source::InspectionChanged>(fixture.context.clone())
         .build()
         .await;
     assert!(matches!(
@@ -245,7 +267,7 @@ async fn publish<E: IntegrationEvent>(
         NatsPublisher::new(fixture.js.clone(), messaging.topology().clone())
             .publish_integration_event_with_ack(
                 OutboundMessage::json(
-                    fixture.billing.integration_event_address(E::EVENT_NAME)?,
+                    fixture.workshop.integration_event_address(E::EVENT_NAME)?,
                     envelope.message_id().clone(),
                     &envelope,
                 )?,
@@ -272,7 +294,16 @@ async fn inspect_consumer(
 #[allow(clippy::too_many_lines)]
 async fn broker_worker_preserves_cross_type_order_through_retries_and_lost_acknowledgements()
 -> TestResult {
+    #[derive(Default, Deserialize, Serialize, rostfrei_runtime::ReadModel)]
+    #[read_model(id = "inspection-log", version = 1)]
+    struct InspectionLog {
+        updates: u64,
+        passed: bool,
+    }
+
     let fixture = Fixture::new().await?;
+    let policy = NatsReadModelConfig::for_model::<InspectionLog>(&fixture.context)?;
+    provision_read_model(&fixture.js, &policy).await?;
     let faults = Arc::new(Faults::default());
     faults.unavailable_once.store(true, Ordering::SeqCst);
     faults.ambiguous.store(true, Ordering::SeqCst);
@@ -283,19 +314,19 @@ async fn broker_worker_preserves_cross_type_order_through_retries_and_lost_ackno
             faults: faults.clone(),
         },
     )
-    .register::<OrganizationAccess>()
-    .on_integration_event::<source::BillingChanged>(
-        |event| event.organization_id.clone(),
+    .register::<InspectionLog>()
+    .on_integration_event::<source::InspectionChanged>(
+        |event| event.fleet_id.clone(),
         |view, event| {
-            view.members = view.members.saturating_add(1);
-            view.paid = event.paid;
+            view.updates = view.updates.saturating_add(1);
+            view.passed = event.inspection_passed;
         },
     )
-    .on_integration_event::<Revoked>(
-        |event| event.organization_id.clone(),
+    .on_integration_event::<InspectionRevoked>(
+        |event| event.fleet_id.clone(),
         |view, _| {
-            view.members = view.members.saturating_add(1);
-            view.paid = false;
+            view.updates = view.updates.saturating_add(1);
+            view.passed = false;
         },
     )
     .build()
@@ -326,18 +357,18 @@ async fn broker_worker_preserves_cross_type_order_through_retries_and_lost_ackno
     let first = publish(
         &fixture,
         &messaging,
-        source::BillingChanged {
-            organization_id: "org-1".to_owned(),
-            paid: true,
+        source::InspectionChanged {
+            fleet_id: "fleet-1".to_owned(),
+            inspection_passed: true,
         },
-        "grant",
+        "inspection-pass",
     )
     .await?;
     let second = publish(
         &fixture,
         &messaging,
-        Revoked {
-            organization_id: "org-1".to_owned(),
+        InspectionRevoked {
+            fleet_id: "fleet-1".to_owned(),
         },
         "revoke",
     )
@@ -355,10 +386,10 @@ async fn broker_worker_preserves_cross_type_order_through_retries_and_lost_ackno
         }) => result?,
     };
     result?;
-    let key = ReadModelKey::new("org-1")?;
+    let key = ReadModelKey::new("fleet-1")?;
     let view = model.reader().read(&key).await?.ok_or("missing")?;
-    assert_eq!(view.members, 2);
-    assert!(!view.paid);
+    assert_eq!(view.updates, 2);
+    assert!(!view.passed);
     assert_eq!(faults.committed.load(Ordering::SeqCst), 2);
     assert!(inspector.get_info().await?.delivered.consumer_sequence >= 4);
 
@@ -389,5 +420,6 @@ async fn broker_worker_preserves_cross_type_order_through_retries_and_lost_ackno
     for stream in messaging.streams() {
         fixture.js.delete_stream(stream.name().as_str()).await?;
     }
+    fixture.js.delete_stream(policy.stream_name()).await?;
     fixture.cleanup().await
 }

@@ -21,7 +21,7 @@ use std::{
     time::Duration,
 };
 
-use application::{GetAccess, OrganizationAccess};
+use application::{FleetStatus, GetFleetStatus};
 use async_nats::jetstream;
 use rostfrei_core::{
     AggregateCodecs, AggregateId, AggregateType, ContentFingerprint, Event, EventBatch, EventCodec,
@@ -44,47 +44,47 @@ use rostfrei_runtime::{
     QueryHandlerRequest, ReadModelKey, ReadModelProcessingError, ReadModelRuntime, ReadModelState,
     ReadModelStore, ReadModels, TrafficScope,
 };
-use source::{DemoChanged, MemberJoined, Organization, OrganizationEvent, OrganizationRenamed};
+use source::{BicycleRegistered, Fleet, FleetEvent, FleetRenamed, RentalWindowChanged};
 
 rostfrei_runtime::install_macro_support!();
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct BillingChanged {
-    organization_id: String,
+struct InspectionChanged {
+    fleet_id: String,
     source_version: u64,
-    paid: bool,
+    inspection_passed: bool,
 }
 
-impl rostfrei_runtime::IntegrationEvent for BillingChanged {
-    const EVENT_NAME: &'static str = "versioned-billing-changed";
+impl rostfrei_runtime::IntegrationEvent for InspectionChanged {
+    const EVENT_NAME: &'static str = "versioned-inspection-changed";
     const SCHEMA_VERSION: u32 = 1;
-    const BOUNDED_CONTEXT: Option<&'static str> = Some("billing");
+    const BOUNDED_CONTEXT: Option<&'static str> = Some("workshop");
 }
 
 async fn register_business<B: rostfrei_runtime::ReadModelBackend>(
     models: &ReadModels<B>,
-    billing: BoundedContext,
-) -> Result<ReadModelRuntime<OrganizationAccess>, ReadModelProcessingError> {
+    workshop: BoundedContext,
+) -> Result<ReadModelRuntime<FleetStatus>, ReadModelProcessingError> {
     models
-        .register::<OrganizationAccess>()
-        .from_aggregate::<Organization>()
-        .on_domain_event::<MemberJoined>(
-            |event| event.organization_id.clone(),
-            |view, _| view.members = view.members.saturating_add(1),
+        .register::<FleetStatus>()
+        .from_aggregate::<Fleet>()
+        .on_domain_event::<BicycleRegistered>(
+            |event| event.fleet_id.clone(),
+            |view, _| view.bicycles_registered = view.bicycles_registered.saturating_add(1),
         )
-        .on_domain_event::<DemoChanged>(
-            |event| event.organization_id.clone(),
-            |view, event| view.demo = event.active,
+        .on_domain_event::<RentalWindowChanged>(
+            |event| event.fleet_id.clone(),
+            |view, event| view.rentals_open = event.open,
         )
-        .on_integration_event::<BillingChanged>(
-            |event| event.organization_id.clone(),
-            |view, event| view.paid = event.paid,
+        .on_integration_event::<InspectionChanged>(
+            |event| event.fleet_id.clone(),
+            |view, event| view.inspection_passed = event.inspection_passed,
         )
-        .integration_source::<BillingChanged>(
-            billing,
-            IntegrationEventOrder::<BillingChanged>::latest("billing-account", |event| {
+        .integration_source::<InspectionChanged>(
+            workshop,
+            IntegrationEventOrder::<InspectionChanged>::latest("fleet-inspection", |event| {
                 event.source_version
             }),
         )
@@ -93,29 +93,29 @@ async fn register_business<B: rostfrei_runtime::ReadModelBackend>(
 }
 
 #[derive(Default, serde::Serialize, serde::Deserialize, rostfrei_runtime::ReadModel)]
-#[read_model(id = "organization-count", version = 1)]
-struct OrganizationCount {
-    members: u64,
+#[read_model(id = "fleet-count", version = 1)]
+struct FleetCount {
+    bicycles_registered: u64,
 }
 
 #[derive(Default, serde::Serialize, serde::Deserialize, rostfrei_runtime::ReadModel)]
-#[read_model(id = "organization-access-rebuilt", version = 1)]
-struct RebuiltAccess(OrganizationAccess);
+#[read_model(id = "fleet-status-rebuilt", version = 1)]
+struct RebuiltFleetStatus(FleetStatus);
 
-struct SecondaryOrganization;
-impl rostfrei_core::Aggregate for SecondaryOrganization {
+struct SecondaryFleet;
+impl rostfrei_core::Aggregate for SecondaryFleet {
     type State = ();
-    type Event = OrganizationEvent;
-    const BOUNDED_CONTEXT: &'static str = "access";
-    const AGGREGATE_TYPE: &'static str = "secondary-organization";
+    type Event = FleetEvent;
+    const BOUNDED_CONTEXT: &'static str = "bike-rental";
+    const AGGREGATE_TYPE: &'static str = "secondary-fleet";
     fn initial(_: &StreamId) {}
-    fn apply(_state: &mut (), _event: &OrganizationEvent) {}
+    fn apply(_state: &mut (), _event: &FleetEvent) {}
 }
 
 struct Fixture {
     js: jetstream::Context,
     context: BoundedContext,
-    billing: BoundedContext,
+    workshop: BoundedContext,
     events: NatsEventStoreConfig,
     model: NatsReadModelConfig,
     history: NatsEventStore,
@@ -131,18 +131,18 @@ impl Fixture {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ))?;
-        let context = app.bounded_context("access")?;
-        let billing = app.bounded_context("billing")?;
+        let context = app.bounded_context("bike-rental")?;
+        let workshop = app.bounded_context("workshop")?;
         let events = NatsEventStoreConfig::for_bounded_context(&context)?
             .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
         provision_event_store(&js, &events).await?;
         let history = NatsEventStore::connect(js.clone(), events.clone()).await?;
-        let model = NatsReadModelConfig::for_model::<OrganizationAccess>(&context)?;
+        let model = NatsReadModelConfig::for_model::<FleetStatus>(&context)?;
         provision_read_model(&js, &model).await?;
         Ok(Self {
             js,
             context,
-            billing,
+            workshop,
             events,
             model,
             history,
@@ -153,10 +153,10 @@ impl Fixture {
         NatsReadModelBackend::new(self.js.clone()).with_event_store_config(self.events.clone())
     }
 
-    async fn runtime(&self) -> TestResult<ReadModelRuntime<OrganizationAccess>> {
+    async fn runtime(&self) -> TestResult<ReadModelRuntime<FleetStatus>> {
         Ok(register_business(
             &ReadModels::new(self.context.clone(), self.backend()),
-            self.billing.clone(),
+            self.workshop.clone(),
         )
         .await?)
     }
@@ -165,8 +165,8 @@ impl Fixture {
         &self,
     ) -> TestResult<
         NatsReadModelStore<
-            ReadModelState<OrganizationAccess>,
-            JsonReadModelCodec<ReadModelState<OrganizationAccess>>,
+            ReadModelState<FleetStatus>,
+            JsonReadModelCodec<ReadModelState<FleetStatus>>,
         >,
     > {
         Ok(NatsReadModelStore::connect(
@@ -177,15 +177,15 @@ impl Fixture {
         .await?)
     }
 
-    async fn seed(&self, changes: Vec<OrganizationEvent>) -> TestResult<Vec<RecordedEvent>> {
-        self.seed_stream("organization", "org-1", changes).await
+    async fn seed(&self, changes: Vec<FleetEvent>) -> TestResult<Vec<RecordedEvent>> {
+        self.seed_stream("fleet", "fleet-1", changes).await
     }
 
     async fn seed_stream(
         &self,
         aggregate: &str,
         id: &str,
-        changes: Vec<OrganizationEvent>,
+        changes: Vec<FleetEvent>,
     ) -> TestResult<Vec<RecordedEvent>> {
         let encoded = changes
             .iter()
@@ -252,15 +252,15 @@ fn envelope(id: &str) -> TestResult<EnvelopeContext> {
 fn fact(
     id: &str,
     version: u64,
-    paid: bool,
-) -> TestResult<IntegrationEventEnvelope<BillingChanged>> {
+    inspection_passed: bool,
+) -> TestResult<IntegrationEventEnvelope<InspectionChanged>> {
     Ok(IntegrationEventEnvelope::new(
         envelope(id)?,
         MessageTimestamp::from_unix_milliseconds(1)?,
-        BillingChanged {
-            organization_id: "org-1".to_owned(),
+        InspectionChanged {
+            fleet_id: "fleet-1".to_owned(),
             source_version: version,
-            paid,
+            inspection_passed,
         },
     )?)
 }
@@ -269,14 +269,14 @@ async fn deliver<M: rostfrei_runtime::ReadModel>(
     model: &ReadModelRuntime<M>,
     id: &str,
     version: u64,
-    paid: bool,
+    inspection_passed: bool,
 ) -> TestResult<DeliveryDisposition> {
     let binding = model
         .integration_bindings()
         .iter()
-        .find(|binding| binding.is_event::<BillingChanged>())
+        .find(|binding| binding.is_event::<InspectionChanged>())
         .ok_or("missing binding")?;
-    let event = fact(id, version, paid)?;
+    let event = fact(id, version, inspection_passed)?;
     let delivery = MessageDelivery::new(
         binding.address().clone(),
         event.message_id().clone(),
@@ -287,15 +287,15 @@ async fn deliver<M: rostfrei_runtime::ReadModel>(
     Ok(binding.handler().handle(delivery).await)
 }
 
-fn joined(id: &str) -> OrganizationEvent {
-    OrganizationEvent::MemberJoined(MemberJoined {
-        organization_id: id.to_owned(),
+fn registered(id: &str) -> FleetEvent {
+    FleetEvent::BicycleRegistered(BicycleRegistered {
+        fleet_id: id.to_owned(),
     })
 }
-fn demo(id: &str) -> OrganizationEvent {
-    OrganizationEvent::DemoChanged(DemoChanged {
-        organization_id: id.to_owned(),
-        active: true,
+fn rentals_open(id: &str) -> FleetEvent {
+    FleetEvent::RentalWindowChanged(RentalWindowChanged {
+        fleet_id: id.to_owned(),
+        open: true,
     })
 }
 
@@ -306,11 +306,11 @@ async fn concurrent_handlers_catch_up_filtered_history_and_share_one_checkpointe
     let model = fixture.runtime().await?;
     let records = fixture
         .seed(vec![
-            joined("org-1"),
-            OrganizationEvent::OrganizationRenamed(OrganizationRenamed {
+            registered("fleet-1"),
+            FleetEvent::FleetRenamed(FleetRenamed {
                 name: "ignored".to_owned(),
             }),
-            demo("org-1"),
+            rentals_open("fleet-1"),
         ])
         .await?;
     let first = records.first().ok_or("missing first")?;
@@ -318,16 +318,16 @@ async fn concurrent_handlers_catch_up_filtered_history_and_share_one_checkpointe
     let (late, early, integration) = tokio::join!(
         model.dispatch_domain(last),
         model.dispatch_domain(first),
-        deliver(&model, "billing-7", 7, true)
+        deliver(&model, "workshop-7", 7, true)
     );
     late?;
     early?;
     assert_eq!(integration?, DeliveryDisposition::Acknowledge);
-    let key = ReadModelKey::new("org-1")?;
-    let expected = OrganizationAccess {
-        members: 1,
-        demo: true,
-        paid: true,
+    let key = ReadModelKey::new("fleet-1")?;
+    let expected = FleetStatus {
+        bicycles_registered: 1,
+        rentals_open: true,
+        inspection_passed: true,
     };
     assert_eq!(model.reader().read(&key).await?, Some(expected));
     let revision = fixture
@@ -341,11 +341,11 @@ async fn concurrent_handlers_catch_up_filtered_history_and_share_one_checkpointe
         model.dispatch_domain(event).await?;
     }
     assert_eq!(
-        deliver(&model, "billing-7-again", 7, false).await?,
+        deliver(&model, "workshop-7-again", 7, false).await?,
         DeliveryDisposition::Acknowledge
     );
     assert_eq!(
-        deliver(&model, "billing-6", 6, false).await?,
+        deliver(&model, "workshop-6", 6, false).await?,
         DeliveryDisposition::Acknowledge
     );
     assert_eq!(
@@ -362,7 +362,7 @@ async fn concurrent_handlers_catch_up_filtered_history_and_share_one_checkpointe
     // Fresh runtime/connection retains checkpoints and the reader only returns business fields.
     let model = fixture.runtime().await?;
     model.dispatch_domain(first).await?;
-    let query = GetAccess {
+    let query = GetFleetStatus {
         reader: model.reader(),
     };
     let result = query
@@ -371,13 +371,13 @@ async fn concurrent_handlers_catch_up_filtered_history_and_share_one_checkpointe
             MessageTimestamp::from_unix_milliseconds(1)?,
             CallerMetadata::default(),
             None,
-            "org-1".to_owned(),
+            "fleet-1".to_owned(),
         )?)
         .await
         .map_err(|error| error.message().to_owned())?;
     assert_eq!(
         serde_json::to_value(result)?,
-        serde_json::json!({"members":1,"demo":true,"paid":true})
+        serde_json::json!({"bicycles_registered":1,"rentals_open":true,"inspection_passed":true})
     );
     fixture.cleanup().await
 }
@@ -387,7 +387,11 @@ async fn catch_up_routes_only_events_for_the_selected_key() -> TestResult {
     let fixture = Fixture::new().await?;
     let model = fixture.runtime().await?;
     let records = fixture
-        .seed(vec![joined("org-1"), joined("org-2"), demo("org-1")])
+        .seed(vec![
+            registered("fleet-1"),
+            registered("fleet-2"),
+            rentals_open("fleet-1"),
+        ])
         .await?;
     model
         .dispatch_domain(records.last().ok_or("missing last")?)
@@ -395,16 +399,16 @@ async fn catch_up_routes_only_events_for_the_selected_key() -> TestResult {
     assert_eq!(
         model
             .reader()
-            .read(&ReadModelKey::new("org-1")?)
+            .read(&ReadModelKey::new("fleet-1")?)
             .await?
             .ok_or("missing")?
-            .members,
+            .bicycles_registered,
         1
     );
     assert!(
         model
             .reader()
-            .read(&ReadModelKey::new("org-2")?)
+            .read(&ReadModelKey::new("fleet-2")?)
             .await?
             .is_none()
     );
@@ -414,10 +418,10 @@ async fn catch_up_routes_only_events_for_the_selected_key() -> TestResult {
     assert_eq!(
         model
             .reader()
-            .read(&ReadModelKey::new("org-2")?)
+            .read(&ReadModelKey::new("fleet-2")?)
             .await?
             .ok_or("missing")?
-            .members,
+            .bicycles_registered,
         1
     );
     fixture.cleanup().await
@@ -427,26 +431,26 @@ async fn catch_up_routes_only_events_for_the_selected_key() -> TestResult {
 async fn checkpoints_are_independent_for_aggregate_types_and_identities() -> TestResult {
     let fixture = Fixture::new().await?;
     let model = ReadModels::new(fixture.context.clone(), fixture.backend())
-        .register::<OrganizationAccess>()
-        .from_aggregate::<Organization>()
-        .on_domain_event::<MemberJoined>(
-            |event| event.organization_id.clone(),
-            |view, _| view.members = view.members.saturating_add(1),
+        .register::<FleetStatus>()
+        .from_aggregate::<Fleet>()
+        .on_domain_event::<BicycleRegistered>(
+            |event| event.fleet_id.clone(),
+            |view, _| view.bicycles_registered = view.bicycles_registered.saturating_add(1),
         )
-        .from_aggregate::<SecondaryOrganization>()
-        .on_domain_event::<MemberJoined>(
-            |event| event.organization_id.clone(),
-            |view, _| view.members = view.members.saturating_add(10),
+        .from_aggregate::<SecondaryFleet>()
+        .on_domain_event::<BicycleRegistered>(
+            |event| event.fleet_id.clone(),
+            |view, _| view.bicycles_registered = view.bicycles_registered.saturating_add(10),
         )
         .build()
         .await?;
     for (aggregate, id) in [
-        ("organization", "org-1"),
-        ("secondary-organization", "org-1"),
-        ("organization", "org-2"),
+        ("fleet", "fleet-1"),
+        ("secondary-fleet", "fleet-1"),
+        ("fleet", "fleet-2"),
     ] {
         let records = fixture
-            .seed_stream(aggregate, id, vec![joined("org-1")])
+            .seed_stream(aggregate, id, vec![registered("fleet-1")])
             .await?;
         let first = records.first().ok_or("missing")?;
         model.dispatch_domain(first).await?;
@@ -455,28 +459,31 @@ async fn checkpoints_are_independent_for_aggregate_types_and_identities() -> Tes
     assert_eq!(
         model
             .reader()
-            .read(&ReadModelKey::new("org-1")?)
+            .read(&ReadModelKey::new("fleet-1")?)
             .await?
             .ok_or("missing")?
-            .members,
+            .bicycles_registered,
         12
     );
     fixture.cleanup().await
 }
 
 /// Deliberately non-JSON, so the generated codec cannot decode these records.
-struct TextOrganizationCodec;
-impl EventCodec<Organization> for TextOrganizationCodec {
-    fn encode(&self, event: &OrganizationEvent, id: EventId) -> Result<NewEvent, EventCodecError> {
-        <JsonEventCodec as EventCodec<Organization>>::encode(&JsonEventCodec, event, id)
+struct TextFleetCodec;
+impl EventCodec<Fleet> for TextFleetCodec {
+    fn encode(&self, event: &FleetEvent, id: EventId) -> Result<NewEvent, EventCodecError> {
+        <JsonEventCodec as EventCodec<Fleet>>::encode(&JsonEventCodec, event, id)
     }
-    fn decode(&self, event: &RecordedEvent) -> Result<OrganizationEvent, EventCodecError> {
+    fn decode(&self, event: &RecordedEvent) -> Result<FleetEvent, EventCodecError> {
         std::str::from_utf8(event.payload())
             .ok()
-            .and_then(|payload| payload.strip_prefix("joined:"))
-            .map(joined)
+            .and_then(|payload| payload.strip_prefix("registered:"))
+            .map(registered)
             .ok_or_else(|| {
-                EventCodecError::new(EventCodecErrorKind::MalformedPayload, "not a text member")
+                EventCodecError::new(
+                    EventCodecErrorKind::MalformedPayload,
+                    "not a text registration",
+                )
             })
     }
 }
@@ -485,24 +492,24 @@ impl EventCodec<Organization> for TextOrganizationCodec {
 async fn domain_handlers_and_catch_up_decode_through_the_shared_registry() -> TestResult {
     let fixture = Fixture::new().await?;
     let mut codecs = AggregateCodecs::default();
-    codecs.register::<Organization, _>(TextOrganizationCodec)?;
+    codecs.register::<Fleet, _>(TextFleetCodec)?;
     let model = ReadModels::new(fixture.context.clone(), fixture.backend())
         .with_event_codecs(Arc::new(codecs))
-        .register::<OrganizationAccess>()
-        .from_aggregate::<Organization>()
-        .on_domain_event::<MemberJoined>(
-            |event| event.organization_id.clone(),
-            |view, _| view.members = view.members.saturating_add(1),
+        .register::<FleetStatus>()
+        .from_aggregate::<Fleet>()
+        .on_domain_event::<BicycleRegistered>(
+            |event| event.fleet_id.clone(),
+            |view, _| view.bicycles_registered = view.bicycles_registered.saturating_add(1),
         )
         .build()
         .await?;
     let records = fixture
         .seed_encoded(
-            "organization",
-            "org-1",
+            "fleet",
+            "fleet-1",
             vec![
-                ("member-joined", 1, b"joined:org-1".to_vec()),
-                ("member-joined", 1, b"joined:org-1".to_vec()),
+                ("bicycle-registered", 1, b"registered:fleet-1".to_vec()),
+                ("bicycle-registered", 1, b"registered:fleet-1".to_vec()),
             ],
         )
         .await?;
@@ -516,17 +523,17 @@ async fn domain_handlers_and_catch_up_decode_through_the_shared_registry() -> Te
     assert_eq!(
         model
             .reader()
-            .read(&ReadModelKey::new("org-1")?)
+            .read(&ReadModelKey::new("fleet-1")?)
             .await?
             .ok_or("missing")?
-            .members,
+            .bicycles_registered,
         2
     );
     let unregistered = ReadModels::new(fixture.context.clone(), fixture.backend())
         .with_event_codecs(Arc::new(AggregateCodecs::default()))
-        .register::<OrganizationAccess>()
-        .from_aggregate::<Organization>()
-        .on_domain_event::<MemberJoined>(|event| event.organization_id.clone(), |_, _| {})
+        .register::<FleetStatus>()
+        .from_aggregate::<Fleet>()
+        .on_domain_event::<BicycleRegistered>(|event| event.fleet_id.clone(), |_, _| {})
         .build()
         .await;
     assert!(
@@ -547,8 +554,9 @@ async fn runtime_rejects_legacy_or_incompatible_checkpoint_envelopes() -> TestRe
         .js
         .get_key_value(fixture.model.bucket_name())
         .await?;
-    let key = ReadModelKey::new("org-1")?;
-    let view = serde_json::json!({"members":0,"demo":false,"paid":false});
+    let key = ReadModelKey::new("fleet-1")?;
+    let view =
+        serde_json::json!({"bicycles_registered":0,"rentals_open":false,"inspection_passed":false});
     for value in [
         serde_json::json!({"schema_version":1,"value":view}),
         serde_json::json!({"schema_version":1,"value":{"format_version":2,"value":view,"positions":{}}}),
@@ -576,7 +584,9 @@ async fn runtime_rejects_legacy_or_incompatible_checkpoint_envelopes() -> TestRe
 async fn unavailable_gap_history_does_not_persist_partial_state() -> TestResult {
     let fixture = Fixture::new().await?;
     let model = fixture.runtime().await?;
-    let records = fixture.seed(vec![joined("org-1"), demo("org-1")]).await?;
+    let records = fixture
+        .seed(vec![registered("fleet-1"), rentals_open("fleet-1")])
+        .await?;
     fixture
         .js
         .delete_stream(fixture.events.stream_name())
@@ -592,7 +602,7 @@ async fn unavailable_gap_history_does_not_persist_partial_state() -> TestResult 
     assert!(
         model
             .reader()
-            .read(&ReadModelKey::new("org-1")?)
+            .read(&ReadModelKey::new("fleet-1")?)
             .await?
             .is_none()
     );
@@ -604,15 +614,17 @@ async fn unavailable_gap_history_does_not_persist_partial_state() -> TestResult 
 async fn rebuild_uses_an_independent_model_generation_and_external_source_refresh() -> TestResult {
     let fixture = Fixture::new().await?;
     let serving = fixture.runtime().await?;
-    let records = fixture.seed(vec![joined("org-1"), demo("org-1")]).await?;
+    let records = fixture
+        .seed(vec![registered("fleet-1"), rentals_open("fleet-1")])
+        .await?;
     serving
         .dispatch_domain(records.last().ok_or("missing")?)
         .await?;
     assert_eq!(
-        deliver(&serving, "billing", 7, true).await?,
+        deliver(&serving, "workshop", 7, true).await?,
         DeliveryDisposition::Acknowledge
     );
-    let key = ReadModelKey::new("org-1")?;
+    let key = ReadModelKey::new("fleet-1")?;
     let serving_revision = fixture
         .state()
         .await?
@@ -621,26 +633,26 @@ async fn rebuild_uses_an_independent_model_generation_and_external_source_refres
         .ok_or("missing")?
         .revision;
 
-    let policy = NatsReadModelConfig::for_model::<RebuiltAccess>(&fixture.context)?;
+    let policy = NatsReadModelConfig::for_model::<RebuiltFleetStatus>(&fixture.context)?;
     provision_read_model(&fixture.js, &policy).await?;
     let rebuilt = ReadModels::new(fixture.context.clone(), fixture.backend())
-        .register::<RebuiltAccess>()
-        .from_aggregate::<Organization>()
-        .on_domain_event::<MemberJoined>(
-            |event| event.organization_id.clone(),
-            |view, _| view.0.members = view.0.members.saturating_add(1),
+        .register::<RebuiltFleetStatus>()
+        .from_aggregate::<Fleet>()
+        .on_domain_event::<BicycleRegistered>(
+            |event| event.fleet_id.clone(),
+            |view, _| view.0.bicycles_registered = view.0.bicycles_registered.saturating_add(1),
         )
-        .on_domain_event::<DemoChanged>(
-            |event| event.organization_id.clone(),
-            |view, event| view.0.demo = event.active,
+        .on_domain_event::<RentalWindowChanged>(
+            |event| event.fleet_id.clone(),
+            |view, event| view.0.rentals_open = event.open,
         )
-        .on_integration_event::<BillingChanged>(
-            |event| event.organization_id.clone(),
-            |view, event| view.0.paid = event.paid,
+        .on_integration_event::<InspectionChanged>(
+            |event| event.fleet_id.clone(),
+            |view, event| view.0.inspection_passed = event.inspection_passed,
         )
-        .integration_source::<BillingChanged>(
-            fixture.billing.clone(),
-            IntegrationEventOrder::<BillingChanged>::latest("billing-account", |event| {
+        .integration_source::<InspectionChanged>(
+            fixture.workshop.clone(),
+            IntegrationEventOrder::<InspectionChanged>::latest("fleet-inspection", |event| {
                 event.source_version
             }),
         )
@@ -653,7 +665,15 @@ async fn rebuild_uses_an_independent_model_generation_and_external_source_refres
     for event in &history {
         rebuilt.dispatch_domain(event).await?;
     }
-    assert!(!rebuilt.reader().read(&key).await?.ok_or("missing")?.0.paid);
+    assert!(
+        !rebuilt
+            .reader()
+            .read(&key)
+            .await?
+            .ok_or("missing")?
+            .0
+            .inspection_passed
+    );
     assert_eq!(
         deliver(&rebuilt, "refresh", 7, true).await?,
         DeliveryDisposition::Acknowledge
@@ -681,14 +701,14 @@ async fn business_ordering_can_require_consecutive_versions_without_partial_writ
     let fixture = Fixture::new().await?;
     let models = ReadModels::new(fixture.context.clone(), fixture.backend());
     let model = models
-        .register::<OrganizationAccess>()
-        .on_integration_event::<BillingChanged>(
-            |event| event.organization_id.clone(),
-            |view, event| view.paid = event.paid,
+        .register::<FleetStatus>()
+        .on_integration_event::<InspectionChanged>(
+            |event| event.fleet_id.clone(),
+            |view, event| view.inspection_passed = event.inspection_passed,
         )
-        .integration_source::<BillingChanged>(
-            fixture.billing.clone(),
-            IntegrationEventOrder::<BillingChanged>::consecutive("billing", |event| {
+        .integration_source::<InspectionChanged>(
+            fixture.workshop.clone(),
+            IntegrationEventOrder::<InspectionChanged>::consecutive("workshop", |event| {
                 event.source_version
             }),
         )
@@ -698,7 +718,7 @@ async fn business_ordering_can_require_consecutive_versions_without_partial_writ
         deliver(&model, "gap", 2, true).await?,
         DeliveryDisposition::Quarantine(_)
     ));
-    let key = ReadModelKey::new("org-1")?;
+    let key = ReadModelKey::new("fleet-1")?;
     assert!(model.reader().read(&key).await?.is_none());
     assert_eq!(
         deliver(&model, "one", 1, true).await?,
@@ -708,7 +728,14 @@ async fn business_ordering_can_require_consecutive_versions_without_partial_writ
         deliver(&model, "two", 2, false).await?,
         DeliveryDisposition::Acknowledge
     );
-    assert!(!model.reader().read(&key).await?.ok_or("missing")?.paid);
+    assert!(
+        !model
+            .reader()
+            .read(&key)
+            .await?
+            .ok_or("missing")?
+            .inspection_passed
+    );
     assert!(matches!(
         deliver(&model, "zero", 0, true).await?,
         DeliveryDisposition::Quarantine(_)
@@ -721,10 +748,10 @@ async fn registration_rejects_duplicates_wrong_contexts_and_foreign_traffic() ->
     let fixture = Fixture::new().await?;
     let models = ReadModels::new(fixture.context.clone(), fixture.backend());
     let duplicate = models
-        .register::<OrganizationAccess>()
-        .from_aggregate::<Organization>()
-        .on_domain_event::<MemberJoined>(|event| event.organization_id.clone(), |_, _| {})
-        .on_domain_event::<MemberJoined>(|event| event.organization_id.clone(), |_, _| {})
+        .register::<FleetStatus>()
+        .from_aggregate::<Fleet>()
+        .on_domain_event::<BicycleRegistered>(|event| event.fleet_id.clone(), |_, _| {})
+        .on_domain_event::<BicycleRegistered>(|event| event.fleet_id.clone(), |_, _| {})
         .build()
         .await;
     assert!(matches!(
@@ -734,13 +761,13 @@ async fn registration_rejects_duplicates_wrong_contexts_and_foreign_traffic() ->
     let foreign = fixture
         .context
         .application()
-        .bounded_context_in_scope(TrafficScope::Test, "billing")?;
+        .bounded_context_in_scope(TrafficScope::Test, "workshop")?;
     let result = models
-        .register::<OrganizationAccess>()
-        .on_integration_event::<BillingChanged>(|event| event.organization_id.clone(), |_, _| {})
-        .integration_source::<BillingChanged>(
+        .register::<FleetStatus>()
+        .on_integration_event::<InspectionChanged>(|event| event.fleet_id.clone(), |_, _| {})
+        .integration_source::<InspectionChanged>(
             foreign,
-            IntegrationEventOrder::<BillingChanged>::latest("billing", |event| {
+            IntegrationEventOrder::<InspectionChanged>::latest("workshop", |event| {
                 event.source_version
             }),
         )
@@ -750,18 +777,18 @@ async fn registration_rejects_duplicates_wrong_contexts_and_foreign_traffic() ->
         result,
         Err(ReadModelProcessingError::Configuration(_))
     ));
-    let wrong = ReadModels::new(fixture.billing.clone(), fixture.backend())
-        .register::<OrganizationAccess>()
-        .from_aggregate::<Organization>()
-        .on_domain_event::<MemberJoined>(|event| event.organization_id.clone(), |_, _| {})
+    let wrong = ReadModels::new(fixture.workshop.clone(), fixture.backend())
+        .register::<FleetStatus>()
+        .from_aggregate::<Fleet>()
+        .on_domain_event::<BicycleRegistered>(|event| event.fleet_id.clone(), |_, _| {})
         .build()
         .await;
     assert!(matches!(
         wrong,
         Err(ReadModelProcessingError::Configuration(_))
     ));
-    let _registered = register_business(&models, fixture.billing.clone()).await?;
-    let duplicate_model = register_business(&models, fixture.billing.clone()).await;
+    let _registered = register_business(&models, fixture.workshop.clone()).await?;
+    let duplicate_model = register_business(&models, fixture.workshop.clone()).await;
     assert!(matches!(
         duplicate_model,
         Err(ReadModelProcessingError::Configuration(_))
@@ -778,12 +805,12 @@ async fn worker_runs_both_event_families_and_materializes_before_ack() -> TestRe
     provision_application_messaging(&fixture.js, &messaging).await?;
     let model = fixture.runtime().await?;
     let options = NatsReadModelConsumerOptions::default();
-    let count_policy = NatsReadModelConfig::for_model::<OrganizationCount>(&fixture.context)?;
+    let count_policy = NatsReadModelConfig::for_model::<FleetCount>(&fixture.context)?;
     provision_read_model(&fixture.js, &count_policy).await?;
     let counts = ReadModels::new(fixture.context.clone(), fixture.backend())
-        .register::<OrganizationCount>()
-        .from_aggregate::<Organization>()
-        .on_domain_event::<MemberJoined>(
+        .register::<FleetCount>()
+        .from_aggregate::<Fleet>()
+        .on_domain_event::<BicycleRegistered>(
             |event| {
                 event
                     .recorded()
@@ -792,7 +819,7 @@ async fn worker_runs_both_event_families_and_materializes_before_ack() -> TestRe
                     .as_str()
                     .to_owned()
             },
-            |view, _| view.members = view.members.saturating_add(1),
+            |view, _| view.bicycles_registered = view.bicycles_registered.saturating_add(1),
         )
         .build()
         .await?;
@@ -832,13 +859,15 @@ async fn worker_runs_both_event_families_and_materializes_before_ack() -> TestRe
     let count_worker = tokio::spawn(count_worker.run_until_shutdown(receiver.clone()));
     let worker = tokio::spawn(worker.run_until_shutdown(receiver));
     let result = tokio::time::timeout(Duration::from_secs(10), async {
-        fixture.seed(vec![joined("org-1"), demo("org-1")]).await?;
-        let fact = fact("worker-billing", 7, true)?;
+        fixture
+            .seed(vec![registered("fleet-1"), rentals_open("fleet-1")])
+            .await?;
+        let fact = fact("worker-workshop", 7, true)?;
         NatsPublisher::new(fixture.js.clone(), messaging.topology().clone())
             .publish_integration_event_with_ack(
                 OutboundMessage::json(
-                    fixture.billing.integration_event_address(
-                        <BillingChanged as rostfrei_runtime::IntegrationEvent>::EVENT_NAME,
+                    fixture.workshop.integration_event_address(
+                        <InspectionChanged as rostfrei_runtime::IntegrationEvent>::EVENT_NAME,
                     )?,
                     fact.message_id().clone(),
                     &fact,
@@ -849,14 +878,16 @@ async fn worker_runs_both_event_families_and_materializes_before_ack() -> TestRe
         loop {
             if model
                 .reader()
-                .read(&ReadModelKey::new("org-1")?)
+                .read(&ReadModelKey::new("fleet-1")?)
                 .await?
-                .is_some_and(|view| view.members == 1 && view.demo && view.paid)
+                .is_some_and(|view| {
+                    view.bicycles_registered == 1 && view.rentals_open && view.inspection_passed
+                })
                 && counts
                     .reader()
-                    .read(&ReadModelKey::new("org-1")?)
+                    .read(&ReadModelKey::new("fleet-1")?)
                     .await?
-                    .is_some_and(|view| view.members == 1)
+                    .is_some_and(|view| view.bicycles_registered == 1)
             {
                 return TestResult::Ok(());
             }

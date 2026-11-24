@@ -596,9 +596,9 @@ mod tests {
     use super::*;
 
     fn context() -> BoundedContext {
-        ApplicationName::new("fast-inbox")
+        ApplicationName::new("bike-rental-demo")
             .unwrap()
-            .bounded_context("commercial-access")
+            .bounded_context("bike-rental")
             .unwrap()
     }
 
@@ -606,51 +606,51 @@ mod tests {
     fn bounded_context_derives_event_store_identity_and_policy() {
         let config = NatsEventStoreConfig::for_bounded_context(&context()).unwrap();
 
-        assert_eq!(config.application().as_str(), "fast-inbox");
-        assert_eq!(config.bounded_context().as_str(), "commercial-access");
+        assert_eq!(config.application().as_str(), "bike-rental-demo");
+        assert_eq!(config.bounded_context().as_str(), "bike-rental");
         assert_eq!(
             config.stream_name(),
-            "FAST_INBOX__COMMERCIAL_ACCESS_DOMAIN_EVENTS"
+            "BIKE_RENTAL_DEMO__BIKE_RENTAL_DOMAIN_EVENTS"
         );
         assert_eq!(
             config.subject_prefix(),
-            "fast-inbox.domain.commercial-access"
+            "bike-rental-demo.domain.bike-rental"
         );
         assert_eq!(
             config.subject_filter(),
-            "fast-inbox.domain.commercial-access.aggregate.*.*"
+            "bike-rental-demo.domain.bike-rental.aggregate.*.*"
         );
         assert_eq!(config.subject_filter(), config.aggregate_subject_filter());
         assert_eq!(
             config.stream_config().subjects,
             vec![
-                "fast-inbox.domain.commercial-access.aggregate.*.*",
-                "fast-inbox.domain.commercial-access.transaction.>",
-                "fast-inbox.domain.commercial-access.fixture.*.receipt.*.*",
+                "bike-rental-demo.domain.bike-rental.aggregate.*.*",
+                "bike-rental-demo.domain.bike-rental.transaction.>",
+                "bike-rental-demo.domain.bike-rental.fixture.*.receipt.*.*",
             ]
         );
     }
 
     #[test]
     fn test_bounded_context_derives_disjoint_event_store_resources() {
-        let context = ApplicationName::new("fast-inbox")
+        let context = ApplicationName::new("bike-rental-demo")
             .unwrap()
-            .test_bounded_context("commercial-access")
+            .test_bounded_context("bike-rental")
             .unwrap();
         let config = NatsEventStoreConfig::for_bounded_context(&context).unwrap();
 
         assert_eq!(config.traffic_scope(), TrafficScope::Test);
         assert_eq!(
             config.stream_name(),
-            "FAST_INBOX__TEST__COMMERCIAL_ACCESS_DOMAIN_EVENTS"
+            "BIKE_RENTAL_DEMO__TEST__BIKE_RENTAL_DOMAIN_EVENTS"
         );
         assert_eq!(
             config.subject_prefix(),
-            "fast-inbox.test.domain.commercial-access"
+            "bike-rental-demo.test.domain.bike-rental"
         );
         assert_eq!(
             config.aggregate_subject_filter(),
-            "fast-inbox.test.domain.commercial-access.aggregate.*.*"
+            "bike-rental-demo.test.domain.bike-rental.aggregate.*.*"
         );
     }
 
@@ -673,9 +673,9 @@ mod tests {
 
     #[test]
     fn fresh_outcomes_preserve_scope_custom_prefixes_and_name_limits() {
-        let test_context = ApplicationName::new("fast-inbox")
+        let test_context = ApplicationName::new("bike-rental-demo")
             .unwrap()
-            .test_bounded_context("commercial-access")
+            .test_bounded_context("bike-rental")
             .unwrap();
         let config = NatsEventStoreConfig::for_bounded_context(&test_context)
             .unwrap()
@@ -683,15 +683,15 @@ mod tests {
             .unwrap();
         assert_eq!(
             config.stream_name(),
-            "FAST_INBOX__TEST__COMMERCIAL_ACCESS__JOURNAL"
+            "BIKE_RENTAL_DEMO__TEST__BIKE_RENTAL__JOURNAL"
         );
         assert_eq!(
             config.outcome_state_stream_name(),
-            "FAST_INBOX__TEST__COMMERCIAL_ACCESS__COMMAND_RESULTS"
+            "BIKE_RENTAL_DEMO__TEST__BIKE_RENTAL__COMMAND_RESULTS"
         );
         assert_eq!(
             config.subject_prefix(),
-            "fast-inbox.test.domain.commercial-access"
+            "bike-rental-demo.test.domain.bike-rental"
         );
         assert!(config.with_fresh_outcomes().is_err());
         let custom = NatsEventStoreConfig::new(&test_context, "CUSTOM_DOMAIN_EVENTS")
@@ -770,9 +770,9 @@ mod tests {
 
     #[test]
     fn split_names_keep_test_scope_and_validate_both_name_lengths() {
-        let context = ApplicationName::new("fast-inbox")
+        let context = ApplicationName::new("bike-rental-demo")
             .unwrap()
-            .test_bounded_context("commercial-access")
+            .test_bounded_context("bike-rental")
             .unwrap();
         let config = NatsEventStoreConfig::for_bounded_context(&context)
             .unwrap()
@@ -780,11 +780,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             config.stream_name(),
-            "FAST_INBOX__TEST__COMMERCIAL_ACCESS__JOURNAL__nexus-v1"
+            "BIKE_RENTAL_DEMO__TEST__BIKE_RENTAL__JOURNAL__nexus-v1"
         );
         assert_eq!(
             config.outcome_state_stream_name(),
-            "FAST_INBOX__TEST__COMMERCIAL_ACCESS__COMMAND_RESULTS__nexus-v1"
+            "BIKE_RENTAL_DEMO__TEST__BIKE_RENTAL__COMMAND_RESULTS__nexus-v1"
         );
         let maximum_prefix = MAX_STREAM_NAME_LEN - "__COMMAND_RESULTS__x".len();
         let config = NatsEventStoreConfig::new(&context, "A".repeat(maximum_prefix))
@@ -851,7 +851,7 @@ mod tests {
         assert_eq!(subject, config.event_subject("Account", "account-123"));
         assert_eq!(
             subject,
-            "fast-inbox.domain.commercial-access.aggregate.Account.account-123"
+            "bike-rental-demo.domain.bike-rental.aggregate.Account.account-123"
         );
         assert_eq!(
             config.aggregate_history_subject_filter("Account", "account-123"),
@@ -860,15 +860,15 @@ mod tests {
         assert_eq!(
             config.correlation_receipt_subject_filters("flow.1"),
             [
-                "fast-inbox.domain.commercial-access.transaction.*.receipt.flow%2E1.*",
-                "fast-inbox.domain.commercial-access.fixture.*.receipt.flow%2E1.*"
+                "bike-rental-demo.domain.bike-rental.transaction.*.receipt.flow%2E1.*",
+                "bike-rental-demo.domain.bike-rental.fixture.*.receipt.flow%2E1.*"
             ]
         );
         assert_eq!(
             config.causation_receipt_subject_filters("cause.*"),
             [
-                "fast-inbox.domain.commercial-access.transaction.*.receipt.*.cause%2E%2A",
-                "fast-inbox.domain.commercial-access.fixture.*.receipt.*.cause%2E%2A"
+                "bike-rental-demo.domain.bike-rental.transaction.*.receipt.*.cause%2E%2A",
+                "bike-rental-demo.domain.bike-rental.fixture.*.receipt.*.cause%2E%2A"
             ]
         );
     }
@@ -880,7 +880,7 @@ mod tests {
         let subject = config.transaction_subject_prefix("operation-123");
 
         assert_eq!(subject, config.transaction_subject_prefix("operation-123"));
-        assert!(subject.starts_with("fast-inbox.domain.commercial-access.transaction."));
+        assert!(subject.starts_with("bike-rental-demo.domain.bike-rental.transaction."));
         assert!(!subject.contains("operation-123"));
         assert_ne!(subject, config.transaction_subject_prefix("operation-124"));
         assert_eq!(

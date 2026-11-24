@@ -25,9 +25,9 @@ use rostfrei_runtime::{
     ReadModelKey, ReadModelRevision, ReadModelStore,
 };
 
-use super::application::{BillingChanged, Entitlement, Entitlements, ExampleResult};
+use super::application::{ExampleResult, FleetStatus, FleetStatusProjection, InspectionChanged};
 
-type Store = NatsReadModelStore<Entitlement, JsonReadModelCodec<Entitlement>>;
+type Store = NatsReadModelStore<FleetStatus, JsonReadModelCodec<FleetStatus>>;
 const WAIT: Duration = Duration::from_secs(10);
 
 /// Inject writes failing before commit; all successful operations use real KV.
@@ -52,18 +52,18 @@ impl FailingWrites {
 }
 
 #[async_trait]
-impl ReadModelStore<Entitlement> for FailingWrites {
+impl ReadModelStore<FleetStatus> for FailingWrites {
     async fn read(
         &self,
         key: &ReadModelKey,
-    ) -> Result<Option<ReadModelEntry<Entitlement>>, ReadModelError> {
+    ) -> Result<Option<ReadModelEntry<FleetStatus>>, ReadModelError> {
         self.inner.read(key).await
     }
 
     async fn create(
         &self,
         key: &ReadModelKey,
-        value: &Entitlement,
+        value: &FleetStatus,
     ) -> Result<ReadModelRevision, ReadModelError> {
         self.check()?;
         self.inner.create(key, value).await
@@ -73,7 +73,7 @@ impl ReadModelStore<Entitlement> for FailingWrites {
         &self,
         key: &ReadModelKey,
         revision: &ReadModelRevision,
-        value: &Entitlement,
+        value: &FleetStatus,
     ) -> Result<ReadModelRevision, ReadModelError> {
         self.check()?;
         self.inner.update(key, revision, value).await
@@ -95,7 +95,7 @@ struct Recovery {
     consumer: ConsumerConfig<IntegrationEventAddress>,
     model: NatsReadModelConfig,
     storage: Arc<FailingWrites>,
-    handler: Arc<Entitlements>,
+    handler: Arc<FleetStatusProjection>,
 }
 
 impl Recovery {
@@ -108,21 +108,23 @@ impl Recovery {
             "read-model-recovery-{}-{label}",
             std::process::id()
         ))?;
-        let scope = application.bounded_context("access")?;
+        let scope = application.bounded_context("bike-rental")?;
         let messaging =
             ApplicationMessagingConfig::new(&application)?.with_max_bytes(4 * 1024 * 1024)?;
         provision_application_messaging(&context, &messaging).await?;
         let consumer = ConsumerConfig::new(
-            scope.consumer_name("entitlements", 1)?,
-            scope.durable_name("entitlements", 1)?,
-            scope.integration_event_address("billing-changed")?,
+            scope.consumer_name("fleet-status", 1)?,
+            scope.durable_name("fleet-status", 1)?,
+            application
+                .bounded_context("workshop")?
+                .integration_event_address("inspection-changed")?,
             Duration::from_secs(4),
             Duration::from_secs(2),
             1,
             2,
         )?;
         provision_durable_consumer(&context, messaging.topology(), &consumer).await?;
-        let model = NatsReadModelConfig::new(&scope, "entitlements")?;
+        let model = NatsReadModelConfig::new(&scope, "fleet-status")?;
         provision_read_model(&context, &model).await?;
         let inner = Arc::new(
             Store::connect(
@@ -134,13 +136,13 @@ impl Recovery {
         );
         inner
             .create(
-                &ReadModelKey::new("org-1")?,
-                &Entitlement {
-                    members: 3,
-                    demo: false,
-                    paid: true,
-                    organization_version: 12,
-                    billing_version: 7,
+                &ReadModelKey::new("fleet-1")?,
+                &FleetStatus {
+                    bicycles_registered: 3,
+                    rentals_open: false,
+                    inspection_passed: true,
+                    fleet_version: 12,
+                    inspection_version: 7,
                 },
             )
             .await?;
@@ -150,7 +152,7 @@ impl Recovery {
             enabled: AtomicBool::new(true),
             failures: AtomicU32::new(0),
         });
-        let handler = Arc::new(Entitlements::new(storage.clone())?);
+        let handler = Arc::new(FleetStatusProjection::new(storage.clone())?);
         Ok(Self {
             context,
             messaging,
@@ -182,17 +184,17 @@ impl Recovery {
         cleanup
     }
 
-    async fn snapshot(&self) -> ExampleResult<ReadModelEntry<Entitlement>> {
+    async fn snapshot(&self) -> ExampleResult<ReadModelEntry<FleetStatus>> {
         self.storage
             .inner
-            .read(&ReadModelKey::new("org-1")?)
+            .read(&ReadModelKey::new("fleet-1")?)
             .await?
             .ok_or_else(|| "snapshot missing".into())
     }
 
     async fn publish(
         &self,
-        envelope: &IntegrationEventEnvelope<BillingChanged>,
+        envelope: &IntegrationEventEnvelope<InspectionChanged>,
         metadata: CallerMetadata,
     ) -> ExampleResult<NatsPublishAck> {
         let message = OutboundMessage::json(
@@ -257,16 +259,16 @@ impl Recovery {
     ) -> ExampleResult {
         let envelope = IntegrationEventEnvelope::new(
             EnvelopeContext::new(
-                MessageId::new("billing-8")?,
+                MessageId::new("workshop-8")?,
                 SchemaVersion::new(1)?,
-                CorrelationId::new("billing-recovery")?,
+                CorrelationId::new("workshop-recovery")?,
                 None,
             ),
             MessageTimestamp::from_unix_milliseconds(1)?,
-            BillingChanged {
-                organization_id: "org-1".to_owned(),
+            InspectionChanged {
+                fleet_id: "fleet-1".to_owned(),
                 source_version: 8,
-                paid: false,
+                inspection_passed: false,
             },
         )?;
         let before = self.snapshot().await?;
@@ -307,7 +309,7 @@ impl Recovery {
 
         let payload = BASE64.decode(record.payload_base64())?;
         assert_eq!(payload, serde_json::to_vec(&envelope)?);
-        let recovered = recovery_envelope(&payload, "billing-8-recovery")?;
+        let recovered = recovery_envelope(&payload, "workshop-8-recovery")?;
         let mut metadata = record.metadata().clone();
         metadata.insert("x-redrive-of", record.message_id())?;
         let published = self.publish(&recovered, metadata.clone()).await?;
@@ -315,14 +317,14 @@ impl Recovery {
         self.wait_settled(published.sequence()).await?;
         let after = self.snapshot().await?;
         let mut expected = before.value;
-        expected.paid = false;
-        expected.billing_version = 8;
+        expected.inspection_passed = false;
+        expected.inspection_version = 8;
         assert_eq!(after.value, expected); // Other handlers' fields/checkpoints survive recovery.
         assert_ne!(after.revision, before.revision);
 
         // A second recovery publication is delivered, but the source checkpoint
         // makes it a no-op without another snapshot write.
-        let replayed = recovery_envelope(&payload, "billing-8-recovery-again")?;
+        let replayed = recovery_envelope(&payload, "workshop-8-recovery-again")?;
         let published = self.publish(&replayed, metadata).await?;
         assert!(!published.duplicate());
         self.wait_settled(published.sequence()).await?;
@@ -346,8 +348,8 @@ impl Recovery {
 fn recovery_envelope(
     payload: &[u8],
     id: &str,
-) -> ExampleResult<IntegrationEventEnvelope<BillingChanged>> {
-    let original: IntegrationEventEnvelope<BillingChanged> = serde_json::from_slice(payload)?;
+) -> ExampleResult<IntegrationEventEnvelope<InspectionChanged>> {
+    let original: IntegrationEventEnvelope<InspectionChanged> = serde_json::from_slice(payload)?;
     let context = EnvelopeContext::new(
         MessageId::new(id)?,
         original.schema_version(),

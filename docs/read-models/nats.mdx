@@ -8,8 +8,11 @@ Enable the `nats` feature on your `rostfrei` dependency for these adapters.
 
 ## Provision the resources
 
-This setup uses the `OrganizationAccess` declaration from the
-[read-model guide](index.mdx):
+On a **fresh disposable broker**, provision the sources and the `FleetActivity`
+bucket from the [read-model guide](index.mdx). For an existing bike demo, reuse
+the host's application namespace, traffic scope, event store and messaging
+configuration. Provision only the new model bucket and its consumers; do not
+apply the small stream limits below to an existing fleet history or queue.
 
 ```rust
 use rostfrei::{ApplicationName, ReadModels};
@@ -25,13 +28,13 @@ let connection = connect(&NatsConnectionConfig::new(
 ))
 .await?;
 
-let application = ApplicationName::new("my-application")?;
-let context = application.bounded_context("access")?;
+let application = ApplicationName::new("bike-rental")?;
+let context = application.bounded_context("bike-rental")?;
 let events = NatsEventStoreConfig::for_bounded_context(&context)?
     .with_storage_limits(16 * 1024 * 1024, 512 * 1024)?;
 let messaging = ApplicationMessagingConfig::new(&application)?
     .with_max_bytes(8 * 1024 * 1024)?;
-let policy = NatsReadModelConfig::for_model::<OrganizationAccess>(&context)?;
+let policy = NatsReadModelConfig::for_model::<FleetActivity>(&context)?;
 
 provision_event_store(connection.jetstream(), &events).await?;
 provision_application_messaging(connection.jetstream(), &messaging).await?;
@@ -45,7 +48,6 @@ let read_models = ReadModels::new(context, backend);
 
 Use the [registration builder](index.mdx) to create `model` next. Its
 `.build().await?` call opens and verifies the resources; it does not provision them.
-The limits above are small example limits, not a production sizing recommendation.
 
 For historical domain formats, pass the application's shared codec registry to
 `ReadModels::with_event_codecs` before registering models, as described in
@@ -87,6 +89,11 @@ coordination and supervise the worker future alongside the other application tas
 The future owns its consumers. Shutdown or worker failure cancels them; persisted
 checkpoints handle redelivery after an uncertain in-flight write.
 
+Tracer Test reset recreates source streams. It does not stop an independently
+started worker or clear its KV checkpoints. Use a separate test namespace, or
+stop the worker before reset, rebuild its model and durables against the new
+sources, then restart it. Old checkpoints can otherwise skip new events.
+
 Each model has its own domain durable when it registers domain handlers, and one
 ordered integration durable when it registers integration handlers. That integration
 consumer filters each registered logical address with `.>` appended, validating the correlation
@@ -102,13 +109,13 @@ and [source retention](../messaging/subjects.mdx#retention).
 Resource identity includes application, bounded context, model ID, and traffic scope:
 
 ```plaintext
-Normal bucket: MY_APPLICATION__ACCESS__ORGANIZATION_ACCESS_READ_MODEL
-Test bucket:   MY_APPLICATION__TEST__ACCESS__ORGANIZATION_ACCESS_READ_MODEL
+Normal bucket: BIKE_RENTAL__BIKE_RENTAL__FLEET_ACTIVITY_READ_MODEL
+Test bucket:   BIKE_RENTAL__TEST__BIKE_RENTAL__FLEET_ACTIVITY_READ_MODEL
 Stream:        KV_<bucket>
 Keys:          $KV.<bucket>.<key>
 ```
 
-Use `application.test_bounded_context("access")` and a matching Test messaging
+Use `application.test_bounded_context("bike-rental")` and a matching Test messaging
 topology for isolated traffic. Declared integration producer contexts inherit that
 same application and traffic scope.
 

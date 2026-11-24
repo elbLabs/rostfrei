@@ -55,13 +55,18 @@ cannot safely share a broker high-water mark.
 
 ## Optional: business order
 
-If a publisher supplies an authoritative per-key version, override the default:
+If a publisher supplies an authoritative per-key version, override the default.
+For example, the [business-order test](../../crates/rostfrei-nats/tests/read_model_runtime_integration.rs)
+uses a versioned `InspectionChanged` contract from the workshop. Its
+`source_version` increases **per fleet**, matching the model's fleet key. The
+standalone broker-order example and the bike demo's `BicycleMaintenanceRequested`
+do not require this field.
 
 ```rust
-.integration_source::<VersionedBillingChanged>(
-    billing_context,
-    rostfrei::IntegrationEventOrder::<VersionedBillingChanged>::latest(
-        "billing-account",
+.integration_source::<InspectionChanged>(
+    workshop_context,
+    rostfrei::IntegrationEventOrder::<InspectionChanged>::latest(
+        "fleet-inspection",
         |event| event.source_version,
     ),
 )
@@ -73,7 +78,7 @@ If a publisher supplies an authoritative per-key version, override the default:
 | `consecutive("source", position)` | Every delta must be applied, starting at version 1 without gaps |
 | `broker()` | Explicitly selecting the default broker policy |
 
-With `latest`, a version-8 billing fact followed by a version-7 fact keeps version 8.
+With `latest`, a version-8 inspection followed by version 7 keeps version 8.
 With `consecutive`, receiving version 8 when version 7 is missing rejects the update.
 
 The source name identifies a logical checkpoint per model key and producer context;
@@ -114,8 +119,9 @@ or authorization guarantee.
 3. Refresh integration-source facts through the registered bindings or consumers.
 4. Catch up to an explicit handoff point, verify the result, and switch queries.
 
-External authorities such as billing providers remain necessary for reconstructing
-their facts. Domain history alone cannot recreate those contributions.
+Fleet history can reconstruct the fleet's own changes. Rebuild `FleetActivity`'s
+last maintenance request from retained requests in broker order. For a model that
+consumes versioned inspections, refresh the latest result from the workshop.
 
 Changing handler semantics, adding handlers for earlier events, changing ordering
 policies, or resetting source history requires a deliberate rebuild/reset. Existing

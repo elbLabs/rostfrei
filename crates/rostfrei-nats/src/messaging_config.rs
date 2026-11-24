@@ -932,26 +932,26 @@ mod tests {
 
     #[test]
     fn custom_topology_rejects_aliased_stream_roles() {
-        let application = ApplicationName::new("fast-inbox").unwrap();
-        let shared = StreamName::new("FAST_INBOX_SHARED").unwrap();
+        let application = ApplicationName::new("bike-rental-demo").unwrap();
+        let shared = StreamName::new("BIKE_RENTAL_DEMO_SHARED").unwrap();
 
         assert!(
             MessagingTopology::new(
                 application,
                 shared.clone(),
                 shared,
-                StreamName::new("FAST_INBOX_QUARANTINE").unwrap(),
+                StreamName::new("BIKE_RENTAL_DEMO_QUARANTINE").unwrap(),
             )
             .is_err()
         );
 
         assert!(
             MessagingTopology::new_with_command_response_stream(
-                ApplicationName::new("fast-inbox").unwrap(),
-                StreamName::new("FAST_INBOX_COMMANDS").unwrap(),
-                StreamName::new("FAST_INBOX_COMMANDS").unwrap(),
-                StreamName::new("FAST_INBOX_INTEGRATION_EVENTS").unwrap(),
-                StreamName::new("FAST_INBOX_QUARANTINE").unwrap(),
+                ApplicationName::new("bike-rental-demo").unwrap(),
+                StreamName::new("BIKE_RENTAL_DEMO_COMMANDS").unwrap(),
+                StreamName::new("BIKE_RENTAL_DEMO_COMMANDS").unwrap(),
+                StreamName::new("BIKE_RENTAL_DEMO_INTEGRATION_EVENTS").unwrap(),
+                StreamName::new("BIKE_RENTAL_DEMO_QUARANTINE").unwrap(),
             )
             .is_err()
         );
@@ -959,13 +959,19 @@ mod tests {
 
     #[test]
     fn test_topology_derives_disjoint_stream_names() {
-        let application = ApplicationName::new("fast-inbox").unwrap();
+        let application = ApplicationName::new("bike-rental-demo").unwrap();
         let normal = MessagingTopology::for_application(&application).unwrap();
         let test =
             MessagingTopology::for_application_in_scope(&application, TrafficScope::Test).unwrap();
 
-        assert_eq!(normal.command_stream().as_str(), "FAST_INBOX_COMMANDS");
-        assert_eq!(test.command_stream().as_str(), "FAST_INBOX__TEST_COMMANDS");
+        assert_eq!(
+            normal.command_stream().as_str(),
+            "BIKE_RENTAL_DEMO_COMMANDS"
+        );
+        assert_eq!(
+            test.command_stream().as_str(),
+            "BIKE_RENTAL_DEMO__TEST_COMMANDS"
+        );
         assert_eq!(test.traffic_scope(), TrafficScope::Test);
         assert_ne!(normal.command_stream(), test.command_stream());
     }

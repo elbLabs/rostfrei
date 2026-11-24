@@ -31,7 +31,8 @@ async fn fixture() -> TestResult<(jetstream::Context, NatsReadModelConfig)> {
         std::process::id(),
         SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ))?;
-    let config = NatsReadModelConfig::new(&application.bounded_context("access")?, "entitlement")?;
+    let config =
+        NatsReadModelConfig::new(&application.bounded_context("bike-rental")?, "fleet-status")?;
     Ok((connection.jetstream().clone(), config))
 }
 
@@ -49,7 +50,7 @@ async fn cas_concurrency_tombstones_and_recreation() -> TestResult {
     let (context, config) = fixture().await?;
     provision_read_model(&context, &config).await?;
     let store = open(&context, &config).await?;
-    let key = ReadModelKey::new("organization-1")?;
+    let key = ReadModelKey::new("fleet-1")?;
     assert!(store.read(&key).await?.is_none());
     let initial = "initial".to_owned();
     let (left, right) = tokio::join!(store.create(&key, &initial), store.create(&key, &initial));
@@ -103,7 +104,7 @@ async fn cas_concurrency_tombstones_and_recreation() -> TestResult {
             .kind(),
         ReadModelErrorKind::Conflict
     );
-    let another_key = ReadModelKey::new("organization-2")?;
+    let another_key = ReadModelKey::new("fleet-2")?;
     assert_eq!(
         store
             .update(&another_key, &recreated, &initial)
@@ -210,15 +211,15 @@ async fn resources_are_isolated_by_every_scope_dimension() -> TestResult {
     let configs = [
         config.clone(),
         NatsReadModelConfig::new(
-            &application.bounded_context_in_scope(TrafficScope::Test, "access")?,
-            "entitlement",
+            &application.bounded_context_in_scope(TrafficScope::Test, "bike-rental")?,
+            "fleet-status",
         )?,
-        NatsReadModelConfig::new(&application.bounded_context("membership")?, "entitlement")?,
+        NatsReadModelConfig::new(&application.bounded_context("workshop")?, "fleet-status")?,
         NatsReadModelConfig::new(config.context(), "summary")?,
         NatsReadModelConfig::new(
             &ApplicationName::new(format!("{}-other", application.as_str()))?
-                .bounded_context("access")?,
-            "entitlement",
+                .bounded_context("bike-rental")?,
+            "fleet-status",
         )?,
     ];
     let key = ReadModelKey::new("same-key")?;
@@ -334,12 +335,12 @@ async fn ttl_expires_values_and_allows_recreation() -> TestResult {
 
 #[test]
 fn rejects_invalid_policy_and_names() -> TestResult {
-    let context = ApplicationName::new("acme")?.bounded_context("access")?;
+    let context = ApplicationName::new("acme")?.bounded_context("bike-rental")?;
     assert!(NatsReadModelConfig::new(&context, "bad.name").is_err());
-    let config = NatsReadModelConfig::new(&context, "entitlements")?;
+    let config = NatsReadModelConfig::new(&context, "fleet-status")?;
     assert_eq!(
         config.bucket_name(),
-        "ACME__ACCESS__ENTITLEMENTS_READ_MODEL"
+        "ACME__BIKE_RENTAL__FLEET_STATUS_READ_MODEL"
     );
     assert!(config.clone().with_history(65).is_err());
     assert!(config.clone().with_history(0).is_err());

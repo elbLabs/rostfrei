@@ -12,8 +12,8 @@ use rostfrei_runtime::{
 };
 
 use super::{
-    BillingChanged, DeliveryDisposition, Fixture, IntegrationEventOrder, NatsReadModelBackend,
-    OrganizationAccess, ReadModelProcessingError, TestResult, deliver, register_business,
+    DeliveryDisposition, Fixture, FleetStatus, InspectionChanged, IntegrationEventOrder,
+    NatsReadModelBackend, ReadModelProcessingError, TestResult, deliver, register_business,
 };
 
 #[derive(Default)]
@@ -136,8 +136,8 @@ async fn conflicts_are_bounded_and_uncertain_commits_are_not_applied_twice() -> 
             faults: faults.clone(),
         },
     );
-    let model = register_business(&models, fixture.billing.clone()).await?;
-    let key = ReadModelKey::new("org-1")?;
+    let model = register_business(&models, fixture.workshop.clone()).await?;
+    let key = ReadModelKey::new("fleet-1")?;
     faults.conflicts.store(16, Ordering::SeqCst);
     assert!(matches!(
         deliver(&model, "contended", 7, true).await?,
@@ -157,7 +157,7 @@ async fn conflicts_are_bounded_and_uncertain_commits_are_not_applied_twice() -> 
             .read(&key)
             .await?
             .ok_or("missing committed value")?
-            .paid
+            .inspection_passed
     );
     assert_eq!(
         deliver(&model, "redelivered", 7, true).await?,
@@ -169,13 +169,27 @@ async fn conflicts_are_bounded_and_uncertain_commits_are_not_applied_twice() -> 
         deliver(&model, "outage", 8, false).await?,
         DeliveryDisposition::RetryAfter(_)
     ));
-    assert!(model.reader().read(&key).await?.ok_or("missing")?.paid);
+    assert!(
+        model
+            .reader()
+            .read(&key)
+            .await?
+            .ok_or("missing")?
+            .inspection_passed
+    );
     faults.unavailable.store(false, Ordering::SeqCst);
     assert_eq!(
         deliver(&model, "repaired", 8, false).await?,
         DeliveryDisposition::Acknowledge
     );
-    assert!(!model.reader().read(&key).await?.ok_or("missing")?.paid);
+    assert!(
+        !model
+            .reader()
+            .read(&key)
+            .await?
+            .ok_or("missing")?
+            .inspection_passed
+    );
     fixture.cleanup().await
 }
 
@@ -186,11 +200,11 @@ async fn failed_transformations_do_not_save_partial_values_or_checkpoints() -> T
     let failure = Arc::new(AtomicBool::new(true));
     let fail = failure.clone();
     let model = models
-        .register::<OrganizationAccess>()
-        .try_on_integration_event::<BillingChanged>(
-            |event| event.organization_id.clone(),
+        .register::<FleetStatus>()
+        .try_on_integration_event::<InspectionChanged>(
+            |event| event.fleet_id.clone(),
             move |view, event| {
-                view.paid = event.paid;
+                view.inspection_passed = event.inspection_passed;
                 if fail.load(Ordering::SeqCst) {
                     return Err(ReadModelProcessingError::Transformation(
                         "cannot calculate view".to_owned(),
@@ -199,9 +213,9 @@ async fn failed_transformations_do_not_save_partial_values_or_checkpoints() -> T
                 Ok(())
             },
         )
-        .integration_source::<BillingChanged>(
-            fixture.billing.clone(),
-            IntegrationEventOrder::<BillingChanged>::latest("billing", |event| {
+        .integration_source::<InspectionChanged>(
+            fixture.workshop.clone(),
+            IntegrationEventOrder::<InspectionChanged>::latest("workshop", |event| {
                 event.source_version
             }),
         )
@@ -211,13 +225,20 @@ async fn failed_transformations_do_not_save_partial_values_or_checkpoints() -> T
         deliver(&model, "failure", 7, true).await?,
         DeliveryDisposition::Quarantine(_)
     ));
-    let key = ReadModelKey::new("org-1")?;
+    let key = ReadModelKey::new("fleet-1")?;
     assert!(model.reader().read(&key).await?.is_none());
     failure.store(false, Ordering::SeqCst);
     assert_eq!(
         deliver(&model, "replay", 7, true).await?,
         DeliveryDisposition::Acknowledge
     );
-    assert!(model.reader().read(&key).await?.ok_or("missing")?.paid);
+    assert!(
+        model
+            .reader()
+            .read(&key)
+            .await?
+            .ok_or("missing")?
+            .inspection_passed
+    );
     fixture.cleanup().await
 }

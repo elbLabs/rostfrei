@@ -7,19 +7,19 @@ use super::BenchResult;
 
 /// The same response is returned and JSON-encoded by every measured query path.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct AccessView {
-    pub organization_id: String,
-    pub billing_account_id: String,
-    pub member_count: u64,
-    pub purchased_seats: u64,
-    pub available_seats: u64,
+pub struct FleetDockCapacity {
+    pub fleet_id: String,
+    pub station_id: String,
+    pub bicycle_count: u64,
+    pub dock_count: u64,
+    pub unallocated_docks: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Snapshot {
-    pub view: AccessView,
-    pub organization_version: u64,
-    pub billing_version: u64,
+    pub view: FleetDockCapacity,
+    pub fleet_version: u64,
+    pub station_version: u64,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -30,29 +30,29 @@ pub struct Payload<T> {
 
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
-pub enum OrganizationEvent {
-    Created { billing_account_id: String },
-    MemberJoined { member_id: String },
+pub enum FleetEvent {
+    Created { station_id: String },
+    BicycleRegistered { bicycle_id: String },
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
-pub enum BillingEvent {
-    Opened { organization_id: String },
-    SeatsPurchased { seats: u64 },
+pub enum StationEvent {
+    Opened { fleet_id: String },
+    DocksInstalled { docks: u64 },
 }
 
-/// Rehydrated organization state includes member identities, while the read
+/// Rehydrated fleet state includes bicycle identities, while the read
 /// model only needs the count. Its first event establishes the aggregate link.
-pub struct OrganizationState {
-    pub billing_account_id: String,
-    pub members: BTreeSet<String>,
+pub struct FleetState {
+    pub station_id: String,
+    pub bicycles: BTreeSet<String>,
     pub version: u64,
 }
 
-pub struct BillingState {
-    pub organization_id: String,
-    pub purchased_seats: u64,
+pub struct StationState {
+    pub fleet_id: String,
+    pub dock_count: u64,
     pub version: u64,
 }
 
@@ -64,99 +64,89 @@ fn decode<T: DeserializeOwned>(record: &RecordedEvent, event_type: &str) -> Benc
     Ok(payload.change)
 }
 
-pub fn replay_organization(records: &[RecordedEvent]) -> BenchResult<OrganizationState> {
-    let mut billing_account_id = None;
-    let mut members = BTreeSet::new();
+pub fn replay_fleet(records: &[RecordedEvent]) -> BenchResult<FleetState> {
+    let mut station_id = None;
+    let mut bicycles = BTreeSet::new();
     for record in records {
-        match decode(record, "organization-changed")? {
-            OrganizationEvent::Created {
-                billing_account_id: id,
-            } => {
-                if billing_account_id.replace(id).is_some() {
-                    return Err("organization created twice".into());
+        match decode(record, "fleet-changed")? {
+            FleetEvent::Created { station_id: id } => {
+                if station_id.replace(id).is_some() {
+                    return Err("fleet created twice".into());
                 }
             }
-            OrganizationEvent::MemberJoined { member_id } => {
-                if billing_account_id.is_none() || !members.insert(member_id) {
-                    return Err("invalid organization membership history".into());
+            FleetEvent::BicycleRegistered { bicycle_id } => {
+                if station_id.is_none() || !bicycles.insert(bicycle_id) {
+                    return Err("invalid fleet registration history".into());
                 }
             }
         }
     }
-    Ok(OrganizationState {
-        billing_account_id: billing_account_id.ok_or("organization not created")?,
-        members,
+    Ok(FleetState {
+        station_id: station_id.ok_or("fleet not created")?,
+        bicycles,
         version: records
             .last()
-            .ok_or("empty organization history")?
+            .ok_or("empty fleet history")?
             .stream_version()
             .value(),
     })
 }
 
-pub fn replay_billing(records: &[RecordedEvent]) -> BenchResult<BillingState> {
-    let mut organization_id = None;
-    let mut purchased_seats = 0_u64;
+pub fn replay_station(records: &[RecordedEvent]) -> BenchResult<StationState> {
+    let mut fleet_id = None;
+    let mut dock_count = 0_u64;
     for record in records {
-        match decode(record, "billing-changed")? {
-            BillingEvent::Opened {
-                organization_id: id,
-            } => {
-                if organization_id.replace(id).is_some() {
-                    return Err("billing account opened twice".into());
+        match decode(record, "station-changed")? {
+            StationEvent::Opened { fleet_id: id } => {
+                if fleet_id.replace(id).is_some() {
+                    return Err("station opened twice".into());
                 }
             }
-            BillingEvent::SeatsPurchased { seats } => {
-                if organization_id.is_none() {
-                    return Err("billing account not opened".into());
+            StationEvent::DocksInstalled { docks } => {
+                if fleet_id.is_none() {
+                    return Err("station not opened".into());
                 }
-                purchased_seats = purchased_seats
-                    .checked_add(seats)
-                    .ok_or("seat count overflow")?;
+                dock_count = dock_count.checked_add(docks).ok_or("dock count overflow")?;
             }
         }
     }
-    Ok(BillingState {
-        organization_id: organization_id.ok_or("billing account not opened")?,
-        purchased_seats,
+    Ok(StationState {
+        fleet_id: fleet_id.ok_or("station not opened")?,
+        dock_count,
         version: records
             .last()
-            .ok_or("empty billing history")?
+            .ok_or("empty station history")?
             .stream_version()
             .value(),
     })
 }
 
-pub fn join(
-    organization: &StreamId,
-    state: OrganizationState,
-    billing: &BillingState,
-) -> BenchResult<Snapshot> {
-    if organization.aggregate_id().as_str() != billing.organization_id {
-        return Err("billing account belongs to another organization".into());
+pub fn join(fleet: &StreamId, state: FleetState, station: &StationState) -> BenchResult<Snapshot> {
+    if fleet.aggregate_id().as_str() != station.fleet_id {
+        return Err("station belongs to another fleet".into());
     }
-    let member_count = u64::try_from(state.members.len())?;
+    let bicycle_count = u64::try_from(state.bicycles.len())?;
     Ok(Snapshot {
-        view: AccessView {
-            organization_id: billing.organization_id.clone(),
-            billing_account_id: state.billing_account_id,
-            member_count,
-            purchased_seats: billing.purchased_seats,
-            available_seats: billing.purchased_seats.saturating_sub(member_count),
+        view: FleetDockCapacity {
+            fleet_id: station.fleet_id.clone(),
+            station_id: state.station_id,
+            bicycle_count,
+            dock_count: station.dock_count,
+            unallocated_docks: station.dock_count.saturating_sub(bicycle_count),
         },
-        organization_version: state.version,
-        billing_version: billing.version,
+        fleet_version: state.version,
+        station_version: station.version,
     })
 }
 
 pub fn replay(
-    organization: &StreamId,
-    organization_events: &[RecordedEvent],
-    billing_events: &[RecordedEvent],
+    fleet: &StreamId,
+    fleet_events: &[RecordedEvent],
+    station_events: &[RecordedEvent],
 ) -> BenchResult<Snapshot> {
     join(
-        organization,
-        replay_organization(organization_events)?,
-        &replay_billing(billing_events)?,
+        fleet,
+        replay_fleet(fleet_events)?,
+        &replay_station(station_events)?,
     )
 }

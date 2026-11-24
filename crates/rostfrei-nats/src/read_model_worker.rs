@@ -207,13 +207,17 @@ mod tests {
         let second = format!("{}-two", "c".repeat(60));
         let domain = consumer_purpose(&first, "domain", u32::MAX);
         context.consumer_name(&domain, u32::MAX).unwrap();
-        let integration = consumer_purpose(&first, "app.integration.billing.changed", u32::MAX);
+        let integration = consumer_purpose(
+            &first,
+            "app.integration.workshop.inspection-changed",
+            u32::MAX,
+        );
         context.durable_name(&integration, u32::MAX).unwrap();
         assert_ne!(domain, consumer_purpose(&second, "domain", u32::MAX));
         assert_ne!(domain, integration);
         assert_ne!(
             integration,
-            consumer_purpose(&first, "app.integration.billing.changed", 1)
+            consumer_purpose(&first, "app.integration.workshop.inspection-changed", 1)
         );
     }
 }

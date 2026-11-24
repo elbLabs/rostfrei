@@ -12,7 +12,7 @@ use std::{
 use async_trait::async_trait;
 use clap::Parser;
 use metrics::{Samples, Summary, Traffic};
-use model::{AccessView, BillingEvent, OrganizationEvent, Payload, Snapshot};
+use model::{FleetDockCapacity, FleetEvent, Payload, Snapshot, StationEvent};
 use rostfrei::{
     ApplicationName, JsonReadModelCodec, QueryErrorPayload, QueryHandler, QueryHandlerRequest,
     ReadModelCodec, ReadModelKey, ReadModelStore, TrafficScope,
@@ -104,56 +104,56 @@ impl Path {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-struct AccessQuery {
-    organization_id: String,
+struct DockCapacityQuery {
+    fleet_id: String,
 }
 
 struct Fixture {
     history: NatsEventStore,
     snapshots: SnapshotStore,
-    organization: StreamId,
-    billing: StreamId,
-    organization_events: Vec<RecordedEvent>,
-    billing_events: Vec<RecordedEvent>,
+    fleet: StreamId,
+    station: StreamId,
+    fleet_events: Vec<RecordedEvent>,
+    station_events: Vec<RecordedEvent>,
 }
 
 impl Fixture {
-    async fn query(&self, path: Path, request: &AccessQuery) -> BenchResult<AccessView> {
-        if request.organization_id != self.organization.aggregate_id().as_str() {
-            return Err("query organization mismatch".into());
+    async fn query(
+        &self,
+        path: Path,
+        request: &DockCapacityQuery,
+    ) -> BenchResult<FleetDockCapacity> {
+        if request.fleet_id != self.fleet.aggregate_id().as_str() {
+            return Err("query fleet mismatch".into());
         }
         let snapshot = match path {
             Path::Kv => {
                 self.snapshots
-                    .read(&ReadModelKey::new(&request.organization_id)?)
+                    .read(&ReadModelKey::new(&request.fleet_id)?)
                     .await?
                     .ok_or("snapshot missing")?
                     .value
             }
             Path::Sequential => {
-                let records = self.history.load(&self.organization).await?;
-                let state = model::replay_organization(&records)?;
-                let billing = StreamId::new(
-                    AggregateType::new("billing-account")?,
-                    AggregateId::new(&state.billing_account_id)?,
+                let records = self.history.load(&self.fleet).await?;
+                let state = model::replay_fleet(&records)?;
+                let station = StreamId::new(
+                    AggregateType::new("dock-station")?,
+                    AggregateId::new(&state.station_id)?,
                 );
-                let records = self.history.load(&billing).await?;
-                model::join(&self.organization, state, &model::replay_billing(&records)?)?
+                let records = self.history.load(&station).await?;
+                model::join(&self.fleet, state, &model::replay_station(&records)?)?
             }
             Path::Parallel => {
-                let (organization, billing) = tokio::try_join!(
-                    self.history.load(&self.organization),
-                    self.history.load(&self.billing)
+                let (fleet, station) = tokio::try_join!(
+                    self.history.load(&self.fleet),
+                    self.history.load(&self.station)
                 )?;
-                model::replay(&self.organization, &organization, &billing)?
+                model::replay(&self.fleet, &fleet, &station)?
             }
-            Path::Cached => model::replay(
-                &self.organization,
-                &self.organization_events,
-                &self.billing_events,
-            )?,
+            Path::Cached => model::replay(&self.fleet, &self.fleet_events, &self.station_events)?,
         };
-        if snapshot.view.billing_account_id != self.billing.aggregate_id().as_str() {
+        if snapshot.view.station_id != self.station.aggregate_id().as_str() {
             return Err("aggregate relation mismatch".into());
         }
         Ok(snapshot.view)
@@ -166,11 +166,11 @@ struct Handler<'a> {
 }
 
 #[async_trait]
-impl QueryHandler<AccessQuery, AccessView> for Handler<'_> {
+impl QueryHandler<DockCapacityQuery, FleetDockCapacity> for Handler<'_> {
     async fn handle(
         &self,
-        request: QueryHandlerRequest<AccessQuery>,
-    ) -> Result<AccessView, QueryErrorPayload> {
+        request: QueryHandlerRequest<DockCapacityQuery>,
+    ) -> Result<FleetDockCapacity, QueryErrorPayload> {
         self.fixture
             .query(self.path, request.payload())
             .await
@@ -216,14 +216,14 @@ async fn main() -> BenchResult {
     .await?;
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let application = ApplicationName::new(format!("kv-bench-{nonce}"))?;
-    let context = application.bounded_context_in_scope(TrafficScope::Test, "access")?;
+    let context = application.bounded_context_in_scope(TrafficScope::Test, "bike-rental")?;
     let events = NatsEventStoreConfig::for_bounded_context(&context)?
         .with_fresh_split_outcome_epoch("isolated-read-model-benchmark")?
         .with_storage_limits(256 * 1024 * 1024, 512 * 1024)?;
     let models = options
         .events_per_aggregate
         .iter()
-        .map(|size| NatsReadModelConfig::new(&context, format!("access-{size}")))
+        .map(|size| NatsReadModelConfig::new(&context, format!("dock-capacity-{size}")))
         .collect::<Result<Vec<_>, _>>()?;
     let result = run(&connection, &events, &models, &options).await;
     let cleanup = cleanup(&connection, &events, &models).await;
@@ -285,70 +285,70 @@ async fn prepare(
     size: u32,
     options: &Options,
 ) -> BenchResult<Fixture> {
-    let organization = StreamId::new(
-        AggregateType::new("organization")?,
-        AggregateId::new(format!("org-{size}"))?,
+    let fleet = StreamId::new(
+        AggregateType::new("fleet")?,
+        AggregateId::new(format!("fleet-{size}"))?,
     );
-    let billing = StreamId::new(
-        AggregateType::new("billing-account")?,
-        AggregateId::new(format!("billing-{size}"))?,
+    let station = StreamId::new(
+        AggregateType::new("dock-station")?,
+        AggregateId::new(format!("station-{size}"))?,
     );
     let note = "x".repeat(options.extra_event_bytes);
-    let mut organization_payloads = Vec::new();
-    let mut billing_payloads = Vec::new();
+    let mut fleet_payloads = Vec::new();
+    let mut station_payloads = Vec::new();
     for index in 0..size {
         let change = if index == 0 {
-            OrganizationEvent::Created {
-                billing_account_id: billing.aggregate_id().as_str().to_owned(),
+            FleetEvent::Created {
+                station_id: station.aggregate_id().as_str().to_owned(),
             }
         } else {
-            OrganizationEvent::MemberJoined {
-                member_id: format!("member-{index}"),
+            FleetEvent::BicycleRegistered {
+                bicycle_id: format!("bike-{index}"),
             }
         };
-        organization_payloads.push(serde_json::to_vec(&Payload {
+        fleet_payloads.push(serde_json::to_vec(&Payload {
             change,
             note: note.clone(),
         })?);
         let change = if index == 0 {
-            BillingEvent::Opened {
-                organization_id: organization.aggregate_id().as_str().to_owned(),
+            StationEvent::Opened {
+                fleet_id: fleet.aggregate_id().as_str().to_owned(),
             }
         } else {
-            BillingEvent::SeatsPurchased { seats: 2 }
+            StationEvent::DocksInstalled { docks: 2 }
         };
-        billing_payloads.push(serde_json::to_vec(&Payload {
+        station_payloads.push(serde_json::to_vec(&Payload {
             change,
             note: note.clone(),
         })?);
     }
     seed(
         history,
-        &organization,
-        "organization-changed",
-        &organization_payloads,
+        &fleet,
+        "fleet-changed",
+        &fleet_payloads,
         options.events_per_commit,
         options.transactional,
     )
     .await?;
     seed(
         history,
-        &billing,
-        "billing-changed",
-        &billing_payloads,
+        &station,
+        "station-changed",
+        &station_payloads,
         options.events_per_commit,
         options.transactional,
     )
     .await?;
-    let organization_events = history.load(&organization).await?;
-    let billing_events = history.load(&billing).await?;
-    let snapshot = model::replay(&organization, &organization_events, &billing_events)?;
+    let fleet_events = history.load(&fleet).await?;
+    let station_events = history.load(&station).await?;
+    let snapshot = model::replay(&fleet, &fleet_events, &station_events)?;
     let changes = u64::from(size.checked_sub(1).ok_or("empty history")?);
-    if snapshot.view.member_count != changes
-        || snapshot.view.purchased_seats != changes.checked_mul(2).ok_or("seats overflow")?
-        || snapshot.view.available_seats != changes
-        || snapshot.organization_version != u64::from(size)
-        || snapshot.billing_version != u64::from(size)
+    if snapshot.view.bicycle_count != changes
+        || snapshot.view.dock_count != changes.checked_mul(2).ok_or("docks overflow")?
+        || snapshot.view.unallocated_docks != changes
+        || snapshot.fleet_version != u64::from(size)
+        || snapshot.station_version != u64::from(size)
     {
         return Err("replayed result disagrees with seeded facts".into());
     }
@@ -361,7 +361,7 @@ async fn prepare(
     .await?;
     snapshots
         .create(
-            &ReadModelKey::new(organization.aggregate_id().as_str())?,
+            &ReadModelKey::new(fleet.aggregate_id().as_str())?,
             &snapshot,
         )
         .await?;
@@ -372,10 +372,10 @@ async fn prepare(
             .clone()
             .with_history_auditing(options.history_auditing),
         snapshots,
-        organization,
-        billing,
-        organization_events,
-        billing_events,
+        fleet,
+        station,
+        fleet_events,
+        station_events,
     })
 }
 
@@ -442,7 +442,7 @@ async fn seed(
     Ok(())
 }
 
-fn request(fixture: &Fixture) -> BenchResult<QueryHandlerRequest<AccessQuery>> {
+fn request(fixture: &Fixture) -> BenchResult<QueryHandlerRequest<DockCapacityQuery>> {
     Ok(QueryHandlerRequest::new(
         EnvelopeContext::new(
             MessageId::new("benchmark-query")?,
@@ -453,15 +453,15 @@ fn request(fixture: &Fixture) -> BenchResult<QueryHandlerRequest<AccessQuery>> {
         MessageTimestamp::from_unix_milliseconds(1)?,
         CallerMetadata::default(),
         None,
-        AccessQuery {
-            organization_id: fixture.organization.aggregate_id().as_str().to_owned(),
+        DockCapacityQuery {
+            fleet_id: fixture.fleet.aggregate_id().as_str().to_owned(),
         },
     )?)
 }
 
 async fn execute(
     handler: &Handler<'_>,
-    request: QueryHandlerRequest<AccessQuery>,
+    request: QueryHandlerRequest<DockCapacityQuery>,
 ) -> BenchResult<Vec<u8>> {
     let response = handler
         .handle(request)
@@ -478,9 +478,9 @@ async fn measure(
 ) -> BenchResult<CaseReport> {
     let request = request(fixture)?;
     let snapshot = model::replay(
-        &fixture.organization,
-        &fixture.organization_events,
-        &fixture.billing_events,
+        &fixture.fleet,
+        &fixture.fleet_events,
+        &fixture.station_events,
     )?;
     let expected = serde_json::to_vec(&snapshot.view)?;
     let mut paths = Path::ALL.map(|path| (path, Samples::default()));
@@ -525,9 +525,9 @@ async fn measure(
         .collect::<BenchResult<Vec<_>>>()?;
     results.sort_by_key(|result| result.path);
     let source_payload_bytes = fixture
-        .organization_events
+        .fleet_events
         .iter()
-        .chain(&fixture.billing_events)
+        .chain(&fixture.station_events)
         .try_fold(0_usize, |total, event| {
             total
                 .checked_add(event.payload().len())

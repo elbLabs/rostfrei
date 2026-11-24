@@ -8,9 +8,9 @@ rostfrei handles loading, initialization, source checkpoints, compare-and-set
 retries, and persistence.
 
 ```plaintext
-MemberJoined ──────┐
-DemoChanged ───────┼──→ OrganizationAccess[org-123] ←── query
-BillingChanged ───┘
+BicycleAdded ───────────────┐
+BicycleRented ──────────────┼──→ FleetActivity[city-fleet] ←── query
+BicycleMaintenanceRequested ┘
 ```
 
 The read model is application-owned query data. Aggregate history stays authoritative
@@ -29,11 +29,11 @@ Then declare an ordinary serializable struct:
 
 ```rust
 #[derive(Default, serde::Serialize, serde::Deserialize, rostfrei::ReadModel)]
-#[read_model(id = "organization-access", version = 1)]
-pub struct OrganizationAccess {
-    pub members: u64,
-    pub demo: bool,
-    pub paid: bool,
+#[read_model(id = "fleet-activity", version = 1)]
+pub struct FleetActivity {
+    pub bicycles_added: u64,
+    pub last_rented: Option<String>,
+    pub last_maintenance_request: Option<String>,
 }
 ```
 
@@ -49,31 +49,35 @@ storage and starts the event consumers.
 
 ## Register event handlers
 
-In this example, `Organization`, `MemberJoined`, and `DemoChanged` are existing
-domain types. `BillingChanged` is a public integration contract.
+This view uses the bike-rental application's [fleet events](../../examples/bike-rental/src/domain/bike_rental/rental_fleet/event_set.rs)
+and its public [maintenance request](../../examples/bike-rental/src/workshop.rs).
+It is an optional projection; `bike-rental-api` does not start it. Each event
+selects its fleet's row. The walkthrough's `city-fleet` is a valid `ReadModelKey`.
+If you accept arbitrary `FleetId` strings, define a collision-free key mapping
+within the 256-byte limit and use it for every handler and query.
 
 ```rust
 let model = read_models
-    .register::<OrganizationAccess>()
-    .from_aggregate::<Organization>()
-    .try_on_domain_event::<MemberJoined>(
-        |event| event.organization_id.clone(),
+    .register::<FleetActivity>()
+    .from_aggregate::<RentalFleetAggregate>()
+    .try_on_domain_event::<BicycleAdded>(
+        |event| event.fleet_id.as_str().to_owned(),
         |view, _event| {
-            view.members = view.members.checked_add(1).ok_or_else(|| {
+            view.bicycles_added = view.bicycles_added.checked_add(1).ok_or_else(|| {
                 rostfrei::ReadModelProcessingError::Transformation(
-                    "member count overflow".to_owned(),
+                    "bicycle count overflow".to_owned(),
                 )
             })?;
             Ok(())
         },
     )
-    .on_domain_event::<DemoChanged>(
-        |event| event.organization_id.clone(),
-        |view, event| view.demo = event.active,
+    .on_domain_event::<BicycleRented>(
+        |event| event.fleet_id.as_str().to_owned(),
+        |view, event| view.last_rented = Some(event.bicycle_id.as_str().to_owned()),
     )
-    .on_integration_event::<BillingChanged>(
-        |event| event.organization_id.clone(),
-        |view, event| view.paid = event.paid,
+    .on_integration_event::<BicycleMaintenanceRequested>(
+        |event| event.fleet_id.as_str().to_owned(),
+        |view, event| view.last_maintenance_request = Some(event.damage_report.clone()),
     )
     .build()
     .await?;
@@ -111,19 +115,14 @@ for registration and compatibility tests.
 
 ## Declare the integration producer once
 
-An ordinary integration event needs no business-version field:
+A maintenance request needs no business-version field. Its `IntegrationEvent`
+implementation names the context that publishes it:
 
 ```rust
-#[derive(serde::Serialize, serde::Deserialize)]
-pub struct BillingChanged {
-    pub organization_id: String,
-    pub paid: bool,
-}
-
-impl rostfrei::IntegrationEvent for BillingChanged {
-    const EVENT_NAME: &'static str = "billing-changed";
+impl rostfrei::IntegrationEvent for BicycleMaintenanceRequested {
+    const EVENT_NAME: &'static str = "bicycle-maintenance-requested";
     const SCHEMA_VERSION: u32 = 1;
-    const BOUNDED_CONTEXT: Option<&'static str> = Some("billing");
+    const BOUNDED_CONTEXT: Option<&'static str> = Some("bike-rental");
 }
 ```
 
@@ -139,15 +138,17 @@ explained in [ordering and recovery](ordering.mdx).
 
 ```rust
 let reader = model.reader();
-let key = rostfrei::ReadModelKey::new("org-123")?;
-let access = reader.read(&key).await?;
+let key = rostfrei::ReadModelKey::new("city-fleet")?;
+let activity = reader.read(&key).await?;
 ```
 
-`ReadModelReader<OrganizationAccess>` is cloneable and returns
-`Option<OrganizationAccess>`. Pass it into an
+`ReadModelReader<FleetActivity>` is cloneable and returns
+`Option<FleetActivity>`. Pass it into an
 [application query handler](../runtime.md#application-queries-and-http). It exposes
 no write methods or KV revision tokens.
 
+`bicycles_added` counts add events over the fleet's history. `last_maintenance_request`
+is the last request applied in broker order; redriving an older request can replace it.
 Queries can observe a model that is still catching up. Freshness and authorization
 deadlines belong in the application's contract.
 
@@ -163,20 +164,19 @@ deadlines belong in the application's contract.
 
 ## Run the complete example
 
-From the repository root, with Docker available:
+To run the adapter's standalone example with Docker, start from the repository root:
 
 ```sh
 cargo xtask test -- cargo run --locked -p rostfrei-nats --example read_model
 ```
 
-The example starts real consumers, combines domain and billing events, and queries:
+The [example](https://github.com/elbLabs/rostfrei/tree/main/crates/rostfrei-nats/examples/read_model)
+uses a small fleet fixture. It registers a bicycle, opens rentals and publishes
+a workshop inspection. Its query prints:
 
 ```plaintext
-Some(OrganizationAccess { members: 1, demo: true, paid: true })
+Some(FleetStatus { bicycles_registered: 1, rentals_open: true, inspection_passed: true })
 ```
-
-[Example source](https://github.com/elbLabs/rostfrei/tree/main/crates/rostfrei-nats/examples/read_model)
-contains the declaration, registration, source events, and runnable setup.
 
 Next: [bind NATS and start the worker](nats.mdx), or explore the
 [KV versus replay benchmark](../benchmarks/read-models.md).

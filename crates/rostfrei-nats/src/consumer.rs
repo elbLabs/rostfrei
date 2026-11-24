@@ -966,7 +966,7 @@ mod tests {
     fn record(payload: &[u8]) -> QuarantineRecord {
         QuarantineRecord {
             message_id: "message-1".to_owned(),
-            address: "fast-inbox.command.commercial-access.evaluate".to_owned(),
+            address: "bike-rental-demo.command.bike-rental.rent-bicycle".to_owned(),
             payload_base64: BASE64.encode(payload),
             payload_size: Some(payload.len()),
             payload_sha256: Some(sha256_hex(payload)),
@@ -980,21 +980,21 @@ mod tests {
             pending: 0,
             source_sequence: 42,
             consumer_sequence: 7,
-            source_stream: "FAST_INBOX_COMMANDS".to_owned(),
-            source_consumer: "fast-inbox--commercial-access--evaluate--v1".to_owned(),
+            source_stream: "BIKE_RENTAL_DEMO_COMMANDS".to_owned(),
+            source_consumer: "bike-rental-demo--bike-rental--rent-bicycle--v1".to_owned(),
         }
     }
 
     #[test]
     fn quarantine_subject_stays_inside_the_application_namespace() {
         assert_eq!(
-            quarantine_subject("fast-inbox.command.commercial-access.evaluate").unwrap(),
-            "fast-inbox.quarantine.command.commercial-access.evaluate"
+            quarantine_subject("bike-rental-demo.command.bike-rental.rent-bicycle").unwrap(),
+            "bike-rental-demo.quarantine.command.bike-rental.rent-bicycle"
         );
         assert!(quarantine_subject("invalid").is_err());
         assert_eq!(
-            quarantine_subject("fast-inbox.test.command.commercial-access.evaluate").unwrap(),
-            "fast-inbox.test.quarantine.command.commercial-access.evaluate"
+            quarantine_subject("bike-rental-demo.test.command.bike-rental.rent-bicycle").unwrap(),
+            "bike-rental-demo.test.quarantine.command.bike-rental.rent-bicycle"
         );
     }
 
@@ -1045,7 +1045,7 @@ mod tests {
     fn existing_quarantine_records_remain_readable() {
         let legacy = serde_json::json!({
             "message_id": "message-1",
-            "address": "fast-inbox.command.commercial-access.evaluate",
+            "address": "bike-rental-demo.command.bike-rental.rent-bicycle",
             "payload_base64": "cGF5bG9hZA==",
             "metadata": {},
             "trace_context": null,
@@ -1054,8 +1054,8 @@ mod tests {
             "pending": 0,
             "source_sequence": 42,
             "consumer_sequence": 7,
-            "source_stream": "FAST_INBOX_COMMANDS",
-            "source_consumer": "fast-inbox--commercial-access--evaluate--v1"
+            "source_stream": "BIKE_RENTAL_DEMO_COMMANDS",
+            "source_consumer": "bike-rental-demo--bike-rental--rent-bicycle--v1"
         });
 
         let record: QuarantineRecord = serde_json::from_value(legacy).unwrap();

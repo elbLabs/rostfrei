@@ -20,28 +20,29 @@ storage contract, with each source retaining its own authority.
 
 ## Setup
 
+To answer “How many non-retired bicycles belong to this fleet?”, a read model in the
+`bike-rental` application can store one `FleetInventory` per fleet ID. The count
+and the last applied `RentalFleet` stream version belong in the same value.
+
 ```rust
 use std::{num::NonZeroU32, sync::Arc};
 use rostfrei::{ApplicationName, JsonReadModelCodec, ReadModelStore};
 use rostfrei::nats::{NatsReadModelConfig, NatsReadModelStore, provision_read_model};
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct Entitlement {
-    members: u64,
-    paid: bool,
-    organization_version: u64,
-    billing_version: u64,
+struct FleetInventory {
+    bicycle_count: u64,
+    fleet_version: u64,
 }
 
-let context = ApplicationName::new("fast-inbox")?
-    .bounded_context("commercial-access")?;
-let policy = NatsReadModelConfig::new(&context, "organization-entitlement")?
+let context = ApplicationName::new("bike-rental")?.bounded_context("bike-rental")?;
+let policy = NatsReadModelConfig::new(&context, "fleet-inventory")?
     .with_storage_limits(64 * 1024 * 1024, 256 * 1024)?;
 
 // Explicit operator/bootstrap operation, separate from normal startup.
 provision_read_model(connection.jetstream(), &policy).await?;
 
-let store: Arc<dyn ReadModelStore<Entitlement>> = Arc::new(
+let store: Arc<dyn ReadModelStore<FleetInventory>> = Arc::new(
     NatsReadModelStore::connect(
         connection.jetstream().clone(),
         policy,
@@ -113,20 +114,17 @@ when old readers cannot interpret new values.
 
 ## Multiple handlers and source ordering
 
-The runnable [storage example](../crates/rostfrei-nats/examples/read_model_storage/main.rs) and
-[application code](../crates/rostfrei-nats/examples/read_model_storage/application.rs)
-include:
+The fleet count has one source per key: its fleet's event stream. `BicycleAdded`
+and `BicycleTransferredIn` increase the count; `BicycleRetired` and
+`BicycleTransferredOut` decrease it. `BicycleRented` does not change which fleet
+owns the bicycle, but the manual handler must still advance `fleet_version`.
+The event-driven runtime handles gaps and unregistered events through [history catch-up](read-models/ordering.mdx#domain-events).
 
-- Two `DomainEventHandler` implementations (`MemberJoined`, `DemoChanged`),
-  registered on one `DomainEventDispatcher` and sharing one read model.
-- A `MessageHandler<IntegrationEventAddress>` for public billing facts, attached
-  to its own integration-event consumer in a service.
-- A typed `QueryHandler<String, Option<Entitlement>>` reading through the
-  application-owned `EntitlementLookup` port.
-- A `rebuild` function loading committed events via `EventHistory` and dispatching
-  through the same domain handlers. The runnable example uses `NatsEventStore`.
-
-Run it against an isolated broker:
+For a runnable example of the same storage API, the NATS adapter includes a
+standalone [two-source fixture](../crates/rostfrei-nats/examples/read_model_storage/main.rs).
+Its [application code](../crates/rostfrei-nats/examples/read_model_storage/application.rs)
+shares one store across domain and integration handlers, serves a typed query,
+and rebuilds through `EventHistory`. Run it against an isolated broker:
 
 ```sh
 cargo xtask test -- cargo run --locked -p rostfrei-nats --example read_model_storage
@@ -146,7 +144,7 @@ domain-consumer contract; a source gap blocks progress until history is repaired
 The integration consumer has a different terminal path: an explicit quarantine
 disposition, or exhaustion of configured retries, persists a quarantine record
 and sends a terminal ACK. Its durable can advance while the snapshot and its
-`billing_version` remain unchanged. Fixing storage alone does not redeliver that
+source checkpoint remain unchanged. Fixing storage alone does not redeliver that
 event. See [integration recovery](#integration-quarantine-and-recovery) below.
 
 Three positions have different meanings:
@@ -154,17 +152,17 @@ Three positions have different meanings:
 1. **KV revision:** storage CAS token for this snapshot.
 2. **Aggregate stream version:** committed event position within one aggregate.
 3. **Projection source position:** application-owned progress for each input source.
-   This example stores an organization stream version plus an independent billing
-   source version. For several aggregates/contexts, namespace a checkpoint map by
-   source identity; a single global “last event” field is insufficient.
+   For `FleetInventory`, `fleet_version` is the last position applied from this
+   fleet. If the view also consumes an external source, persist a separate
+   checkpoint for it. A single global “last event” field is insufficient.
 
-Organization events in the example are ordered deltas: only the next contiguous
+Changes to the fleet count are deltas: only the next contiguous
 stream version is applicable; duplicates are skipped and gaps are blocked. Every
 event in that source stream must advance progress, including intentional no-ops.
 A consumer filtering out source events cannot assume contiguous aggregate versions
-without loading the missing history. In contrast, the billing contract supplies a
-complete replacement fact with an authoritative monotonic per-organization version,
-so a newer billing fact supersedes older ones even with skipped versions. Do not
+without loading the missing history. In contrast, if an external source supplies
+a complete replacement fact with a monotonic version per fleet, a newer fact
+supersedes older ones even with skipped versions. Do not
 substitute delivery order, timestamps, or unordered webhook IDs for that contract.
 
 For multiple read models consuming the **same event type**, use independently
@@ -182,9 +180,9 @@ delivery promise.
 
 The example quarantines permanent storage/configuration failures immediately.
 Transient unavailability retries only up to the integration consumer's configured
-attempt limit, then also enters quarantine. For example, a `paid=false` billing
-fact at source version 8 can be quarantined while the snapshot still contains
-`paid=true` at version 7. Consumer ACK progress cannot establish that version 8 was
+attempt limit, then also enters quarantine. For example, a versioned integration
+fact can enter quarantine at version 8 while the snapshot still shows version 7.
+Consumer ACK progress cannot establish that version 8 was
 materialized, and storage recovery does not automatically change that snapshot.
 
 Applications must monitor quarantined materialization failures and implement a
@@ -194,20 +192,21 @@ recovery policy. After repairing storage/configuration, either:
    schema, and complete payload (`payload_truncated` must be false). Use the supported
    integration publisher with a valid canonical envelope and a new matching
    transport/envelope message ID so JetStream's duplicate window does not suppress
-   the recovery delivery. Preserve the logical billing source version, original
+   the recovery delivery. Preserve the logical source version, original
    occurrence time, and correlation; link the new delivery to the original with
    causation and recovery metadata.
    The publisher derives the [physical subject suffix](messaging/subjects.mdx#stored-event-subjects)
    from the envelope's identities.
    The normal handler then applies it through the same source-checkpoint/CAS path.
-2. **Refresh from the billing authority.** Fetch its latest complete fact and pass
-   it through `Entitlements::billing_changed`. Its monotonic source version makes
+2. **Refresh from the source.** If the producer supplies versioned replacement
+   facts, fetch its latest complete fact and apply it through the same handler.
+   Its monotonic source version makes
    an already-applied or superseded quarantined event harmless. The application
    schedules retries of this refresh until it succeeds.
 
 Retain the original quarantine record. A successful republication PubAck only
 confirms enqueueing, so mark recovery complete after verifying the snapshot's
-billing checkpoint has reached or superseded the failed version. Query freshness
+source checkpoint has reached or superseded the failed version. Query freshness
 and authorization policies still decide how to treat a lagging snapshot.
 
 The [broker-backed recovery tests](../crates/rostfrei-nats/tests/read_model/recovery.rs)
@@ -226,8 +225,8 @@ cutover must coordinate its own source watermarks; a completed replay alone is n
 proof that the new generation is current. Alternatively pause consumers/queries
 during an in-place rebuild, and reset the consumer checkpoint to match the model.
 
-Stripe remains authoritative for billing facts. Re-fetch those facts through an
-application-owned port during reconciliation/rebuild, then CAS-update the model
+Fleet history reconstructs the inventory count. If a view also uses externally
+sourced facts, fetch those from their owner during a rebuild, then CAS-update the model
 using that source's freshness/version policy. Unordered webhooks can trigger a
 refresh rather than being interpreted as ordered deltas. KV TTL only governs
 retention. Store and check `refreshed_at`, `valid_until`, or authorization deadlines
@@ -238,15 +237,15 @@ in application data; an unexpired KV entry need not be fresh or authorize access
 Names use existing scope conventions, with `-` becoming `_` and uppercase tokens:
 
 ```text
-Normal: FAST_INBOX__COMMERCIAL_ACCESS__ORGANIZATION_ENTITLEMENT_READ_MODEL
-Test:   FAST_INBOX__TEST__COMMERCIAL_ACCESS__ORGANIZATION_ENTITLEMENT_READ_MODEL
+Normal: BIKE_RENTAL__BIKE_RENTAL__FLEET_INVENTORY_READ_MODEL
+Test:   BIKE_RENTAL__TEST__BIKE_RENTAL__FLEET_INVENTORY_READ_MODEL
 Stream: KV_<bucket>
 Keys:   $KV.<bucket>.<key>
 ```
 
 Application, bounded context, read-model name, and traffic scope each isolate a
 bucket. Names are validated lowercase kebab-case scope segments. Use
-`bounded_context_in_scope(TrafficScope::Test, "commercial-access")` for Test.
+`bounded_context_in_scope(TrafficScope::Test, "bike-rental")` for Test.
 
 Defaults: 64 MiB bucket capacity, 256 KiB encoded value limit, file storage, one
 replica, one history entry per key, no TTL. Builders configure capacity/value
@@ -279,9 +278,9 @@ operations do not require consumer-create or watch permissions.
 
 ## Migrating a direct async-nats adapter
 
-Keep your `EntitlementLookup`/repository interface and business rules. Replace its
+Keep your fleet inventory query interface and business rules. Replace its
 KV decoding, revision/CAS, and error-mapping implementation with an injected
-`Arc<dyn ReadModelStore<Entitlement>>`, as in the example. Then:
+`Arc<dyn ReadModelStore<FleetInventory>>`, as in [setup](#setup). Then:
 
 1. Provision the derived bucket with explicit limits; do not alias an arbitrary
    legacy bucket into another application or traffic scope.
@@ -296,7 +295,7 @@ KV decoding, revision/CAS, and error-mapping implementation with an injected
 The copy's essential operation is `new_store.create(&validated_key, &old.value)`;
 handle a conflicting destination through reconciliation, not unconditional overwrite.
 A custom codec can accept the old payload shape for a transitional import without
-putting entitlement/business rules into rostfrei.
+moving fleet rules into rostfrei.
 
 ## Deferred APIs
 
