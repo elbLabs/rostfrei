@@ -16,6 +16,7 @@ import {
 import {
   installScenario,
   prepareScenario,
+  scenarioDefine,
   scenarios,
 } from "./visual-scenarios.mjs"
 
@@ -112,11 +113,14 @@ async function main() {
   }
   let server
   let browser
+  // Scenes that need another Studio configuration get their own server.
+  const configured = new Map()
   const cleanup = async () => {
     try {
       await closeStudioBrowser(browser)
     } finally {
       await server?.close()
+      for (const started of configured.values()) await started.server.close()
     }
   }
   const interrupt = () => {
@@ -127,17 +131,15 @@ async function main() {
   try {
     let url = values.url
     let samples
+    const define = {
+      "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api"),
+      "import.meta.env.VITE_TRACER_TOKEN": JSON.stringify("visual-inspection"),
+      "import.meta.env.VITE_TRACER_INSPECTION_TOKEN": JSON.stringify(
+        "visual-inspection-readonly"
+      ),
+    }
     if (!url) {
-      const started = await startStudioServer({
-        define: {
-          "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api"),
-          "import.meta.env.VITE_TRACER_TOKEN":
-            JSON.stringify("visual-inspection"),
-          "import.meta.env.VITE_TRACER_INSPECTION_TOKEN": JSON.stringify(
-            "visual-inspection-readonly"
-          ),
-        },
-      })
+      const started = await startStudioServer({ define })
       server = started.server
       url = started.url
       const fixtures = await server.ssrLoadModule("/scripts/fixtures.mjs")
@@ -187,9 +189,21 @@ async function main() {
         )
       }
       try {
-        if (name !== "live")
+        let sceneUrl = url
+        if (name !== "live") {
           await installScenario(page, name, samples, diagnostics)
-        await page.goto(url, {
+          const extra = scenarioDefine(name)
+          const key = JSON.stringify(extra)
+          if (key !== "{}") {
+            if (!configured.has(key))
+              configured.set(
+                key,
+                await startStudioServer({ define: { ...define, ...extra } })
+              )
+            sceneUrl = configured.get(key).url
+          }
+        }
+        await page.goto(sceneUrl, {
           waitUntil: "networkidle0",
           timeout: navigationTimeout,
         })

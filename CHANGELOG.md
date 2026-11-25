@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- Tracer Studio gains an optional **Evaluation** tab for a rostfrei evaluation
+  application, enabled by `VITE_EVAL_API_URL` (proxied to `VITE_EVAL_TARGET`):
+  eval runs, a case-by-epoch matrix with green, red and flaky scorer cells,
+  regression against a chosen baseline run, and sample transcripts with verdict
+  reasoning. Each turn links to its causal graph in Correlations.
+- `#correlation=<correlation ID>` on the Studio URL opens that correlation
+  directly.
 - `cargo rostfrei new` generates a registry-pinned 0.2.3 application with
   release-matched Agent Skills (`--no-skills` to skip) and a runnable rental
   command demonstrating durable replay on JetStream.

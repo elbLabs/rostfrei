@@ -52,9 +52,17 @@ export interface CorrelationSelection {
   problem?: CorrelationProblem
 }
 
+// A correlation opened from outside the panel, such as a deep link. A new
+// sequence reopens the same ID.
+export interface CorrelationRequest {
+  id: string
+  sequence: number
+}
+
 interface Props {
   open: boolean
   active: boolean
+  request?: CorrelationRequest
   onClose: () => void
   onSelect: () => void
   onSelection: (selection: CorrelationSelection) => void
@@ -66,6 +74,7 @@ const CUSTOM_ANCHOR = ""
 export function CorrelationPanel({
   open,
   active,
+  request,
   onClose,
   onSelect,
   onSelection,
@@ -137,13 +146,12 @@ export function CorrelationPanel({
     []
   )
 
-  const loadChain = useCallback(
+  const readChain = useCallback(
     async (
       correlationId: string,
       source?: { view: AnchorCorrelationView; label: string }
     ) => {
       controller.current?.abort()
-      setViewLoading(false)
       const anchorIdentity = source && {
         label: source.label,
         aggregateType: source.view.aggregateType,
@@ -195,6 +203,38 @@ export function CorrelationPanel({
     },
     [eventsTemplate, onSelection]
   )
+  // Reading a chain cancels a pending anchor read, which then never settles.
+  const loadChain = (
+    correlationId: string,
+    source?: { view: AnchorCorrelationView; label: string }
+  ) => {
+    setViewLoading(false)
+    return readChain(correlationId, source)
+  }
+
+  const [shownRequest, setShownRequest] = useState<number>()
+  if (request && request.sequence !== shownRequest) {
+    setShownRequest(request.sequence)
+    setDirectId(request.id)
+    setSelectedId(undefined)
+    setViewLoading(false)
+  }
+  useEffect(() => {
+    if (!request) return
+    if (configured) void readChain(request.id)
+    else {
+      controller.current?.abort()
+      onSelection({
+        correlationId: request.id,
+        loading: false,
+        problem: {
+          failure: "credential-missing",
+          subject: request.id,
+          message: "VITE_TRACER_INSPECTION_TOKEN is not set.",
+        },
+      })
+    }
+  }, [configured, readChain, onSelection, request])
 
   const anchorContext = aggregateType.split("/")[0]
   const matches = rowMatches(rows)

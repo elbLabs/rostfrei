@@ -9,6 +9,7 @@ import {
   correlationErrors,
   missingAnchorPath,
 } from "./correlation-fixture.mjs"
+import { evaluationBase, evaluationResponse } from "./evaluation-fixture.mjs"
 import {
   observationCapability,
   observationFlow,
@@ -52,6 +53,19 @@ export const scenarios = {
   "correlations-unavailable":
     "Correlation history unavailable (501), not empty",
   "correlations-read-failed": "Native source read failed (503), not empty",
+  evaluation: "Eval run with its case by epoch matrix and regression",
+  "evaluation-sample": "Eval sample transcript with verdicts and reasoning",
+  "evaluation-rejected": "Rejected eval run with its admission findings",
+  "evaluation-correlation":
+    "Causal graph of one eval turn, opened from the sample by its correlation",
+}
+
+// Evaluation is an optional mode. Its scenes run against a Studio configured
+// with an evaluation API; every other scene keeps the default five tabs.
+export function scenarioDefine(scene) {
+  return scene.startsWith("evaluation")
+    ? { "import.meta.env.VITE_EVAL_API_URL": JSON.stringify(evaluationBase) }
+    : {}
 }
 
 const commandPath = "/contexts/bike-rental/commands/rent-bicycle"
@@ -215,7 +229,29 @@ export async function installScenario(page, scene, samples, diagnostics) {
     let body
     let status = 200
     let headers = {}
-    const correlationScene = scene.startsWith("correlations")
+    if (pathname.startsWith(`${evaluationBase}/`)) {
+      const response =
+        scene.startsWith("evaluation") && method === "POST"
+          ? evaluationResponse(
+              pathname.slice(evaluationBase.length),
+              JSON.parse(request.postData() ?? "{}")
+            )
+          : undefined
+      if (!response)
+        diagnostics.unexpectedRequests.push({ method, path: pathname })
+      void request.respond({
+        status: response?.status ?? 501,
+        contentType: "application/json",
+        body: JSON.stringify(
+          response?.body ?? {
+            message: `Missing visual fixture: ${method} ${pathname}`,
+          }
+        ),
+      })
+      return
+    }
+    const correlationScene =
+      scene.startsWith("correlations") || scene === "evaluation-correlation"
     if (method === "GET" && pathname === "/catalog")
       body =
         scene === "observation"
@@ -539,6 +575,10 @@ export async function prepareScenario(page, scene) {
     await prepareCorrelations(page, scene)
     return
   }
+  if (scene.startsWith("evaluation")) {
+    await prepareEvaluation(page, scene)
+    return
+  }
   if (scene === "observation") {
     await page.click('[data-workspace-tab="observation"]')
     await page.waitForSelector('[data-observation-status="live"]')
@@ -682,6 +722,31 @@ async function graphGeometry(page) {
       bounds: node.getBoundingClientRect().toJSON(),
     })),
   }))
+}
+
+async function prepareEvaluation(page, scene) {
+  await page.click('[data-workspace-tab="evaluation"]')
+  await page.waitForSelector('[data-eval-cell="report-damage#events"]')
+  await page.waitForSelector("[data-eval-regression-baseline]")
+  if (scene === "evaluation-rejected") {
+    await page.click('[aria-label="Expand sidebar"]')
+    await page.click('[data-eval-run="nightly-2026-09-08"]')
+    await page.waitForSelector(".evaluation-findings")
+  }
+  if (scene === "evaluation-sample" || scene === "evaluation-correlation") {
+    await page.click('[data-eval-sample="rent-city-bike#1"]')
+    await page.waitForSelector('[data-eval-turn="2"]')
+  }
+  if (scene === "evaluation-correlation") {
+    await page.click('[data-eval-cid="visual-rent-bike-42"]')
+    await page.waitForSelector('[data-workspace="correlations"]')
+    await page.waitForSelector('.correlation-heading[aria-busy="false"]')
+    if (page.viewport().width >= 1100)
+      await page.waitForSelector(
+        '[data-graph-edge][data-source-id="event:invoice-opened"][data-target-id="message:invoice-issued"]'
+      )
+  }
+  await settlePage(page)
 }
 
 async function prepareCorrelations(page, scene) {

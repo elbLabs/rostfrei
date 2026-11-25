@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { FlaskConical, PanelLeft, Send } from "lucide-react"
+import { FlaskConical, PanelLeft, RefreshCw, Send } from "lucide-react"
 import { Brand } from "@rostfrei/ui/brand"
 import { ThemeToggle } from "@rostfrei/ui/theme"
 
@@ -16,8 +16,13 @@ import {
   CorrelationHeading,
   CorrelationPanel,
   type CorrelationConnection,
+  type CorrelationRequest,
   type CorrelationSelection,
 } from "@/components/correlation-panel"
+import {
+  EvaluationSidebar,
+  EvaluationView,
+} from "@/components/evaluation-panel"
 import { ExecutionHeader } from "@/components/execution-header"
 import { MessageGraph } from "@/components/message-graph"
 import { RunInspection } from "@/components/run-inspection"
@@ -28,6 +33,8 @@ import {
 import { StudioSidebar } from "@/components/studio-sidebar"
 import { TestPanel } from "@/components/test-panel"
 import { WorkspaceTabs } from "@/components/workspace-tabs"
+import { clearLinkedCorrelation, linkedCorrelation } from "@/lib/deep-link"
+import { useEvaluation } from "@/lib/use-evaluation"
 import { workspaceModes, type Workspace } from "@/lib/workspace"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -64,12 +71,22 @@ const STORED_RUNS_KEY = "rostfrei-tracer-studio-runs-v1"
 const MAXIMUM_STORED_RUNS = 16
 
 function App() {
-  const [workspace, setWorkspace] = useState<Workspace>("tests")
+  const [correlationRequest, setCorrelationRequest] = useState<
+    CorrelationRequest | undefined
+  >(() => {
+    const id = linkedCorrelation()
+    return id ? { id, sequence: 0 } : undefined
+  })
+  const [workspace, setWorkspace] = useState<Workspace>(
+    correlationRequest ? "correlations" : "tests"
+  )
   const commandsActive = workspace === "commands"
   const testsActive = workspace === "tests"
   const runsActive = workspace === "runs"
   const observationActive = workspace === "observation"
   const correlationsActive = workspace === "correlations"
+  const evaluationActive = workspace === "evaluation"
+  const evaluation = useEvaluation(evaluationActive)
   const [correlationSelection, setCorrelationSelection] =
     useState<CorrelationSelection>({ loading: false })
   const [correlationConnection, setCorrelationConnection] =
@@ -114,6 +131,7 @@ function App() {
   const changeWorkspace = useCallback(
     (next: Workspace) => {
       if (next === workspace) return
+      clearLinkedCorrelation()
       setWorkspace(next)
       setSidebarOpen(
         next === "runs" || next === "observation" || next === "correlations"
@@ -124,6 +142,24 @@ function App() {
     },
     [workspace]
   )
+
+  useEffect(() => {
+    const openLinkedCorrelation = () => {
+      const id = linkedCorrelation()
+      if (!id) return
+      setWorkspace("correlations")
+      setSidebarOpen(false)
+      setCommandOpen(false)
+      setTestOpen(false)
+      setInspectingRun(false)
+      setCorrelationRequest((current) => ({
+        id,
+        sequence: (current?.sequence ?? 0) + 1,
+      }))
+    }
+    window.addEventListener("hashchange", openLinkedCorrelation)
+    return () => window.removeEventListener("hashchange", openLinkedCorrelation)
+  }, [])
 
   useEffect(() => {
     const toggleCommand = (event: KeyboardEvent) => {
@@ -456,7 +492,9 @@ function App() {
       ? "Recent runs"
       : observationActive
         ? "Flows"
-        : "Find correlation"
+        : evaluationActive
+          ? "Eval runs"
+          : "Find correlation"
 
   return (
     <TooltipProvider>
@@ -480,7 +518,9 @@ function App() {
                 ? observationConnection
                 : correlationsActive
                   ? correlationConnection
-                  : source
+                  : evaluationActive
+                    ? evaluation.connection
+                    : source
             }
             data-tracer-source={source}
           >
@@ -490,11 +530,13 @@ function App() {
                 ? `Observation ${observationConnection}`
                 : correlationsActive
                   ? `Correlations ${correlationConnection}`
-                  : source === "connecting"
-                    ? "Connecting"
-                    : source === "live"
-                      ? "Isolated Test"
-                      : "Disconnected"}
+                  : evaluationActive
+                    ? `Evaluation ${evaluation.connection}`
+                    : source === "connecting"
+                      ? "Connecting"
+                      : source === "live"
+                        ? "Isolated Test"
+                        : "Disconnected"}
             </span>
             {runsActive && selectedRun && (
               <span className="connection-detail">Saved run</span>
@@ -529,10 +571,17 @@ function App() {
         <CorrelationPanel
           open={sidebarOpen && correlationsActive}
           active={correlationsActive}
+          request={correlationRequest}
           onClose={() => setSidebarOpen(false)}
           onSelect={() => setSidebarOpen(false)}
           onSelection={setCorrelationSelection}
           onStatus={setCorrelationConnection}
+        />
+        <EvaluationSidebar
+          open={sidebarOpen && evaluationActive}
+          state={evaluation}
+          onClose={() => setSidebarOpen(false)}
+          onSelect={() => setSidebarOpen(false)}
         />
         <CommandPanel
           open={commandsActive && commandOpen}
@@ -617,11 +666,25 @@ function App() {
                       ? "studio-observation-panel"
                       : correlationsActive
                         ? "studio-correlation-panel"
-                        : "studio-navigation"
+                        : evaluationActive
+                          ? "studio-evaluation-panel"
+                          : "studio-navigation"
                   }
                 >
                   <PanelLeft />
                   <span>{sidebarLabel}</span>
+                </Button>
+              )}
+              {evaluationActive && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="evaluation-refresh"
+                  onClick={evaluation.refresh}
+                  aria-label="Refresh eval runs"
+                >
+                  <RefreshCw />
+                  <span>Refresh</span>
                 </Button>
               )}
               {commandsActive && (
@@ -675,10 +738,12 @@ function App() {
           <div
             className={cn(
               "workspace-content",
-              inspectionRun && "is-inspecting-run"
+              (inspectionRun || evaluationActive) && "is-inspecting-run"
             )}
           >
-            {inspectionRun ? (
+            {evaluationActive ? (
+              <EvaluationView state={evaluation} />
+            ) : inspectionRun ? (
               <RunInspection
                 key={inspectionRun.runId}
                 run={inspectionRun}
