@@ -327,7 +327,7 @@ async function checkRunMatrix(page, backend, url) {
   )
   assert.match(
     await text(page, ".rf-evidence-summary"),
-    /Completed.*6 of 6 finished.*9,920 in, 768 out.*1\.9 s.*model-under-test.*4f2c9d1.*support-assistant@v7/s
+    /Completed.*6 of 6 finished.*9\.920 in, 768 out.*1,9 s.*model-under-test.*4f2c9d1.*support-assistant@v7/s
   )
 
   await page.click(".evaluation-refresh")
@@ -476,7 +476,7 @@ async function checkSampleDetail(page, backend, url) {
   )
   assert.match(
     await text(page, '[data-eval-turn="1"]'),
-    /Turn 1.*model-under-test.*1,240 in, 96 out.*1\.9 s.*Customer.*rent a city bike.*Reply.*Which fleet/s
+    /Turn 1.*model-under-test.*1\.240 in, 96 out.*1,9 s.*Customer.*rent a city bike.*Reply.*Which fleet/s
   )
   assert.deepEqual(
     await page.$$eval("[data-eval-cid]", (links) =>

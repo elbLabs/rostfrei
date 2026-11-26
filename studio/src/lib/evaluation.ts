@@ -107,15 +107,21 @@ export function groupVerdicts(
     })
 }
 
+const NUMBER_LOCALE = "de-DE"
+
 export function formatDuration(milliseconds: number): string {
   if (!Number.isFinite(milliseconds)) return "Unknown"
-  return milliseconds < 1000
-    ? `${Math.round(milliseconds)} ms`
-    : `${(milliseconds / 1000).toFixed(milliseconds < 10_000 ? 1 : 0)} s`
+  if (milliseconds < 1000) return `${formatCount(Math.round(milliseconds))} ms`
+  const digits = milliseconds < 10_000 ? 1 : 0
+  const seconds = (milliseconds / 1000).toLocaleString(NUMBER_LOCALE, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })
+  return `${seconds} s`
 }
 
 export function formatCount(value: number): string {
-  return Number.isFinite(value) ? value.toLocaleString("en-US") : "Unknown"
+  return Number.isFinite(value) ? value.toLocaleString(NUMBER_LOCALE) : "Unknown"
 }
 
 function unique(values: string[]): string[] {
