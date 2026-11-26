@@ -16,6 +16,8 @@ Install workspace dependencies from the repository root with
    popup clipping, text wrapping, contrast, and graph visibility.
 5. For responsive changes, also use `--scene narrow` or specify
     `--viewport 390x844` on the affected scene.
+   For embedded Studio, capture `correlations-embed` and the side-panel scenes
+   `correlations-embed-panel` and `correlations-embed-details`.
    Capture both `--theme light` and `--theme dark` when changing presentation.
 
 Screenshots are available through Puppeteer even when the session has no
@@ -34,8 +36,6 @@ or API inspection alone establishes how the frontend looks.
   settling, and screenshot/state/accessibility capture helpers.
 - `scripts/visual-scenarios.mjs`: deterministic API mocks and UI interaction
   recipes. Unknown fixture requests fail instead of reaching Tracer.
-- `scripts/evaluation-fixture.mjs`: synthetic evaluation API answers for the
-  `evaluation*` scenes and `pnpm test:ui --check evaluation`.
 
 The inspector creates its own Vite server on an available port and cleans up
 its server/browser. Set `CHROME_BIN` when Chrome is outside the known locations.
@@ -70,11 +70,8 @@ with synthetic responses; real command behavior is verified through Tracer.
 - `src/components/message-inspector.tsx`: selected message request, response, and metadata.
 - `src/components/run-inspection.tsx`: optional saved-run summary, verdict, flow, and disclosures.
 - `src/components/studio-sidebar.tsx`: Tests and run-history navigation.
-- `src/components/evaluation-panel.tsx`: optional Evaluation mode: eval-run list,
-  case matrix, regression, and sample transcript with verdicts.
-- `src/lib/evaluation-api.ts`, `src/lib/use-evaluation.ts`, `src/lib/evaluation.ts`:
-  evaluation query client, selection/loading state, and matrix/verdict rules.
-- `src/lib/deep-link.ts`: `#correlation=<id>` links into Correlations.
+- `src/lib/deep-link.ts`: `#correlation=<id>` links, the `&embed=1` frame mode,
+  and the view recorded on each history entry for Back.
 - `src/components/draggable-panel.tsx`: shared draggable Command and Test panel shell.
 - `src/lib/graph.ts`: message-to-graph conversion and layout.
 - `src/lib/api.ts`: Tracer HTTP client.

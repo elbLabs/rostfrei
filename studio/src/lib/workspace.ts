@@ -1,15 +1,6 @@
-import {
-  ClipboardCheck,
-  FlaskConical,
-  History,
-  Radio,
-  Send,
-  Waypoints,
-} from "lucide-react"
+import { FlaskConical, History, Radio, Send, Waypoints } from "lucide-react"
 
-import { evaluationConfigured } from "@/lib/evaluation-api"
-
-const tracerModes = [
+export const workspaceModes = [
   {
     id: "commands",
     label: "Commands",
@@ -58,21 +49,4 @@ const tracerModes = [
   },
 ] as const
 
-const evaluationMode = {
-  id: "evaluation",
-  label: "Evaluation",
-  icon: ClipboardCheck,
-  scope: "Eval runs",
-  description: "Compare eval runs, verdicts and regressions.",
-  emptyTitle: "No eval runs yet",
-  emptyMessage: "Runs started in the evaluation application appear here.",
-} as const
-
-export type Workspace =
-  (typeof tracerModes)[number]["id"] | (typeof evaluationMode)["id"]
-
-// Evaluation is an optional mode: it exists only when an evaluation API is
-// configured, so a plain Tracer Studio keeps its five tabs and shortcuts.
-export const workspaceModes: readonly (
-  (typeof tracerModes)[number] | typeof evaluationMode
-)[] = evaluationConfigured() ? [...tracerModes, evaluationMode] : tracerModes
+export type Workspace = (typeof workspaceModes)[number]["id"]

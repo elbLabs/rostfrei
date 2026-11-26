@@ -82,6 +82,7 @@ export function observePage(page) {
     pageErrors: [],
     console: [],
     failedRequests: [],
+    cancelledRequests: [],
     httpErrors: [],
     expectedHttpErrors: [],
     unexpectedRequests: [],
@@ -93,10 +94,13 @@ export function observePage(page) {
     }
   })
   page.on("requestfailed", (request) => {
-    diagnostics.failedRequests.push({
+    const error = request.failure()?.errorText
+    // Studio cancels reads it supersedes; a cancelled read is not a failure.
+    const cancelled = error === "net::ERR_ABORTED"
+    diagnostics[cancelled ? "cancelledRequests" : "failedRequests"].push({
       method: request.method(),
       path: requestPath(request.url()),
-      error: request.failure()?.errorText,
+      error,
     })
   })
   page.on("response", (response) => {

@@ -23,15 +23,11 @@ import {
 } from "./fixtures.mjs"
 import { checkContinuousObservation } from "./observation-smoke.mjs"
 import { checkCorrelations } from "./correlation-smoke.mjs"
-import { checkEvaluation } from "./evaluation-smoke.mjs"
 import { installScenario } from "./visual-scenarios.mjs"
 
 const { values } = parseArgs({ options: { check: { type: "string" } } })
-if (
-  values.check &&
-  !["saved-runs", "navigation", "evaluation"].includes(values.check)
-)
-  throw new Error("--check supports saved-runs, navigation or evaluation")
+if (values.check && !["saved-runs", "navigation"].includes(values.check))
+  throw new Error("--check supports saved-runs or navigation")
 
 const { server, url } = await startStudioServer({
   define: { "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api") },
@@ -57,7 +53,6 @@ let browser
 let page
 
 async function checkStudio() {
-  if (values.check === "evaluation") return checkEvaluation()
   browser = await launchStudioBrowser()
   if (values.check !== "saved-runs")
     await checkWorkspaceNavigation(browser, url)
@@ -760,10 +755,6 @@ async function checkStudio() {
   console.log("Verified API request deadlines and partial capture evidence")
   await checkContinuousObservation()
   await checkCorrelations()
-  await checkEvaluation()
-  console.log(
-    "Verified the optional Evaluation mode: runs, case matrix, regression, sample verdicts and correlation links"
-  )
   console.log(
     `PASS: explicit connection failures and read-only retry; no demo fallback; canonical bicycle-added fixtures; test panel, graph-first runs and offline history; overlay inspector and causal edges; 6 responsive widths; Test-default command forms, explicit uncommitted handler diagnostics without graph/capture, retired Preview absence, exact numeric payloads, idempotency, input refresh and operation identities; failed expectations, ambiguous responses and storage failure. All API responses were mocked. Screenshots: ${path.join(tmpdir(), "rostfrei-studio-*.png")}`
   )

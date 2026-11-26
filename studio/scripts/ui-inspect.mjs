@@ -16,7 +16,8 @@ import {
 import {
   installScenario,
   prepareScenario,
-  scenarioDefine,
+  scenarioPath,
+  scenarioViewport,
   scenarios,
 } from "./visual-scenarios.mjs"
 
@@ -113,14 +114,11 @@ async function main() {
   }
   let server
   let browser
-  // Scenes that need another Studio configuration get their own server.
-  const configured = new Map()
   const cleanup = async () => {
     try {
       await closeStudioBrowser(browser)
     } finally {
       await server?.close()
-      for (const started of configured.values()) await started.server.close()
     }
   }
   const interrupt = () => {
@@ -131,15 +129,17 @@ async function main() {
   try {
     let url = values.url
     let samples
-    const define = {
-      "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api"),
-      "import.meta.env.VITE_TRACER_TOKEN": JSON.stringify("visual-inspection"),
-      "import.meta.env.VITE_TRACER_INSPECTION_TOKEN": JSON.stringify(
-        "visual-inspection-readonly"
-      ),
-    }
     if (!url) {
-      const started = await startStudioServer({ define })
+      const started = await startStudioServer({
+        define: {
+          "import.meta.env.VITE_TRACER_API_URL": JSON.stringify("/api"),
+          "import.meta.env.VITE_TRACER_TOKEN":
+            JSON.stringify("visual-inspection"),
+          "import.meta.env.VITE_TRACER_INSPECTION_TOKEN": JSON.stringify(
+            "visual-inspection-readonly"
+          ),
+        },
+      })
       server = started.server
       url = started.url
       const fixtures = await server.ssrLoadModule("/scripts/fixtures.mjs")
@@ -153,11 +153,7 @@ async function main() {
     for (const name of scene === "all" ? Object.keys(scenarios) : [scene]) {
       const context = await browser.createBrowserContext()
       const page = await context.newPage()
-      const dimensions =
-        viewport ??
-        (name === "narrow"
-          ? { width: 390, height: 844, deviceScaleFactor: 1 }
-          : desktopViewport)
+      const dimensions = viewport ?? scenarioViewport(name) ?? desktopViewport
       await page.setViewport(dimensions)
       if (values.theme) {
         await page.evaluateOnNewDocument((theme) => {
@@ -189,21 +185,9 @@ async function main() {
         )
       }
       try {
-        let sceneUrl = url
-        if (name !== "live") {
+        if (name !== "live")
           await installScenario(page, name, samples, diagnostics)
-          const extra = scenarioDefine(name)
-          const key = JSON.stringify(extra)
-          if (key !== "{}") {
-            if (!configured.has(key))
-              configured.set(
-                key,
-                await startStudioServer({ define: { ...define, ...extra } })
-              )
-            sceneUrl = configured.get(key).url
-          }
-        }
-        await page.goto(sceneUrl, {
+        await page.goto(name === "live" ? url : url + scenarioPath(name), {
           waitUntil: "networkidle0",
           timeout: navigationTimeout,
         })

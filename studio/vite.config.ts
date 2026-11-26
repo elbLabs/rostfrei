@@ -6,9 +6,6 @@ import { referenceTheme } from "@rostfrei/ui/vite"
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "")
-  // The optional evaluation API has no CORS either. A relative
-  // VITE_EVAL_API_URL is proxied to the evaluation application.
-  const evaluationPath = env.VITE_EVAL_API_URL?.replace(/\/$/, "")
 
   return {
     plugins: [referenceTheme(), react(), tailwindcss()],
@@ -24,16 +21,6 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (requestPath) => requestPath.replace(/^\/api/, ""),
         },
-        ...(evaluationPath?.startsWith("/") && evaluationPath !== "/api"
-          ? {
-              [evaluationPath]: {
-                target: env.VITE_EVAL_TARGET ?? "http://127.0.0.1:8095",
-                changeOrigin: true,
-                rewrite: (requestPath: string) =>
-                  requestPath.slice(evaluationPath.length),
-              },
-            }
-          : {}),
       },
     },
   }

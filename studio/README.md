@@ -91,29 +91,52 @@ use the read-only inspection token (`VITE_TRACER_INSPECTION_TOKEN`); the control
 token (`VITE_TRACER_TOKEN`) keeps serving commands and tests and receives `403`
 on these routes. These reads inspect Normal traffic, not isolated Test runs.
 
-With an [evaluation API](#evaluation-api) configured, a sixth tab,
-**Evaluation** (**Ctrl+6**), reads the runs of a rostfrei evaluation application.
-Without that configuration Studio has no such tab and makes no such request.
-**Eval runs** lists runs, newest request first. A run shows its plan, sample
-counts, tokens and latency, and one row per case: a sample per epoch with a
-pass/fail mark per scorer, and one cell per scorer that is green (every scored
-epoch passed), red (none passed) or flaky (some passed). **Regression** compares
-those cells with a baseline run: flipped to red, newly green and flaky. The run
-requested before the selected one is the default baseline; any other run, or
-none, can be chosen. A rejected run shows its admission findings instead.
-Opening a sample shows its transcript, one customer message and reply per turn
-with model, tokens and latency, and each scorer's verdicts with criterion and
-reasoning. A verdict recorded again for the same scorer and criterion replaces
-the earlier one in the outcome; both stay listed. The view reports what the
-evaluation application recorded and does not start, score or change runs.
+## Link to and embed a correlation
 
-Each turn's **Open causal graph** opens the turn's correlation ID in
-**Correlations**, on the same canvas and with the same inspection token and
-retention limits as a correlation opened by ID there. It is a link:
-`#correlation=<correlation ID>` on the Studio URL opens that correlation
-directly, also in a new tab or from outside Studio. The link reads the Tracer
-that Studio is connected to, so that Tracer must observe the application the
-eval ran against.
+`#correlation=<correlation ID>` on the Studio URL opens that correlation in
+**Correlations**, from a new tab, another application or an open Studio. The ID
+is percent-encoded. The read uses the same inspection token and retention
+limits as a correlation opened by ID. Following a link in an open Studio adds a
+history entry: Back returns to the tab, and within Correlations to the
+correlation, shown before it. Choosing another tab removes the link from the
+address.
+
+`#correlation=<correlation ID>&embed=1` shows only that correlation: its
+heading, the causal graph and message details, without Studio's tabs, toolbar
+or sidebars. It is meant for an `<iframe>` in another application's side panel:
+
+```html
+<iframe
+  title="Correlation"
+  src="https://studio.example/#correlation=order-42&embed=1"
+></iframe>
+```
+
+A frame wider than 1100 px shows the graph canvas with details beside it; a
+narrower frame, such as a 480 to 720 px side panel, shows the messages as a
+causal list and opens details in place. **Open in Tracer Studio** opens the same
+correlation in full Studio in a new tab. To show another correlation without
+reloading Studio or adding a history entry, the embedding page replaces the
+frame's address:
+`frame.contentWindow.location.replace(studioUrl + "#correlation=<ID>&embed=1")`.
+`#embed=1` without a correlation shows an empty frame.
+
+Embedded Studio requests only the correlation catalog and the correlation's
+events, both with the inspection token; it sends no control-token request. The
+embedding page passes nothing but the link. The Tracer address and the
+inspection token belong to the Studio deployment (see
+[Tracer connection](#tracer-connection)), and that Tracer must observe the
+application whose correlation is linked.
+
+The development and preview servers send no `X-Frame-Options` or
+`Content-Security-Policy` header, so any page can frame them. A production host
+must do the same for the embedding origin: omit `X-Frame-Options` (also
+`SAMEORIGIN` blocks another origin) and, if it sends a
+`Content-Security-Policy`, include `frame-ancestors <embedding origin>`. The
+embedding application's own policy needs the Studio origin in `frame-src`.
+Studio and its Tracer API path must be served from one origin, because Tracer
+serves no CORS headers. The tokens are part of the built bundle: build a Studio
+that is only embedded without `VITE_TRACER_TOKEN`, and restrict who can load it.
 
 ## Run locally
 
@@ -142,8 +165,7 @@ The smoke test does not publish to a running Tracer. Set `CHROME_BIN` if Chrome
 is installed outside the standard
 locations; container environments that require it can set `CHROME_NO_SANDBOX=1`.
 
-Use `pnpm test:ui --check evaluation` to run just the Evaluation mode against a
-synthetic evaluation API, and `pnpm test:ui --check saved-runs` to run just the saved-run inspection journey
+Use `pnpm test:ui --check saved-runs` to run just the saved-run inspection journey
 at desktop and mobile widths. Selection failures retain screenshots, DOM state,
 accessibility, and browser diagnostics under `artifacts/review/saved-run-inspection-<width>/`.
 
@@ -166,9 +188,8 @@ session. Named scenarios intercept every API request and label their synthetic
 responses as visual fixtures. They cover the canvas overview, test panel, command form,
 accepted/rejected Test, pending and indeterminate results, a 25-message
 branching graph, long payloads, continuous observation, anchored correlations
-with their error states, the optional Evaluation mode, and the narrow-screen
-inspector. Evaluation scenes run against a Studio configured with an evaluation
-API; all other scenes keep the default tabs. Unknown API
+with their error states, an embedded correlation at desktop and side-panel
+widths, and the narrow-screen inspector. Unknown API
 requests fail rather than reaching a backend.
 
 Each capture writes `screenshot.png`, `state.json`, `accessibility.json`, and
@@ -176,7 +197,8 @@ Each capture writes `screenshot.png`, `state.json`, `accessibility.json`, and
 State includes the resolved theme, panel/card bounds, selection, inspector content, and viewport
 visibility. Inspect the screenshot to evaluate wrapping, clipping, and contrast;
 browser exceptions, failed requests, unexpected HTTP errors, and missing fixture
-routes fail the capture. Fixture sessions freeze wall time/UUIDs and disable motion.
+routes fail the capture. Requests Studio cancelled itself are listed as
+`cancelledRequests` and do not. Fixture sessions freeze wall time/UUIDs and disable motion.
 
 `--headed` keeps Chrome open: Enter recaptures and `q` exits. To inspect a running
 Studio with its actual API instead of fixtures, use its URL:
@@ -215,30 +237,6 @@ In Docker, `127.0.0.1` refers to the Studio container itself. Configure
 `VITE_TRACER_TARGET` to a reachable Tracer container/host address, or explicitly use
 host networking for a local Tracer. Restart the dev/preview server after changing
 the proxy target; token and other frontend environment changes require a rebuild.
-
-### Evaluation API
-
-The Evaluation tab is optional. Set `VITE_EVAL_API_URL` to the HTTP API of a
-rostfrei evaluation application to enable it:
-
-```sh
-VITE_EVAL_API_URL=/eval-api \
-VITE_EVAL_TARGET=http://127.0.0.1:8095 \
-pnpm dev
-```
-
-A relative `VITE_EVAL_API_URL` is proxied by the development and preview
-servers to `VITE_EVAL_TARGET` (default `http://127.0.0.1:8095`), with the prefix
-removed, because such an API serves no CORS headers. An absolute URL is
-requested directly and needs CORS on the application. Studio sends no
-credentials to this API; the Tracer tokens are never sent to it.
-
-Studio reads four queries of the `evaluation` context with
-`POST /contexts/evaluation/queries/{name}/schemas/1`: `list-runs`,
-`get-run-summary`, `get-regression` and `get-sample`. Their not-found codes
-`evaluation.run-not-found`, `evaluation.baseline-not-found` and
-`evaluation.sample-not-found` are shown as such; other failures are shown as
-failed or unavailable reads, never as empty results.
 
 Run summaries are retained in browser local storage because Tracer does not yet
 provide a run-history endpoint. Saved real runs can be inspected while disconnected,

@@ -9,7 +9,6 @@ import {
   correlationErrors,
   missingAnchorPath,
 } from "./correlation-fixture.mjs"
-import { evaluationBase, evaluationResponse } from "./evaluation-fixture.mjs"
 import {
   observationCapability,
   observationFlow,
@@ -53,19 +52,34 @@ export const scenarios = {
   "correlations-unavailable":
     "Correlation history unavailable (501), not empty",
   "correlations-read-failed": "Native source read failed (503), not empty",
-  evaluation: "Eval run with its case by epoch matrix and regression",
-  "evaluation-sample": "Eval sample transcript with verdicts and reasoning",
-  "evaluation-rejected": "Rejected eval run with its admission findings",
-  "evaluation-correlation":
-    "Causal graph of one eval turn, opened from the sample by its correlation",
+  "correlations-embed":
+    "Embedded correlation graph with message details, without Studio navigation",
+  "correlations-embed-panel": "Embedded correlation in a 560 × 900 side panel",
+  "correlations-embed-details":
+    "Embedded message details in a 480 × 800 side panel",
 }
 
-// Evaluation is an optional mode. Its scenes run against a Studio configured
-// with an evaluation API; every other scene keeps the default five tabs.
-export function scenarioDefine(scene) {
-  return scene.startsWith("evaluation")
-    ? { "import.meta.env.VITE_EVAL_API_URL": JSON.stringify(evaluationBase) }
-    : {}
+const embeddedCorrelation = "/#correlation=visual-rent-bike-42&embed=1"
+
+// Embedded scenes open Studio by link; every other scene starts at its root.
+export function scenarioPath(scene) {
+  return scene.startsWith("correlations-embed") ? embeddedCorrelation : ""
+}
+
+export function scenarioViewport(scene) {
+  return {
+    narrow: { width: 390, height: 844, deviceScaleFactor: 1 },
+    "correlations-embed-panel": {
+      width: 560,
+      height: 900,
+      deviceScaleFactor: 1,
+    },
+    "correlations-embed-details": {
+      width: 480,
+      height: 800,
+      deviceScaleFactor: 1,
+    },
+  }[scene]
 }
 
 const commandPath = "/contexts/bike-rental/commands/rent-bicycle"
@@ -229,29 +243,7 @@ export async function installScenario(page, scene, samples, diagnostics) {
     let body
     let status = 200
     let headers = {}
-    if (pathname.startsWith(`${evaluationBase}/`)) {
-      const response =
-        scene.startsWith("evaluation") && method === "POST"
-          ? evaluationResponse(
-              pathname.slice(evaluationBase.length),
-              JSON.parse(request.postData() ?? "{}")
-            )
-          : undefined
-      if (!response)
-        diagnostics.unexpectedRequests.push({ method, path: pathname })
-      void request.respond({
-        status: response?.status ?? 501,
-        contentType: "application/json",
-        body: JSON.stringify(
-          response?.body ?? {
-            message: `Missing visual fixture: ${method} ${pathname}`,
-          }
-        ),
-      })
-      return
-    }
-    const correlationScene =
-      scene.startsWith("correlations") || scene === "evaluation-correlation"
+    const correlationScene = scene.startsWith("correlations")
     if (method === "GET" && pathname === "/catalog")
       body =
         scene === "observation"
@@ -417,11 +409,14 @@ export async function installScenario(page, scene, samples, diagnostics) {
 }
 
 export async function prepareScenario(page, scene) {
-  await page.waitForFunction(() =>
-    document
-      .querySelector(".execution-header")
-      ?.textContent?.includes("Visual fixture:")
-  )
+  // Embedded Studio never loads the test library that names the fixture.
+  await (scenarioPath(scene)
+    ? page.waitForSelector(".studio-embedded")
+    : page.waitForFunction(() =>
+        document
+          .querySelector(".execution-header")
+          ?.textContent?.includes("Visual fixture:")
+      ))
   await page.addStyleTag({
     content: `
     *, *::before, *::after {
@@ -575,10 +570,6 @@ export async function prepareScenario(page, scene) {
     await prepareCorrelations(page, scene)
     return
   }
-  if (scene.startsWith("evaluation")) {
-    await prepareEvaluation(page, scene)
-    return
-  }
   if (scene === "observation") {
     await page.click('[data-workspace-tab="observation"]')
     await page.waitForSelector('[data-observation-status="live"]')
@@ -724,32 +715,17 @@ async function graphGeometry(page) {
   }))
 }
 
-async function prepareEvaluation(page, scene) {
-  await page.click('[data-workspace-tab="evaluation"]')
-  await page.waitForSelector('[data-eval-cell="report-damage#events"]')
-  await page.waitForSelector("[data-eval-regression-baseline]")
-  if (scene === "evaluation-rejected") {
-    await page.click('[aria-label="Expand sidebar"]')
-    await page.click('[data-eval-run="nightly-2026-09-08"]')
-    await page.waitForSelector(".evaluation-findings")
-  }
-  if (scene === "evaluation-sample" || scene === "evaluation-correlation") {
-    await page.click('[data-eval-sample="rent-city-bike#1"]')
-    await page.waitForSelector('[data-eval-turn="2"]')
-  }
-  if (scene === "evaluation-correlation") {
-    await page.click('[data-eval-cid="visual-rent-bike-42"]')
-    await page.waitForSelector('[data-workspace="correlations"]')
-    await page.waitForSelector('.correlation-heading[aria-busy="false"]')
-    if (page.viewport().width >= 1100)
-      await page.waitForSelector(
-        '[data-graph-edge][data-source-id="event:invoice-opened"][data-target-id="message:invoice-issued"]'
-      )
-  }
-  await settlePage(page)
-}
-
 async function prepareCorrelations(page, scene) {
+  if (scene.startsWith("correlations-embed")) {
+    await page.waitForSelector('.correlation-heading[aria-busy="false"]')
+    assert.equal(await page.$(".studio-topbar, .workspace-toolbar"), null)
+    if (scene !== "correlations-embed-panel") {
+      await page.click('[data-message-id="event:invoice-opened"]')
+      await page.waitForSelector(".message-inspector", { visible: true })
+    }
+    await settlePage(page)
+    return
+  }
   await page.click('[data-workspace-tab="correlations"]')
   await page.waitForSelector(
     '[aria-label="Anchor aggregate type"] option[value="bike-rental/rental-fleet"]'
