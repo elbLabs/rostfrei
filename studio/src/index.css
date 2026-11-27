@@ -1704,3 +1704,23 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Embedded Studio: one correlation without Studio's navigation. */
+.studio-embedded {
+  --topbar-height: 0px;
+  --workspace-toolbar-height: 0px;
+}
+.studio-embedded .studio-main { grid-template-rows: minmax(0, 1fr); }
+.embedded-studio-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.embedded-studio-link:hover { color: var(--primary); }
+@media (max-width: 767px) {
+  .embedded-studio-link { padding-inline: 12px; }
+}

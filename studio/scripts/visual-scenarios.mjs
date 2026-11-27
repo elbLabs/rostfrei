@@ -52,6 +52,34 @@ export const scenarios = {
   "correlations-unavailable":
     "Correlation history unavailable (501), not empty",
   "correlations-read-failed": "Native source read failed (503), not empty",
+  "correlations-embed":
+    "Embedded correlation graph with message details, without Studio navigation",
+  "correlations-embed-panel": "Embedded correlation in a 560 × 900 side panel",
+  "correlations-embed-details":
+    "Embedded message details in a 480 × 800 side panel",
+}
+
+const embeddedCorrelation = "/#correlation=visual-rent-bike-42&embed=1"
+
+// Embedded scenes open Studio by link; every other scene starts at its root.
+export function scenarioPath(scene) {
+  return scene.startsWith("correlations-embed") ? embeddedCorrelation : ""
+}
+
+export function scenarioViewport(scene) {
+  return {
+    narrow: { width: 390, height: 844, deviceScaleFactor: 1 },
+    "correlations-embed-panel": {
+      width: 560,
+      height: 900,
+      deviceScaleFactor: 1,
+    },
+    "correlations-embed-details": {
+      width: 480,
+      height: 800,
+      deviceScaleFactor: 1,
+    },
+  }[scene]
 }
 
 const commandPath = "/contexts/bike-rental/commands/rent-bicycle"
@@ -381,11 +409,14 @@ export async function installScenario(page, scene, samples, diagnostics) {
 }
 
 export async function prepareScenario(page, scene) {
-  await page.waitForFunction(() =>
-    document
-      .querySelector(".execution-header")
-      ?.textContent?.includes("Visual fixture:")
-  )
+  // Embedded Studio never loads the test library that names the fixture.
+  await (scenarioPath(scene)
+    ? page.waitForSelector(".studio-embedded")
+    : page.waitForFunction(() =>
+        document
+          .querySelector(".execution-header")
+          ?.textContent?.includes("Visual fixture:")
+      ))
   await page.addStyleTag({
     content: `
     *, *::before, *::after {
@@ -685,6 +716,16 @@ async function graphGeometry(page) {
 }
 
 async function prepareCorrelations(page, scene) {
+  if (scene.startsWith("correlations-embed")) {
+    await page.waitForSelector('.correlation-heading[aria-busy="false"]')
+    assert.equal(await page.$(".studio-topbar, .workspace-toolbar"), null)
+    if (scene !== "correlations-embed-panel") {
+      await page.click('[data-message-id="event:invoice-opened"]')
+      await page.waitForSelector(".message-inspector", { visible: true })
+    }
+    await settlePage(page)
+    return
+  }
   await page.click('[data-workspace-tab="correlations"]')
   await page.waitForSelector(
     '[aria-label="Anchor aggregate type"] option[value="bike-rental/rental-fleet"]'

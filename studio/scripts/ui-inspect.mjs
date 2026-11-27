@@ -16,6 +16,8 @@ import {
 import {
   installScenario,
   prepareScenario,
+  scenarioPath,
+  scenarioViewport,
   scenarios,
 } from "./visual-scenarios.mjs"
 
@@ -151,11 +153,7 @@ async function main() {
     for (const name of scene === "all" ? Object.keys(scenarios) : [scene]) {
       const context = await browser.createBrowserContext()
       const page = await context.newPage()
-      const dimensions =
-        viewport ??
-        (name === "narrow"
-          ? { width: 390, height: 844, deviceScaleFactor: 1 }
-          : desktopViewport)
+      const dimensions = viewport ?? scenarioViewport(name) ?? desktopViewport
       await page.setViewport(dimensions)
       if (values.theme) {
         await page.evaluateOnNewDocument((theme) => {
@@ -189,7 +187,7 @@ async function main() {
       try {
         if (name !== "live")
           await installScenario(page, name, samples, diagnostics)
-        await page.goto(url, {
+        await page.goto(name === "live" ? url : url + scenarioPath(name), {
           waitUntil: "networkidle0",
           timeout: navigationTimeout,
         })

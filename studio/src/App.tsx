@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react"
-import { FlaskConical, PanelLeft, Send } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { ExternalLink, FlaskConical, PanelLeft, Send } from "lucide-react"
 import { Brand } from "@rostfrei/ui/brand"
 import { ThemeToggle } from "@rostfrei/ui/theme"
 
@@ -16,6 +16,7 @@ import {
   CorrelationHeading,
   CorrelationPanel,
   type CorrelationConnection,
+  type CorrelationRequest,
   type CorrelationSelection,
 } from "@/components/correlation-panel"
 import { ExecutionHeader } from "@/components/execution-header"
@@ -28,6 +29,12 @@ import {
 import { StudioSidebar } from "@/components/studio-sidebar"
 import { TestPanel } from "@/components/test-panel"
 import { WorkspaceTabs } from "@/components/workspace-tabs"
+import {
+  correlationHref,
+  recordView,
+  recordedView,
+  studioLink,
+} from "@/lib/deep-link"
 import { workspaceModes, type Workspace } from "@/lib/workspace"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -64,7 +71,16 @@ const STORED_RUNS_KEY = "rostfrei-tracer-studio-runs-v1"
 const MAXIMUM_STORED_RUNS = 16
 
 function App() {
-  const [workspace, setWorkspace] = useState<Workspace>("tests")
+  const [link, setLink] = useState(studioLink)
+  const embedded = link.embed
+  const [correlationRequest, setCorrelationRequest] = useState<
+    CorrelationRequest | undefined
+  >(() =>
+    link.correlationId ? { id: link.correlationId, sequence: 0 } : undefined
+  )
+  const [workspace, setWorkspace] = useState<Workspace>(
+    link.correlationId || embedded ? "correlations" : "tests"
+  )
   const commandsActive = workspace === "commands"
   const testsActive = workspace === "tests"
   const runsActive = workspace === "runs"
@@ -125,6 +141,59 @@ function App() {
     [workspace]
   )
 
+  const shownCorrelationId = correlationSelection.correlationId
+  const shownCorrelation = useRef(shownCorrelationId)
+  useEffect(() => {
+    shownCorrelation.current = shownCorrelationId
+    recordView({ workspace, correlationId: shownCorrelationId })
+  }, [workspace, shownCorrelationId])
+
+  useEffect(() => {
+    // A fragment navigation reports both events; history traversal between
+    // entries with the same address reports only popstate.
+    let followed = window.location.href
+    const follow = (event: Event) => {
+      if (event.type === "hashchange" && followed === window.location.href)
+        return
+      followed = window.location.href
+      const next = studioLink()
+      const recorded = recordedView()
+      const show = (target: Workspace) => {
+        setWorkspace(target)
+        setSidebarOpen(false)
+        setCommandOpen(false)
+        setTestOpen(false)
+        setInspectingRun(false)
+      }
+      const open = (id: string | undefined) =>
+        setCorrelationRequest((current) => ({
+          id,
+          sequence: (current?.sequence ?? 0) + 1,
+        }))
+      setLink(next)
+      if (next.correlationId) {
+        show("correlations")
+        open(next.correlationId)
+      } else if (next.embed) {
+        show("correlations")
+        open(undefined)
+      } else if (recorded) {
+        show(recorded.workspace)
+        if (
+          recorded.workspace === "correlations" &&
+          recorded.correlationId !== shownCorrelation.current
+        )
+          open(recorded.correlationId)
+      }
+    }
+    window.addEventListener("popstate", follow)
+    window.addEventListener("hashchange", follow)
+    return () => {
+      window.removeEventListener("popstate", follow)
+      window.removeEventListener("hashchange", follow)
+    }
+  }, [])
+
   useEffect(() => {
     const toggleCommand = (event: KeyboardEvent) => {
       if (
@@ -146,6 +215,9 @@ function App() {
   }, [catalog])
 
   useEffect(() => {
+    // Embedded Studio shows one retained correlation and reads it with the
+    // inspection token alone, so it makes no control-token request.
+    if (embedded) return
     let active = true
     const connect = async () => {
       let availableCatalog: TracerCatalog
@@ -198,7 +270,7 @@ function App() {
     return () => {
       active = false
     }
-  }, [connectionAttempt])
+  }, [connectionAttempt, embedded])
 
   const retryConnection = () => {
     if (loading || running) return
@@ -464,71 +536,80 @@ function App() {
         className={cn(
           "studio-shell",
           (observationActive || correlationsActive) && "observation-active",
-          sidebarOpen && "sidebar-is-open"
+          sidebarOpen && "sidebar-is-open",
+          embedded && "studio-embedded"
         )}
       >
-        <header className="studio-topbar">
-          <div className="studio-logo" aria-label="Rostfrei Tracer Studio">
-            <Brand compact className="studio-brand" />
-            <strong>Tracer Studio</strong>
-          </div>
-          <WorkspaceTabs value={workspace} onChange={changeWorkspace} />
-          <div
-            className="connection-status"
-            data-source={
-              observationActive
-                ? observationConnection
-                : correlationsActive
-                  ? correlationConnection
-                  : source
-            }
-            data-tracer-source={source}
-          >
-            <span className="connection-dot" />
-            <span className="connection-label">
-              {observationActive
-                ? `Observation ${observationConnection}`
-                : correlationsActive
-                  ? `Correlations ${correlationConnection}`
-                  : source === "connecting"
-                    ? "Connecting"
-                    : source === "live"
-                      ? "Isolated Test"
-                      : "Disconnected"}
-            </span>
-            {runsActive && selectedRun && (
-              <span className="connection-detail">Saved run</span>
-            )}
-          </div>
-          <ThemeToggle className="studio-theme-toggle" />
-        </header>
+        {!embedded && (
+          <header className="studio-topbar">
+            <div className="studio-logo" aria-label="Rostfrei Tracer Studio">
+              <Brand compact className="studio-brand" />
+              <strong>Tracer Studio</strong>
+            </div>
+            <WorkspaceTabs value={workspace} onChange={changeWorkspace} />
+            <div
+              className="connection-status"
+              data-source={
+                observationActive
+                  ? observationConnection
+                  : correlationsActive
+                    ? correlationConnection
+                    : source
+              }
+              data-tracer-source={source}
+            >
+              <span className="connection-dot" />
+              <span className="connection-label">
+                {observationActive
+                  ? `Observation ${observationConnection}`
+                  : correlationsActive
+                    ? `Correlations ${correlationConnection}`
+                    : source === "connecting"
+                      ? "Connecting"
+                      : source === "live"
+                        ? "Isolated Test"
+                        : "Disconnected"}
+              </span>
+              {runsActive && selectedRun && (
+                <span className="connection-detail">Saved run</span>
+              )}
+            </div>
+            <ThemeToggle className="studio-theme-toggle" />
+          </header>
+        )}
 
-        <StudioSidebar
-          open={sidebarOpen && (testsActive || runsActive)}
-          mode={runsActive ? "runs" : "tests"}
-          tests={tests}
-          selectedTestId={selectedTestId}
-          selectedRunId={runsActive ? selectedRun?.runId : selectedRunId}
-          runs={runs}
-          busy={!runsActive && (running || loading)}
-          storageNote={storageNote}
-          onClose={() => setSidebarOpen(false)}
-          onSelectTest={(test) => void selectTest(test)}
-          onSelectRun={selectRun}
-        />
-        <ObservationPanel
-          open={sidebarOpen && observationActive}
-          active={observationActive}
-          catalog={catalog}
-          onClose={() => setSidebarOpen(false)}
-          onSelect={() => setSidebarOpen(false)}
-          onFlow={setObservedFlow}
-          onExpired={setObservationExpired}
-          onStatus={setObservationConnection}
-        />
+        {!embedded && (
+          <>
+            <StudioSidebar
+              open={sidebarOpen && (testsActive || runsActive)}
+              mode={runsActive ? "runs" : "tests"}
+              tests={tests}
+              selectedTestId={selectedTestId}
+              selectedRunId={runsActive ? selectedRun?.runId : selectedRunId}
+              runs={runs}
+              busy={!runsActive && (running || loading)}
+              storageNote={storageNote}
+              onClose={() => setSidebarOpen(false)}
+              onSelectTest={(test) => void selectTest(test)}
+              onSelectRun={selectRun}
+            />
+            <ObservationPanel
+              open={sidebarOpen && observationActive}
+              active={observationActive}
+              catalog={catalog}
+              onClose={() => setSidebarOpen(false)}
+              onSelect={() => setSidebarOpen(false)}
+              onFlow={setObservedFlow}
+              onExpired={setObservationExpired}
+              onStatus={setObservationConnection}
+            />
+          </>
+        )}
         <CorrelationPanel
           open={sidebarOpen && correlationsActive}
           active={correlationsActive}
+          embedded={embedded}
+          request={correlationRequest}
           onClose={() => setSidebarOpen(false)}
           onSelect={() => setSidebarOpen(false)}
           onSelection={setCorrelationSelection}
@@ -584,94 +665,99 @@ function App() {
         <main
           id="studio-workspace"
           className="studio-main"
-          role="tabpanel"
-          aria-labelledby={`studio-tab-${workspace}`}
+          role={embedded ? undefined : "tabpanel"}
+          aria-labelledby={embedded ? undefined : `studio-tab-${workspace}`}
+          aria-label={embedded ? "Correlation" : undefined}
           data-workspace={workspace}
         >
-          <header className="workspace-toolbar">
-            <div className="workspace-identity">
-              <span className="workspace-icon">
-                <mode.icon size={21} />
-              </span>
-              <div>
-                <div className="workspace-title">
-                  <h1>{mode.label}</h1>
-                  <span>{mode.scope}</span>
+          {!embedded && (
+            <header className="workspace-toolbar">
+              <div className="workspace-identity">
+                <span className="workspace-icon">
+                  <mode.icon size={21} />
+                </span>
+                <div>
+                  <div className="workspace-title">
+                    <h1>{mode.label}</h1>
+                    <span>{mode.scope}</span>
+                  </div>
+                  <p>{mode.description}</p>
                 </div>
-                <p>{mode.description}</p>
               </div>
-            </div>
-            <div className="workspace-actions">
-              {!commandsActive && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="sidebar-toggle"
-                  onClick={() => setSidebarOpen((open) => !open)}
-                  aria-label={
-                    sidebarOpen ? "Collapse sidebar" : "Expand sidebar"
-                  }
-                  aria-expanded={sidebarOpen}
-                  aria-controls={
-                    observationActive
-                      ? "studio-observation-panel"
-                      : correlationsActive
-                        ? "studio-correlation-panel"
-                        : "studio-navigation"
-                  }
-                >
-                  <PanelLeft />
-                  <span>{sidebarLabel}</span>
-                </Button>
-              )}
-              {commandsActive && (
-                <Button
-                  className="command-panel-trigger"
-                  size="sm"
-                  disabled={!catalog}
-                  onClick={() => setCommandOpen((open) => !open)}
-                  aria-controls="studio-command-panel"
-                  aria-expanded={commandOpen}
-                  aria-label={
-                    commandOpen ? "Close command panel" : "Open command panel"
-                  }
-                  aria-keyshortcuts="Meta+Shift+K Control+Shift+K"
-                >
-                  <Send />
-                  <span>Send command</span>
-                </Button>
-              )}
-              {testsActive && (
-                <Button
-                  className="test-panel-trigger"
-                  size="sm"
-                  disabled={!catalog}
-                  onClick={() => setTestOpen((open) => !open)}
-                  aria-controls="studio-test-panel"
-                  aria-expanded={testOpen}
-                  aria-label={testOpen ? "Close test panel" : "Open test panel"}
-                >
-                  <FlaskConical />
-                  <span>Run a test</span>
-                </Button>
-              )}
-              {runsActive && selectedRun && (
-                <Button
-                  className="saved-run-rerun"
-                  size="sm"
-                  disabled={
-                    source !== "live" ||
-                    running ||
-                    loading ||
-                    !tests.some((test) => test.id === selectedRun.testId)
-                  }
-                  onClick={() => void prepareRerun(selectedRun)}
-                >
-                  <FlaskConical /> Run again
-                </Button>
-              )}
-            </div>
-          </header>
+              <div className="workspace-actions">
+                {!commandsActive && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="sidebar-toggle"
+                    onClick={() => setSidebarOpen((open) => !open)}
+                    aria-label={
+                      sidebarOpen ? "Collapse sidebar" : "Expand sidebar"
+                    }
+                    aria-expanded={sidebarOpen}
+                    aria-controls={
+                      observationActive
+                        ? "studio-observation-panel"
+                        : correlationsActive
+                          ? "studio-correlation-panel"
+                          : "studio-navigation"
+                    }
+                  >
+                    <PanelLeft />
+                    <span>{sidebarLabel}</span>
+                  </Button>
+                )}
+                {commandsActive && (
+                  <Button
+                    className="command-panel-trigger"
+                    size="sm"
+                    disabled={!catalog}
+                    onClick={() => setCommandOpen((open) => !open)}
+                    aria-controls="studio-command-panel"
+                    aria-expanded={commandOpen}
+                    aria-label={
+                      commandOpen ? "Close command panel" : "Open command panel"
+                    }
+                    aria-keyshortcuts="Meta+Shift+K Control+Shift+K"
+                  >
+                    <Send />
+                    <span>Send command</span>
+                  </Button>
+                )}
+                {testsActive && (
+                  <Button
+                    className="test-panel-trigger"
+                    size="sm"
+                    disabled={!catalog}
+                    onClick={() => setTestOpen((open) => !open)}
+                    aria-controls="studio-test-panel"
+                    aria-expanded={testOpen}
+                    aria-label={
+                      testOpen ? "Close test panel" : "Open test panel"
+                    }
+                  >
+                    <FlaskConical />
+                    <span>Run a test</span>
+                  </Button>
+                )}
+                {runsActive && selectedRun && (
+                  <Button
+                    className="saved-run-rerun"
+                    size="sm"
+                    disabled={
+                      source !== "live" ||
+                      running ||
+                      loading ||
+                      !tests.some((test) => test.id === selectedRun.testId)
+                    }
+                    onClick={() => void prepareRerun(selectedRun)}
+                  >
+                    <FlaskConical /> Run again
+                  </Button>
+                )}
+              </div>
+            </header>
+          )}
           <div
             className={cn(
               "workspace-content",
@@ -703,6 +789,16 @@ function App() {
                         onRetry={retryConnection}
                       />
                     )}
+                  {embedded && shownCorrelationId && (
+                    <a
+                      className="embedded-studio-link"
+                      href={correlationHref(shownCorrelationId)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <ExternalLink size={14} /> Open in Tracer Studio
+                    </a>
+                  )}
                   {correlationsActive ? (
                     <CorrelationHeading
                       selection={correlationSelection}
@@ -811,14 +907,20 @@ function App() {
                           ? activeCommand?.result?.series?.capture
                           : selectedRun?.capture
                   }
-                  emptyTitle={mode.emptyTitle}
+                  emptyTitle={
+                    embedded && !shownCorrelationId
+                      ? "No correlation in this link"
+                      : mode.emptyTitle
+                  }
                   emptyMessage={
                     correlationsActive
                       ? correlationSelection.loading
                         ? "Reading retained events…"
                         : correlationSelection.chain
                           ? "No events returned in this retained-history read."
-                          : mode.emptyMessage
+                          : embedded
+                            ? "The embedding page names the correlation with correlation=<ID>."
+                            : mode.emptyMessage
                       : observationActive
                         ? mode.emptyMessage
                         : source !== "live" && !runsActive

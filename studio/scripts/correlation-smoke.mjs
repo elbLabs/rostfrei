@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { mkdir, writeFile } from "node:fs/promises"
+import { createServer } from "node:http"
 import path from "node:path"
 import {
   capturePage,
@@ -175,6 +176,11 @@ export async function checkCorrelations() {
       ["filtered-selection", checkFilteredSelection],
       ["same-context-includes", checkSameContextIncludes],
       ["mobile-layouts", checkMobileLayouts],
+      ["correlation-link", checkCorrelationLink],
+      ["link-history", checkLinkHistory],
+      ["embedded", checkEmbedded],
+      ["embedded-side-panel", checkEmbeddedSidePanel],
+      ["embedded-frame", checkEmbeddedFrame],
     ]) {
       backend.reset()
       const context = await browser.createBrowserContext()
@@ -191,7 +197,7 @@ export async function checkCorrelations() {
           '[aria-label="Anchor aggregate type"] option[value="bike-rental/rental-fleet"]'
         )
         await page.waitForSelector('.connection-status[data-source="live"]')
-        await check(page, backend)
+        await check(page, backend, url, server)
         assert.deepEqual(diagnostics.pageErrors, [])
         assert.deepEqual(backend.unexpectedRequests, [])
         results.push({ name, status: "passed" })
@@ -782,6 +788,296 @@ async function checkMobileLayouts(page) {
   )
   await page.click("::-p-aria(Back to flow)")
   await page.waitForSelector(".message-list", { visible: true })
+}
+
+const RENT = "visual-rent-bike-42"
+const TRANSFER = "visual-transfer-bike-7"
+const rentGraph =
+  '[data-graph-edge][data-source-id="event:invoice-opened"][data-target-id="message:invoice-issued"]'
+
+// A link names a document address; loading it must not reuse the open Studio.
+async function loadLink(page, backend, url, fragment) {
+  await page.goto("about:blank")
+  backend.requests.length = 0
+  await page.goto(`${url}/${fragment}`, { waitUntil: "domcontentloaded" })
+  await page.waitForSelector(".studio-shell")
+}
+
+function chainReads(backend, id) {
+  return backend.requests.filter(
+    (request) => request.path === `/correlations/${id}/events`
+  ).length
+}
+
+async function workspace(page) {
+  return page.$eval("#studio-workspace", (main) => main.dataset.workspace)
+}
+
+async function checkCorrelationLink(page, backend, url, server) {
+  const { correlationHref, studioLink } = await server.ssrLoadModule(
+    "/src/lib/deep-link.ts"
+  )
+  const id = "cid/with spaces&=#+"
+  assert.deepEqual(studioLink(correlationHref(id)), {
+    correlationId: id,
+    embed: false,
+  })
+  assert.deepEqual(studioLink(correlationHref(id, { embed: true })), {
+    correlationId: id,
+    embed: true,
+  })
+  assert.deepEqual(studioLink("#embed=1&correlation=a"), {
+    correlationId: "a",
+    embed: true,
+  })
+  for (const none of ["", "#correlation=", "#correlation=%E0%A4%A", "#other"])
+    assert.equal(studioLink(none).correlationId, undefined, none)
+  assert.equal(studioLink("#correlation=a&embed=true").embed, false)
+
+  await loadLink(page, backend, url, `#correlation=${RENT}`)
+  await page.waitForSelector(rentGraph)
+  assert.equal(await workspace(page), "correlations")
+  assert.match(await text(page, ".correlation-heading"), /visual-rent-bike-42/)
+  assert.equal(
+    await page.$("#studio-correlation-panel.studio-sidebar-open"),
+    null,
+    "the graph is not covered by the correlation finder"
+  )
+  assert.equal(
+    await page.$eval('[aria-label="Correlation ID"]', (input) => input.value),
+    RENT,
+    "the finder shows which correlation was opened"
+  )
+  assert.equal(chainReads(backend, RENT), 1, "a link reads its chain once")
+  assert.ok(await page.$(".studio-topbar"), "a plain link keeps Studio whole")
+
+  await page.evaluate((id) => {
+    location.hash = `#correlation=${id}`
+  }, TRANSFER)
+  await page.waitForSelector(
+    '[data-graph-node][data-node-id="event:bicycle-transferred-in"]'
+  )
+  assert.equal(chainReads(backend, TRANSFER), 1)
+}
+
+async function checkLinkHistory(page, backend, url) {
+  const hash = () => page.evaluate(() => location.hash)
+  const shows = (id) =>
+    page.waitForFunction(
+      (id) =>
+        document.querySelector(".correlation-heading h1")?.textContent === id,
+      {},
+      id
+    )
+  await loadLink(page, backend, url, "")
+  await page.click('[data-workspace-tab="runs"]')
+  await page.evaluate((id) => {
+    location.hash = `#correlation=${id}`
+  }, RENT)
+  await page.waitForSelector(rentGraph)
+
+  await page.goBack()
+  await page.waitForSelector('[data-workspace="runs"]')
+  assert.equal(await hash(), "", "Back leaves the link")
+  assert.equal(
+    await page.$eval('[data-workspace-tab="runs"]', (tab) => tab.ariaSelected),
+    "true",
+    "Back returns to the tab the link was opened from"
+  )
+  await page.goForward()
+  await page.waitForSelector('[data-workspace="correlations"]')
+  await page.waitForSelector(rentGraph)
+  assert.equal(await hash(), `#correlation=${RENT}`)
+
+  await page.click('[data-workspace-tab="tests"]')
+  await page.waitForSelector('[data-workspace="tests"]')
+  assert.equal(await hash(), "", "another tab does not keep the link")
+  await page.goBack()
+  await page.waitForSelector('[data-workspace="runs"]')
+  await page.goForward()
+  await page.waitForSelector('[data-workspace="tests"]')
+
+  // Within Correlations, Back restores the correlation shown before the link.
+  await page.click('[data-workspace-tab="correlations"]')
+  await openCorrelation(page, TRANSFER)
+  await shows(TRANSFER)
+  await page.evaluate((id) => {
+    location.hash = `#correlation=${id}`
+  }, RENT)
+  await shows(RENT)
+  await page.goBack()
+  await shows(TRANSFER)
+  assert.equal(await workspace(page), "correlations")
+  assert.equal(await hash(), "")
+  await page.waitForSelector(
+    '[data-graph-node][data-node-id="event:bicycle-transferred-in"]'
+  )
+}
+
+async function checkEmbedded(page, backend, url) {
+  await loadLink(page, backend, url, `#correlation=${RENT}&embed=1`)
+  await page.waitForSelector(".studio-embedded")
+  await page.waitForSelector(rentGraph)
+  assert.equal(
+    await page.$$eval("[data-graph-node]", (nodes) => nodes.length),
+    4
+  )
+  assert.match(await text(page, ".correlation-heading"), /visual-rent-bike-42/)
+  assert.equal(
+    await page.$(
+      ".studio-topbar, .workspace-toolbar, .workspace-tabs, .studio-sidebar, .sidebar-scrim"
+    ),
+    null,
+    "embedded Studio has no navigation, toolbar or sidebars"
+  )
+  assert.deepEqual(
+    await page.$eval(".studio-main", (main) => {
+      const rect = main.getBoundingClientRect()
+      return [rect.top, rect.left, rect.width, rect.height]
+    }),
+    [0, 0, 1440, 900],
+    "the correlation fills the frame"
+  )
+  await settlePage(page)
+  assert.deepEqual(
+    [...new Set(backend.requests.map((request) => request.token))],
+    [INSPECTION],
+    "embedded Studio sends the inspection token only"
+  )
+  assert.deepEqual(
+    [...new Set(backend.requests.map((request) => request.path))].sort(),
+    ["/catalog", `/correlations/${RENT}/events`]
+  )
+  assert.deepEqual(
+    await page.$eval(".embedded-studio-link", (link) => [
+      link.getAttribute("href"),
+      link.target,
+    ]),
+    [`#correlation=${RENT}`, "_blank"],
+    "the frame offers the same correlation in full Studio"
+  )
+  await page.click('[data-node-id="event:invoice-opened"] button')
+  await page.waitForSelector(".message-inspector", { visible: true })
+  assert.match(await text(page, ".message-inspector"), /invoice-opened/)
+
+  // The embedding page changes the fragment to show another correlation.
+  await page.evaluate((id) => {
+    location.replace(`#correlation=${id}&embed=1`)
+  }, TRANSFER)
+  await page.waitForSelector(
+    '[data-graph-node][data-node-id="event:bicycle-transferred-in"]'
+  )
+  assert.ok(await page.$(".studio-embedded"))
+
+  backend.setDirectResult("visual-not-retained", {
+    status: 404,
+    body: correlationErrors.notFound,
+  })
+  await page.evaluate(() => {
+    location.replace("#correlation=visual-not-retained&embed=1")
+  })
+  await page.waitForSelector('[data-correlation-failure="not-found"]')
+  assert.equal(await page.$("[data-graph-node]"), null)
+
+  await page.evaluate(() => {
+    location.replace("#embed=1")
+  })
+  await page.waitForSelector(".graph-empty")
+  assert.match(await text(page, ".graph-empty"), /No correlation in this link/)
+  assert.equal(await page.$("[data-correlation-failure]"), null)
+  assert.deepEqual(
+    [...new Set(backend.requests.map((request) => request.token))],
+    [INSPECTION]
+  )
+}
+
+async function checkEmbeddedSidePanel(page, backend, url) {
+  for (const [width, height] of [
+    [480, 800],
+    [720, 900],
+  ]) {
+    await page.setViewport({ width, height })
+    await loadLink(page, backend, url, `#correlation=${RENT}&embed=1`)
+    await page.waitForSelector(".message-list")
+    assert.equal(
+      await page.$$eval(".message-list > li", (nodes) => nodes.length),
+      4
+    )
+    assert.equal(await page.$(".studio-topbar, .workspace-toolbar"), null)
+    const fits = async (selector) => {
+      await settlePage(page)
+      const bounds = await page.$eval(selector, (element) => {
+        const rect = element.getBoundingClientRect()
+        return [
+          rect.left,
+          rect.right,
+          rect.bottom,
+          innerWidth,
+          innerHeight,
+          document.documentElement.scrollWidth,
+        ]
+      })
+      assert.ok(
+        bounds[0] >= 0 &&
+          bounds[1] <= bounds[3] &&
+          bounds[2] <= bounds[4] &&
+          bounds[5] === bounds[3],
+        `${selector} must fit a ${width}px side panel: ${bounds}`
+      )
+    }
+    await fits(".flow-panel")
+    await page.click('[data-message-id="event:invoice-opened"]')
+    await page.waitForSelector(".message-inspector", { visible: true })
+    assert.match(await text(page, ".message-inspector"), /invoice-opened/)
+    await fits(".message-inspector")
+    await page.click("::-p-aria(Back to flow)")
+    await page.waitForSelector(".message-list", { visible: true })
+  }
+}
+
+async function checkEmbeddedFrame(page, backend, url) {
+  const response = await fetch(url)
+  assert.equal(response.headers.get("x-frame-options"), null)
+  assert.doesNotMatch(
+    response.headers.get("content-security-policy") ?? "",
+    /frame-ancestors/
+  )
+  // The embedding page is served from another origin than Studio.
+  const host = createServer((_, reply) => {
+    reply.writeHead(200, { "content-type": "text/html" })
+    reply.end(
+      `<body style="margin:0"><iframe title="Correlation" style="border:0;width:560px;height:800px" src="${url}/#correlation=${RENT}&embed=1"></iframe>`
+    )
+  })
+  await new Promise((resolve) => host.listen(0, "127.0.0.1", resolve))
+  try {
+    await page.goto("about:blank")
+    backend.requests.length = 0
+    await page.goto(`http://127.0.0.1:${host.address().port}/`)
+    const frame = await (await page.waitForSelector("iframe")).contentFrame()
+    await frame.waitForSelector(".studio-embedded .message-list")
+    assert.equal(
+      await frame.$$eval(".message-list > li", (nodes) => nodes.length),
+      4
+    )
+    assert.deepEqual(
+      [...new Set(backend.requests.map((request) => request.token))],
+      [INSPECTION]
+    )
+    // The embedding page shows another correlation without a history entry.
+    const entries = await page.evaluate(() => history.length)
+    await page.$eval(
+      "iframe",
+      (element, href) => element.contentWindow.location.replace(href),
+      `${url}/#correlation=${TRANSFER}&embed=1`
+    )
+    await frame.waitForSelector(
+      '[data-message-id="event:bicycle-transferred-in"]'
+    )
+    assert.equal(await page.evaluate(() => history.length), entries)
+  } finally {
+    await new Promise((resolve) => host.close(resolve))
+  }
 }
 
 async function openCorrelation(page, id) {

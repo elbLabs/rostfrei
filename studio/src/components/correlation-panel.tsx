@@ -52,9 +52,19 @@ export interface CorrelationSelection {
   problem?: CorrelationProblem
 }
 
+// A correlation opened from outside the panel, such as a deep link. A new
+// sequence reopens the same ID; a request without an ID clears the selection.
+export interface CorrelationRequest {
+  id?: string
+  sequence: number
+}
+
 interface Props {
   open: boolean
   active: boolean
+  // Embedded Studio reads the requested correlation without showing the finder.
+  embedded?: boolean
+  request?: CorrelationRequest
   onClose: () => void
   onSelect: () => void
   onSelection: (selection: CorrelationSelection) => void
@@ -66,6 +76,8 @@ const CUSTOM_ANCHOR = ""
 export function CorrelationPanel({
   open,
   active,
+  embedded = false,
+  request,
   onClose,
   onSelect,
   onSelection,
@@ -137,13 +149,12 @@ export function CorrelationPanel({
     []
   )
 
-  const loadChain = useCallback(
+  const readChain = useCallback(
     async (
       correlationId: string,
       source?: { view: AnchorCorrelationView; label: string }
     ) => {
       controller.current?.abort()
-      setViewLoading(false)
       const anchorIdentity = source && {
         label: source.label,
         aggregateType: source.view.aggregateType,
@@ -195,6 +206,56 @@ export function CorrelationPanel({
     },
     [eventsTemplate, onSelection]
   )
+  // Reading a chain cancels a pending anchor read, which then never settles.
+  const loadChain = (
+    correlationId: string,
+    source?: { view: AnchorCorrelationView; label: string }
+  ) => {
+    setViewLoading(false)
+    return readChain(correlationId, source)
+  }
+
+  const [shownRequest, setShownRequest] = useState<number>()
+  if (request && request.sequence !== shownRequest) {
+    setShownRequest(request.sequence)
+    setDirectId(request.id ?? "")
+    setSelectedId(undefined)
+    setViewLoading(false)
+  }
+  // A requested correlation is read once, after discovery has settled, so the
+  // read uses the events route this Tracer advertises.
+  const readRequest = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (!request || readRequest.current === request.sequence) return
+    const { id } = request
+    if (
+      id !== undefined &&
+      configured &&
+      active &&
+      discovery === "connecting"
+    ) {
+      controller.current?.abort()
+      onSelection({ correlationId: id, loading: true })
+      return
+    }
+    readRequest.current = request.sequence
+    if (id === undefined) {
+      controller.current?.abort()
+      onSelection({ loading: false })
+    } else if (configured) void readChain(id)
+    else {
+      controller.current?.abort()
+      onSelection({
+        correlationId: id,
+        loading: false,
+        problem: {
+          failure: "credential-missing",
+          subject: id,
+          message: "VITE_TRACER_INSPECTION_TOKEN is not set.",
+        },
+      })
+    }
+  }, [active, configured, discovery, readChain, onSelection, request])
 
   const anchorContext = aggregateType.split("/")[0]
   const matches = rowMatches(rows)
@@ -310,6 +371,7 @@ export function CorrelationPanel({
   const status = configured ? discovery : "unavailable"
   const ready = status === "live"
   const busy = viewLoading
+  if (embedded) return null
   return (
     <aside
       id="studio-correlation-panel"

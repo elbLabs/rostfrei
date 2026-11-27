@@ -91,6 +91,53 @@ use the read-only inspection token (`VITE_TRACER_INSPECTION_TOKEN`); the control
 token (`VITE_TRACER_TOKEN`) keeps serving commands and tests and receives `403`
 on these routes. These reads inspect Normal traffic, not isolated Test runs.
 
+## Link to and embed a correlation
+
+`#correlation=<correlation ID>` on the Studio URL opens that correlation in
+**Correlations**, from a new tab, another application or an open Studio. The ID
+is percent-encoded. The read uses the same inspection token and retention
+limits as a correlation opened by ID. Following a link in an open Studio adds a
+history entry: Back returns to the tab, and within Correlations to the
+correlation, shown before it. Choosing another tab removes the link from the
+address.
+
+`#correlation=<correlation ID>&embed=1` shows only that correlation: its
+heading, the causal graph and message details, without Studio's tabs, toolbar
+or sidebars. It is meant for an `<iframe>` in another application's side panel:
+
+```html
+<iframe
+  title="Correlation"
+  src="https://studio.example/#correlation=order-42&embed=1"
+></iframe>
+```
+
+A frame wider than 1100 px shows the graph canvas with details beside it; a
+narrower frame, such as a 480 to 720 px side panel, shows the messages as a
+causal list and opens details in place. **Open in Tracer Studio** opens the same
+correlation in full Studio in a new tab. To show another correlation without
+reloading Studio or adding a history entry, the embedding page replaces the
+frame's address:
+`frame.contentWindow.location.replace(studioUrl + "#correlation=<ID>&embed=1")`.
+`#embed=1` without a correlation shows an empty frame.
+
+Embedded Studio requests only the correlation catalog and the correlation's
+events, both with the inspection token; it sends no control-token request. The
+embedding page passes nothing but the link. The Tracer address and the
+inspection token belong to the Studio deployment (see
+[Tracer connection](#tracer-connection)), and that Tracer must observe the
+application whose correlation is linked.
+
+The development and preview servers send no `X-Frame-Options` or
+`Content-Security-Policy` header, so any page can frame them. A production host
+must do the same for the embedding origin: omit `X-Frame-Options` (also
+`SAMEORIGIN` blocks another origin) and, if it sends a
+`Content-Security-Policy`, include `frame-ancestors <embedding origin>`. The
+embedding application's own policy needs the Studio origin in `frame-src`.
+Studio and its Tracer API path must be served from one origin, because Tracer
+serves no CORS headers. The tokens are part of the built bundle: build a Studio
+that is only embedded without `VITE_TRACER_TOKEN`, and restrict who can load it.
+
 ## Run locally
 
 From the repository root:
@@ -141,7 +188,8 @@ session. Named scenarios intercept every API request and label their synthetic
 responses as visual fixtures. They cover the canvas overview, test panel, command form,
 accepted/rejected Test, pending and indeterminate results, a 25-message
 branching graph, long payloads, continuous observation, anchored correlations
-with their error states, and the narrow-screen inspector. Unknown API
+with their error states, an embedded correlation at desktop and side-panel
+widths, and the narrow-screen inspector. Unknown API
 requests fail rather than reaching a backend.
 
 Each capture writes `screenshot.png`, `state.json`, `accessibility.json`, and
@@ -149,7 +197,8 @@ Each capture writes `screenshot.png`, `state.json`, `accessibility.json`, and
 State includes the resolved theme, panel/card bounds, selection, inspector content, and viewport
 visibility. Inspect the screenshot to evaluate wrapping, clipping, and contrast;
 browser exceptions, failed requests, unexpected HTTP errors, and missing fixture
-routes fail the capture. Fixture sessions freeze wall time/UUIDs and disable motion.
+routes fail the capture. Requests Studio cancelled itself are listed as
+`cancelledRequests` and do not. Fixture sessions freeze wall time/UUIDs and disable motion.
 
 `--headed` keeps Chrome open: Enter recaptures and `q` exits. To inspect a running
 Studio with its actual API instead of fixtures, use its URL:
